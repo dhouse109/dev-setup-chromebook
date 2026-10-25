@@ -1163,9 +1163,15 @@ case "$1" in
             ldd "$P/bin/$b" | grep -q libQt5Pas || { echo "$P/bin/$b does not link libQt5Pas (not a Qt5 build)"; exit 1; }
         done
         echo "lazarus-floating, lazarus-docked and lazarus in $P/bin all link libQt5Pas" ;;
-    differ)   # a floating build that came out docked would be byte for byte the docked one
-        [ -f "$P/bin/lazarus-floating" ] && [ -f "$P/bin/lazarus-docked" ] || { echo "a build is missing"; exit 1; }
-        ! cmp -s "$P/bin/lazarus-floating" "$P/bin/lazarus-docked" || { echo "the two builds are identical"; exit 1; } ;;
+    floating)   # AnchorDocking's main class is named in any IDE binary built with it
+        [ -f "$P/bin/lazarus-floating" ] || { echo "missing: $P/bin/lazarus-floating"; exit 1; }
+        if grep -qa TAnchorDockMaster "$P/bin/lazarus-floating"; then echo "lazarus-floating contains TAnchorDockMaster: it is docked"; exit 1; fi
+        echo "no TAnchorDockMaster in lazarus-floating" ;;
+    list)   # lazbuild --add-package saves to this list, and every later --build-ide builds it in
+        f="$P/miscellaneousoptions.xml"
+        [ -f "$f" ] || { echo "no $f (nothing installed by name)"; exit 0; }
+        if grep -Eio '<Item[0-9]+ +Value="(anchordock[^"]*|dockedformeditor)"' "$f"; then exit 1; fi
+        echo "the install list names no docking package" ;;
     active)
         if cmp -s "$P/bin/lazarus" "$P/bin/lazarus-docked"; then echo "docked"
         elif cmp -s "$P/bin/lazarus" "$P/bin/lazarus-floating"; then echo "floating"
@@ -1198,8 +1204,10 @@ LAZ_EOF
         LAZ_PD="~/.lazarus"; [ "$LAZ_P" = dark ] && LAZ_PD="~/.lazarus-dark"
         check "$LAZ_P profile ($LAZ_PD): floating, docked and active builds on Qt5" "bash lazarus_check.sh builds $LAZ_P"
         hint  "'lazmode rebuild --profile $LAZ_P' (logs in assets/logs/lazarus-build-$LAZ_P-*.log), or rerun setup with install-lazarus"
-        check "$LAZ_P profile: the floating and docked builds differ"        "bash lazarus_check.sh differ $LAZ_P"
-        hint  "the floating build came out docked (lazbuild kept the docking packages installed in this profile), so 'lazmode dock off' has nothing to switch to: lazmode's build steps need a fix"
+        check "$LAZ_P profile: the floating build has no AnchorDocking"      "bash lazarus_check.sh floating $LAZ_P"
+        hint  "'lazmode rebuild --profile $LAZ_P' takes the docking packages out of the profile's install list and builds it again"
+        check "$LAZ_P profile: its install list names no docking package"   "bash lazarus_check.sh list $LAZ_P"
+        hint  "the next floating build would come out docked: 'lazmode rebuild --profile $LAZ_P' takes them out (a copy of the old miscellaneousoptions.xml goes to assets/logs)"
         check "$LAZ_P profile: bin/lazarus is one of the two builds"         "bash lazarus_check.sh active $LAZ_P"
         hint  "'lazmode dock on' (or off) puts a build back; the IDE's own Tools > Build Lazarus replaces bin/lazarus, possibly with GTK2"
     done

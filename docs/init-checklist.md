@@ -136,7 +136,7 @@ Setup installs Lazarus from the SourceForge debs, then rebuilds the IDE on Qt5: 
 | --- | --- |
 | `lazmode status` | Per profile: the active layout, both builds and their widget set, the dark launcher's `Exec=` line, and qt5ct's style and palette |
 | `lazmode dock on` / `lazmode dock off` | The docked or the floating build becomes the active one (next IDE start) |
-| `lazmode rebuild [--add-package <lpk>…]` | Rebuilds both layouts on Qt5 and keeps the active one. Packages given here are recorded in `<profile>/lazmode-packages` and included in every later rebuild. Also the way back after a Lazarus upgrade |
+| `lazmode rebuild [--add-package <lpk>…]` | Rebuilds both layouts on Qt5 and keeps the active one. Packages given here are recorded in `<profile>/lazmode-packages` and included in every later rebuild. The docking packages never stay in the profile's install list (`miscellaneousoptions.xml`, which `lazbuild --add-package` writes to): the file is saved before the docked build and put back after it, and a list that already names them (a profile set up by hand before v94) loses them first, with a copy of the old file in `assets/logs`. Also the way back after a Lazarus upgrade |
 | `lazmode theme` | Opens qt5ct for the dark profile's style and palette |
 
 - **Install IDE packages with `lazmode rebuild --add-package`,** not with Package → Install/Uninstall Packages. The IDE's own rebuild can fall back to GTK2, and GTK2 dialogs draw blank and freeze under Crostini. If that has happened, `lazmode dock on` puts the Qt5 build back.

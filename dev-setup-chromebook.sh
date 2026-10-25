@@ -1487,6 +1487,12 @@ cmd_status() {
         done
         [ -f "$b/lazarus" ] && printf '  %-15s %s\n' "bin/lazarus" "$(widgetset "$b/lazarus") widget set"
         [ -s "$d/lazmode-packages" ] && printf '  %-15s %s\n' "extra packages" "$(tr '\n' ' ' < "$d/lazmode-packages")"
+        if docking_listed "$d"; then
+            printf '  %-15s %s\n' "install list" "names the docking packages: the next floating build would come out docked ('lazmode rebuild --profile $p' takes them out)"
+        fi
+        if [ -f "$b/lazarus-floating" ] && grep -qa "$DOCKING_CLASS" "$b/lazarus-floating"; then
+            printf '  %-15s %s\n' "floating build" "contains $DOCKING_CLASS, so it is docked too ('lazmode rebuild --profile $p')"
+        fi
     done
     if [ -f "$DARK_DESKTOP" ]; then
         echo "dark launcher   $(grep -m1 '^Exec=' "$DARK_DESKTOP")"
@@ -1524,6 +1530,60 @@ cmd_dock() {
     done
 }
 
+# v94: lazbuild --add-package does not only build a package in: it saves it to the profile's install list
+# (StaticAutoInstallPackages in miscellaneousoptions.xml), and every later --build-ide builds that list in, so
+# each floating build after the first docked one came out docked (Oct 25 2026: grep -il anchordock ~/.lazarus/*
+# found the docking packages after the Oct 24 hand setup). So the docked build runs between a save and a restore
+# of the files it writes, and the docking packages are taken out of a list that already has them.
+LISTFILES=(miscellaneousoptions.xml packagefiles.xml staticpackages.inc idemake.cfg)
+DOCKING_CLASS=TAnchorDockMaster   # AnchorDocking's main class: its name is in any IDE binary built with it
+SAVED=""   # the profile whose list files are saved, while the docked build runs
+ACTIVE=""  # "PROFILE_DIR LAYOUT" to put back if a rebuild is interrupted
+save_lists() {   # save_lists PROFILE_DIR: copy the list files aside (or note that one is absent)
+    local s="$1/.lazmode-save" f
+    rm -rf "$s" && mkdir -p "$s" || return 1
+    for f in "${LISTFILES[@]}"; do
+        if [ -f "$1/$f" ]; then cp -p "$1/$f" "$s/$f" || return 1; else : > "$s/$f.absent"; fi
+    done
+    SAVED=$1
+}
+restore_lists() {   # restore_lists PROFILE_DIR: put them back exactly, removing any the build created
+    local s="$1/.lazmode-save" f
+    [ -d "$s" ] || return 0
+    for f in "${LISTFILES[@]}"; do
+        if [ -f "$s/$f" ]; then cp -p "$s/$f" "$1/$f"; elif [ -f "$s/$f.absent" ]; then rm -f "$1/$f"; fi
+    done
+    rm -rf "$s"
+    SAVED=""
+}
+# Ctrl-C during the docked build still leaves the list without the docking packages, and the layout that was
+# active stays active.
+trap '[ -n "$SAVED" ] && restore_lists "$SAVED"; [ -n "$ACTIVE" ] && activate "${ACTIVE% *}" "${ACTIVE##* }"; exit 130' INT TERM
+docking_listed() {   # does the profile's install list name a docking package?
+    grep -Eqi '<Item[0-9]+ +Value="(anchordock[^"]*|dockedformeditor)"' "$1/miscellaneousoptions.xml" 2> /dev/null
+}
+scrub_docking() {   # scrub_docking PROFILE_DIR NAME: take the docking packages out of the install list
+    local f="$1/miscellaneousoptions.xml"
+    docking_listed "$1" || return 0
+    # The IDE skips a missing ItemN when it reads the list (LoadStringList), so deleting the items is enough;
+    # the next save writes the list out renumbered. A copy of the file goes to the logs first.
+    cp -p "$f" "$LOGDIR/miscellaneousoptions-$2-$(date +%Y%m%d-%H%M%S).xml"
+    python3 - "$f" << 'SCRUB_PY' || return 1
+import re, sys
+path = sys.argv[1]
+with open(path, encoding="utf-8") as fh:
+    text = fh.read()
+item = re.compile(r'[ \t]*<Item\d+\s+Value="(?:anchordock[^"]*|dockedformeditor)"\s*/>[ \t]*\r?\n?', re.I)
+block = re.compile(r'<StaticAutoInstallPackages(?:\s[^>]*)?(?<!/)>.*?</StaticAutoInstallPackages>', re.S)
+new = block.sub(lambda m: item.sub("", m.group(0)), text)
+if new != text:
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write(new)
+SCRUB_PY
+    if docking_listed "$1"; then echo "$2: could not take the docking packages out of $f"; return 1; fi
+    echo "$2: docking packages taken out of the install list ($f; the old file is in $LOGDIR)"
+}
+
 build_one() {   # build_one PROFILE LAYOUT: lazbuild the IDE into <profile>/bin/lazarus, copy it to lazarus-LAYOUT
     local p=$1 lay=$2 d dir log t0 pkgs=() args=(--build-ide= --ws=qt5)
     d=$(pdir "$p"); dir=$(laz_dir)
@@ -1550,13 +1610,17 @@ build_one() {   # build_one PROFILE LAYOUT: lazbuild the IDE into <profile>/bin/
         tail -n 15 "$log" | sed 's/^/    /'
         return 1
     fi
+    if [ "$lay" = floating ] && grep -qa "$DOCKING_CLASS" "$d/bin/lazarus"; then
+        echo "  the floating build came out docked (it contains $DOCKING_CLASS): not kept"
+        return 1
+    fi
     cp "$d/bin/lazarus" "$d/bin/.lazarus-$lay.lazmode" && mv -f "$d/bin/.lazarus-$lay.lazmode" "$d/bin/lazarus-$lay" || return 1
     tail -n 2 "$log" | sed 's/^/  | /'
     echo "  built in $(( $(date +%s) - t0 ))s: $d/bin/lazarus-$lay"
 }
 
 cmd_rebuild() {
-    local p d dir was f fail=0
+    local p d dir was f ok fail=0
     parse_opts "$@"
     refuse_if_running rebuild
     dir=$(laz_dir) || die "lazarus-project is not installed: run dev-setup with install-lazarus"
@@ -1579,14 +1643,25 @@ cmd_rebuild() {
                 && echo "dark: settings copied from $LIGHT"
         fi
         mkdir -p "$d/bin"
+        # A save left behind by an interrupted docked build is put back first; then a list from before v94
+        # (the Oct 24 hand setup, or the IDE's own Install Packages) loses its docking packages.
+        restore_lists "$d"
+        scrub_docking "$d" "$p" || { echo "$p: rebuild skipped (logs in $LOGDIR)"; fail=1; continue; }
         if [ ${#ADD[@]} -gt 0 ]; then
             { cat "$d/lazmode-packages" 2> /dev/null; printf '%s\n' "${ADD[@]}"; } | awk 'NF && !seen[$0]++' > "$d/lazmode-packages.new" \
                 && mv -f "$d/lazmode-packages.new" "$d/lazmode-packages"
         fi
         was=$(layout "$d")
         case "$was" in docked|floating) ;; *) was=docked ;; esac
-        # Floating first, then docked: the docked build adds the docking packages to a fresh floating build.
-        if build_one "$p" floating && build_one "$p" docked; then
+        ACTIVE="$d $was"
+        # Floating first, then docked, with the list files saved around the docked build and put back after it,
+        # built or not: the docking packages never stay in the profile's install list.
+        ok=0
+        if build_one "$p" floating && save_lists "$d"; then
+            build_one "$p" docked && ok=1
+            restore_lists "$d"
+        fi
+        if [ "$ok" = 1 ]; then
             activate "$d" "$was"
             printf '%s\n' "$(basename "$dir")" > "$d/bin/.lazmode-built"
             echo "$p: both layouts built on Qt5, $was active"
@@ -1595,6 +1670,7 @@ cmd_rebuild() {
             for f in "$was" docked floating; do activate "$d" "$f" && break; done
             echo "$p: rebuild failed (logs in $LOGDIR)"; fail=1
         fi
+        ACTIVE=""
     done
     return $fail
 }
@@ -1648,6 +1724,12 @@ LAZMODE_EOF
             ldd "$LAZ_PD/bin/$LAZ_B" 2> /dev/null | grep -q libQt5Pas || LAZ_OK=0
         done
         [ "$(cat "$LAZ_PD/bin/.lazmode-built" 2> /dev/null)" = "$LAZ_VER" ] || LAZ_OK=0
+        # A floating build that came out docked, or an install list that names the docking packages (the Oct 24
+        # hand setup; the IDE's own Install Packages), is rebuilt: lazmode takes them out of the list first.
+        if grep -qa TAnchorDockMaster "$LAZ_PD/bin/lazarus-floating" 2> /dev/null \
+            || grep -Eqi '<Item[0-9]+ +Value="(anchordock[^"]*|dockedformeditor)"' "$LAZ_PD/miscellaneousoptions.xml" 2> /dev/null; then
+            LAZ_OK=0
+        fi
         if [ "$LAZ_OK" = 1 ]; then
             echo "Lazarus $LAZ_P profile: Qt5 builds for $LAZ_VER already in place ($("$HOME/.local/bin/lazmode" status --profile "$LAZ_P" | sed -n 's/^  active layout *//p'))."
         else
