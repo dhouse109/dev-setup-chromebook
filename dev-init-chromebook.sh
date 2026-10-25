@@ -1,5 +1,5 @@
 #!/bin/bash
-# dev-init-chromebook - Version 93
+# dev-init-chromebook - Version 94
 # Version history: CHANGELOG.md, next to this script in the bundle
 # (one section per script, newest version first).
 #
@@ -1666,6 +1666,26 @@ if has install-cpp || has install-asm || has install-asm-arm; then
     already "compilers, assemblers and debuggers need no accounts or keys"
 fi
 
+# v94: setup builds the Lazarus IDE on Qt5 in two profiles and two layouts; nothing here needs a key. Before
+# setup has run (the first init) Lazarus is not installed yet, which is a skip, not a todo.
+if has install-lazarus; then
+    section "Lazarus (install-lazarus)"
+    LAZ_MISSING=""
+    for LAZ_F in "$HOME/.lazarus/bin/lazarus-floating" "$HOME/.lazarus/bin/lazarus-docked" \
+            "$HOME/.lazarus-dark/bin/lazarus-floating" "$HOME/.lazarus-dark/bin/lazarus-docked" \
+            "$HOME/.local/share/applications/lazarus-dark.desktop"; do
+        [ -e "$LAZ_F" ] || LAZ_MISSING="$LAZ_MISSING ${LAZ_F/#$HOME/\~}"
+    done
+    if ! dpkg-query -W -f='${Status}' lazarus-project 2> /dev/null | grep -q 'ok installed'; then
+        skip "Lazarus is not installed yet: dev-setup with install-lazarus installs it and builds the Qt5 IDE"
+    elif [ -z "$LAZ_MISSING" ]; then
+        already "Lazarus configured: Qt5 IDE built docked and floating in ~/.lazarus (light) and ~/.lazarus-dark (dark), 'Lazarus (Dark)' launcher; 'lazmode status' shows the layouts"
+    else
+        todo "Lazarus Qt5 IDE incomplete (missing:$LAZ_MISSING): rerun dev-setup with install-lazarus, or 'lazmode rebuild'"
+    fi
+    skip "editor colors per profile (Tools > Options > Editor > Display > Colors) and the dark profile's Object Inspector colors are yours to pick (docs/init-checklist.md)"
+fi
+
 if has install-godot; then
     section "Godot (install-godot)"
     if command -v godot > /dev/null 2>&1; then
@@ -2457,9 +2477,9 @@ fi
 echo
 echo "================================================================="
 if [ ${#TODO[@]} -eq 0 ]; then
-    echo "Init Version 93 complete: nothing left to do. 🎉"
+    echo "Init Version 94 complete: nothing left to do. 🎉"
 else
-    echo "Init Version 93 complete. Still manual (${#TODO[@]}):"
+    echo "Init Version 94 complete. Still manual (${#TODO[@]}):"
     printf '  - %s\n' "${TODO[@]}"
 fi
 echo

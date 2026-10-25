@@ -22,6 +22,16 @@ jobs:
             echo "bash -n $f"
             bash -n "$f"
           done
+      - name: one version number across the bundle
+        # v94: every script's version strings and README's "Current version" must name the same number, so a
+        # missed bump cannot ship again (dev-demo said VERSION=92 under a Version 93 header in v93).
+        run: |
+          grep -n 'Version [0-9]\+\|^VERSION=[0-9]\+' dev-*-chromebook*.sh
+          grep -n 'Current version: v[0-9]\+' README.md
+          found=$( { grep -ho 'Version [0-9]\+\|^VERSION=[0-9]\+' dev-*-chromebook*.sh
+                     grep -o 'Current version: v[0-9]\+' README.md; } | grep -o '[0-9]\+$' | sort -u)
+          echo "version numbers found: $(echo $found)"
+          [ -n "$found" ] && [ "$(printf '%s\n' "$found" | wc -l)" -eq 1 ]
       - name: shellcheck (errors only)
         # ShellCheck comes preinstalled on GitHub's Ubuntu runners.
         run: shellcheck --version && shellcheck -S error dev-*-chromebook*.sh

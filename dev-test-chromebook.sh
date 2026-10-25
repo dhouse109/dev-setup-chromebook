@@ -1,5 +1,5 @@
 #!/bin/bash
-# dev-test-chromebook - Version 93
+# dev-test-chromebook - Version 94
 # Version history: CHANGELOG.md, next to this script in the bundle
 # (one section per script, newest version first).
 #
@@ -418,7 +418,7 @@ info()  { printf '  %-62s %s\n' "$1" "${DIM}INFO${RST} $2"; echo "--- $1: INFO $
 # v92: a check that cannot run because an earlier one already failed for the same cause (counted as SKIP).
 skipped() { printf '  %-62s %s\n' "$1" "${DIM}SKIP${RST} $2"; SKIP=$((SKIP + 1)); LAST=skip; echo "--- $1: SKIP $2" >> "$LOG"; }
 
-echo "Testing Chromebook Linux provisioning (Version 93)... log: $LOG"
+echo "Testing Chromebook Linux provisioning (Version 94)... log: $LOG"
 [ "$QUICK" = 1 ] && echo "(quick mode: slow functional tests will be skipped)"
 
 # v68: say so when dev-init has not applied the secrets file yet. Filling in secrets.env logs
@@ -1151,6 +1151,67 @@ if has install-lazarus; then
     check "fpc source present (fpc-src)"                   'dpkg_has fpc-src'
     check "fpc compiles and runs a program"                'printf "program h;\nbegin writeln(\047hello from fpc\047); end.\n" > h.pas && fpc h.pas > /dev/null && ./h | grep -q "hello from fpc"'
     check "installers were cleaned up"                     '! ls "$ASSETS"/downloads/*.deb ~/fpc-laz*.deb ~/fpc-src*.deb ~/lazarus-project*.deb 2> /dev/null | grep -q .'
+    # v94: the Qt5 IDE that setup builds in two profiles and two layouts, the dark launcher, qt5ct and lazmode.
+    cat > "$WORK/lazarus_check.sh" << 'LAZ_EOF'
+LAZ_VER=$(dpkg-query -W -f='${Version}' lazarus-project 2> /dev/null); LAZ_VER=${LAZ_VER#*:}; LAZ_VER=${LAZ_VER%%-*}
+LAZ_DIR="/usr/share/lazarus/$LAZ_VER"
+P="$HOME/.lazarus"; [ "${2:-}" = dark ] && P="$HOME/.lazarus-dark"
+case "$1" in
+    builds)   # all three binaries there and on Qt5
+        for b in lazarus-floating lazarus-docked lazarus; do
+            [ -x "$P/bin/$b" ] || { echo "missing: $P/bin/$b"; exit 1; }
+            ldd "$P/bin/$b" | grep -q libQt5Pas || { echo "$P/bin/$b does not link libQt5Pas (not a Qt5 build)"; exit 1; }
+        done
+        echo "lazarus-floating, lazarus-docked and lazarus in $P/bin all link libQt5Pas" ;;
+    differ)   # a floating build that came out docked would be byte for byte the docked one
+        [ -f "$P/bin/lazarus-floating" ] && [ -f "$P/bin/lazarus-docked" ] || { echo "a build is missing"; exit 1; }
+        ! cmp -s "$P/bin/lazarus-floating" "$P/bin/lazarus-docked" || { echo "the two builds are identical"; exit 1; } ;;
+    active)
+        if cmp -s "$P/bin/lazarus" "$P/bin/lazarus-docked"; then echo "docked"
+        elif cmp -s "$P/bin/lazarus" "$P/bin/lazarus-floating"; then echo "floating"
+        else echo "bin/lazarus matches neither build"; exit 1; fi ;;
+    unitsdir)
+        d="$LAZ_DIR/units/x86_64-linux/qt5"
+        [ -d "$d" ] || { echo "missing: $d"; exit 1; }
+        [ "$(stat -c %U "$d")" = "$(id -un)" ] || { echo "$d belongs to $(stat -c %U "$d")"; exit 1; }
+        echo "$d, yours" ;;
+    launcher)
+        f="$HOME/.local/share/applications/lazarus-dark.desktop"
+        [ -f "$f" ] || { echo "missing: $f"; exit 1; }
+        e=$(grep -m1 '^Exec=' "$f"); echo "$e"
+        case "$e" in *QT_QPA_PLATFORMTHEME=qt5ct*) ;; *) exit 1 ;; esac
+        case "$e" in *"--pcp=$HOME/.lazarus-dark"*) ;; *) exit 1 ;; esac
+        grep -q '^Name=Lazarus (Dark)$' "$f" || { echo "Name= is not 'Lazarus (Dark)'"; exit 1; } ;;
+    qt5ct)
+        f="$HOME/.config/qt5ct/qt5ct.conf"
+        s=$(sed -n 's/^style=//p' "$f" | head -n 1); c=$(sed -n 's/^custom_palette=//p' "$f" | head -n 1)
+        p=$(sed -n 's/^color_scheme_path=//p' "$f" | head -n 1)
+        echo "style=$s custom_palette=$c color_scheme_path=$p"
+        [ "$s" = Fusion ] && [ "$c" = true ] && [ "${p##*/}" = darker.conf ] && [ -f "$p" ] ;;
+esac
+LAZ_EOF
+    check "Qt5 packages for the IDE (libqt5pas-dev, qt5ct)"  'dpkg_has libqt5pas-dev && dpkg_has qt5ct'
+    hint  "rerun setup with install-lazarus (v94 adds them)"
+    check "Qt5 units folder in the Lazarus tree is yours"         'bash lazarus_check.sh unitsdir'
+    hint  "rerun setup with install-lazarus; by hand: sudo install -d -o \$USER -g \$USER /usr/share/lazarus/<ver>/units/x86_64-linux/qt5"
+    for LAZ_P in light dark; do
+        LAZ_PD="~/.lazarus"; [ "$LAZ_P" = dark ] && LAZ_PD="~/.lazarus-dark"
+        check "$LAZ_P profile ($LAZ_PD): floating, docked and active builds on Qt5" "bash lazarus_check.sh builds $LAZ_P"
+        hint  "'lazmode rebuild --profile $LAZ_P' (logs in assets/logs/lazarus-build-$LAZ_P-*.log), or rerun setup with install-lazarus"
+        check "$LAZ_P profile: the floating and docked builds differ"        "bash lazarus_check.sh differ $LAZ_P"
+        hint  "the floating build came out docked (lazbuild kept the docking packages installed in this profile), so 'lazmode dock off' has nothing to switch to: lazmode's build steps need a fix"
+        check "$LAZ_P profile: bin/lazarus is one of the two builds"         "bash lazarus_check.sh active $LAZ_P"
+        hint  "'lazmode dock on' (or off) puts a build back; the IDE's own Tools > Build Lazarus replaces bin/lazarus, possibly with GTK2"
+    done
+    check "Lazarus (Dark) launcher: qt5ct and --pcp=~/.lazarus-dark"   'bash lazarus_check.sh launcher'
+    hint  "rerun setup with install-lazarus (it writes ~/.local/share/applications/lazarus-dark.desktop)"
+    check "qt5ct config present (~/.config/qt5ct/qt5ct.conf)"          '[ -f ~/.config/qt5ct/qt5ct.conf ]'
+    hint  "rerun setup with install-lazarus, or 'lazmode theme' and Apply"
+    warn  "qt5ct: Fusion style with the darker palette"                'bash lazarus_check.sh qt5ct'
+    hint  "changed in qt5ct ('lazmode theme')? That is your call; setup leaves an existing qt5ct.conf alone"
+    check "lazmode status"                                             'lazmode status'
+    hint  "rerun setup with install-lazarus (it writes ~/.local/bin/lazmode)"
+    check "lazbuild with the dark profile (--pcp=~/.lazarus-dark)"     'lazbuild --pcp="$HOME/.lazarus-dark" --version'
 fi
 
 # Flatpak & media tools
@@ -4931,7 +4992,19 @@ if ! has nodisk; then
     has install-vscode   && dapt   editors "VS Code"         code
     has install-windsurf && dapt   editors "Windsurf"        windsurf
     has install-cursor   && dpaths editors "Cursor AppImage" "$HOME/.local/bin/cursor"
-    has install-lazarus  && dapt   editors "Lazarus + Free Pascal" fpc-laz fpc-src lazarus-project
+    # v94: plus the Qt5 IDE builds and their units in both profiles, the qt5 units folder setup makes in the
+    # system tree, and the two Qt5 packages: the debs alone left out most of what Lazarus takes.
+    if has install-lazarus; then
+        LAZ_U=$(ls -d /usr/share/lazarus/*/units/x86_64-linux/qt5 2> /dev/null | tr '\n' ' ')
+        LAZ_A=$(_apt_bytes fpc-laz fpc-src lazarus-project libqt5pas-dev qt5ct)
+        # shellcheck disable=SC2086   # LAZ_U: folder names without spaces, one per installed version
+        LAZ_D=$(_disk_bytes "$HOME/.lazarus/bin" "$HOME/.lazarus/units" "$HOME/.lazarus/lib" \
+            "$HOME/.lazarus-dark/bin" "$HOME/.lazarus-dark/units" "$HOME/.lazarus-dark/lib" $LAZ_U)
+        [[ "$LAZ_A" =~ ^[0-9]+$ ]] || LAZ_A=0
+        [[ "$LAZ_D" =~ ^[0-9]+$ ]] || LAZ_D=0
+        _disk_report editors "Lazarus + Free Pascal (debs, Qt5 IDE builds in ~/.lazarus and ~/.lazarus-dark)" "$((LAZ_A + LAZ_D))" \
+            "apt: fpc-laz fpc-src lazarus-project libqt5pas-dev qt5ct; du: ~/.lazarus{,-dark}/{bin,units,lib} $LAZ_U"
+    fi
     has install-rust     && dpaths rust "rustup toolchains + cargo (incl. wasm and Android targets)" "$HOME/.rustup" "$HOME/.cargo"
     if has install-node; then
         dpaths node "Node (nvm) + global CLIs: Codex, Gemini, Angular, TanStack, Tauri, eas, Vercel, wrangler, MCP Inspector, OpenClaw" "$NVM_DIR"
@@ -5121,7 +5194,7 @@ fi
 # =================================================================
 echo
 echo "================================================================="
-echo "Test Version 93 complete: ${GRN}PASS $PASS${RST}   ${RED}FAIL $FAIL${RST}   ${YEL}WARN $WARN${RST}   SKIP $SKIP"
+echo "Test Version 94 complete: ${GRN}PASS $PASS${RST}   ${RED}FAIL $FAIL${RST}   ${YEL}WARN $WARN${RST}   SKIP $SKIP"
 if [ ${#FAILED[@]} -gt 0 ]; then
     echo
     echo "Failed (must fix to get started):"
