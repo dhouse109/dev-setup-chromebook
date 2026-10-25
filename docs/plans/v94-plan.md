@@ -184,7 +184,9 @@ QT_QPA_PLATFORMTHEME=qt5ct qt5ct        # Fusion + darker palette, Apply
 - GTK2 Lazarus under Crostini: some modal dialogs (Run Parameters, New Project) drew blank until resized
   and never took keyboard focus. Tools → Options worked. Removing `gtk2-engines-pixbuf` didn't help. Qt5
   fixed it.
-- A plain `--build-ide=` rebuild drops the docking packages, which is why the IDE came back floating.
+- The first Qt5 rebuild came back floating because the profile’s install list had no docking packages.
+  `--add-package` saves them to that list (`StaticAutoInstallPackages` in `miscellaneousoptions.xml`), so
+  every later `--build-ide=` keeps them unless they’re removed (corrected after the plan; fixed in 6db15e4).
 - `startlazarus` buffers its output, so `--debug-log` and `tee` logs get cut off when Lazarus is killed.
   They're not useful for diagnosing hangs.
 - ChromeOS draws the title bars, so no Linux theme changes them.
