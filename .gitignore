@@ -1,0 +1,26 @@
+# Everything the scripts write next to themselves: downloads, logs, disk reports, generated helpers,
+# and the installers you supply (InterBase, Antigravity tarballs, Cursor AppImage).
+assets/
+
+# Secrets never belong here. The scripts keep them in ~/.config/dev-init/secrets.env, outside any repo;
+# these lines catch a copy dropped in by mistake.
+secrets.env
+*.env
+.env.*
+*.pem
+*.key
+id_ed25519*
+
+# Run output
+*.log
+*.tsv
+release/
+
+# Marker left by the release kit
+.release-kit
+
+# Editors and OS
+.vscode/
+.idea/
+*.swp
+.DS_Store

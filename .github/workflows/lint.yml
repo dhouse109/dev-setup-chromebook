@@ -1,0 +1,37 @@
+# Checks on every push and pull request. The scripts themselves only run on a Chromebook, so CI checks
+# what can be checked anywhere: that bash can parse them, that ShellCheck finds no errors (warnings are
+# left for the comments to explain), and that no secret got committed.
+name: lint
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  shell:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: bash -n
+        run: |
+          for f in dev-*-chromebook*.sh; do
+            echo "bash -n $f"
+            bash -n "$f"
+          done
+      - name: shellcheck (errors only)
+        # ShellCheck comes preinstalled on GitHub's Ubuntu runners.
+        run: shellcheck --version && shellcheck -S error dev-*-chromebook*.sh
+
+  secrets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
