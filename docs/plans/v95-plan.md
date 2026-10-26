@@ -1,6 +1,6 @@
 # dev-setup-chromebook v95 plan
 
-Oct 25, 2026 · draft, choices not yet made
+Oct 25, 2026 · choices made Oct 25 (items 2 and 3)
 
 ## Scope
 
@@ -9,13 +9,13 @@ tagged release (`v94` on `main`, Oct 25 2026).
 
 1. **Branch names** that can't collide with release tags (repo process; no script change).
 2. **The qt5ct check** stops warning about a palette you chose yourself.
-3. **Floating launchers** for Lazarus (optional; your call).
+3. ~~Floating launchers~~ for Lazarus: **not doing** (decided Oct 25; two launchers plus `lazmode dock` stay).
 
-Items 2 and 3 change scripts, so the bundle goes to v95: all four scripts bumped, CHANGELOG entries under
+Item 2 changes a script, so the bundle goes to v95: all four scripts bumped, CHANGELOG entries under
 all four sections ("version bump only" where nothing changed). Anything v94 use turns up can join.
 
-Each item below lists its choices, with a recommendation. Strike or change any of them; the build starts
-once they are settled.
+Each item below lists the choices that were offered; the decision is marked. The build starts once
+"anything else for v95" is settled.
 
 ## 1. Branch names (in this plan's PR, not in v95's build)
 
@@ -47,7 +47,7 @@ custom palette, and that palette file exists.
 
 | Choice | What dev-test does |
 | --- | --- |
-| **A (recommended)** | PASS naming the style and palette ("Fusion, palette waves") whenever `custom_palette=true` and `color_scheme_path` names a file that exists. WARN only when the palette file is missing or `custom_palette=false` (the dark launcher would then show the style's light palette), with `lazmode theme` as the fix. |
+| **A (chosen)** | PASS naming the style and palette ("Fusion, palette waves") whenever `custom_palette=true` and `color_scheme_path` names a file that exists. WARN only when the palette file is missing or `custom_palette=false` (the dark launcher would then show the style's light palette), with `lazmode theme` as the fix. |
 | B | Always an INFO line with the style and palette; never PASS, WARN or FAIL. |
 | C | Keep v94's WARN for anything other than darker. |
 
@@ -63,11 +63,11 @@ layout `lazmode dock on|off` made active. You asked whether there should be four
 
 | Choice | What it adds |
 | --- | --- |
-| **A** | Nothing: two launchers, layouts switched with `lazmode dock`. v94 as it is. |
-| **B (recommended, if you want four)** | Two more launchers, **Lazarus (Floating)** and **Lazarus (Dark, Floating)**, that open the floating build for that session only. The default stays whatever `lazmode dock` set, so the stock launchers keep their meaning. |
+| **A (chosen)** | Nothing: two launchers, layouts switched with `lazmode dock`. v94 as it is. |
+| B | Two more launchers, **Lazarus (Floating)** and **Lazarus (Dark, Floating)**, that open the floating build for that session only. The default stays whatever `lazmode dock` set, so the stock launchers keep their meaning. |
 | C | Four launchers that each switch the profile's default (`lazmode dock on/off`) and then start it, so the last one used becomes the default. |
 
-**How B would work:** a new `lazmode open [--profile light|dark] [--layout docked|floating] [FILE]`
+**Not built.** Kept for the record, in case it comes back. **How B would work:** a new `lazmode open [--profile light|dark] [--layout docked|floating] [FILE]`
 starts `<profile>/bin/lazarus-<layout>` with the profile's `--pcp` (and `QT_QPA_PLATFORMTHEME=qt5ct` for
 dark). The new launchers' `Exec=` lines call it, so the launch logic stays in one place, like the builds.
 Things the build has to handle:
@@ -106,6 +106,6 @@ Init: the "configured" line names four launchers. Docs: checklist, README's `laz
 
 ## Choices to make
 
-- [ ] Item 2: A, B or C (recommended: A)
-- [ ] Item 3: A, B or C (recommended: B if you want four launchers, else A)
+- [x] Item 2: A (PASS for any working palette; WARN only when the dark launcher wouldn't look dark)
+- [x] Item 3: A (no extra launchers)
 - [ ] Anything else for v95
