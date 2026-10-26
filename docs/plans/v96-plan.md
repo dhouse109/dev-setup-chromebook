@@ -460,8 +460,11 @@ Devin offered Native Debug from Open VSX on the first F5, `lazbuild` built the D
 thread, switching between threads. The Debug Console takes gdb commands (`p <expr>`), not bare variable
 names: typing `FDaemonWorkerThread` there gives "Undefined command". Two more from the same session:
 `string` locals (`aMessage`, `LogFilePath`) and a `Text` file variable showed as `<unknown>` / "unknown
-type" in Variables, which points at the project's debug-info type (DWARF 2 or "automatic") rather than gdb;
-DWARF 3 (`-gw3`) is what gdb reads Free Pascal's strings and classes with. And Self appears to gdb as
+type" in Variables. The project was already on **Dwarf 3 (beta) (`-gw3`)**: that format is aimed at Lazarus's
+own FpDebug and describes strings and file types in a way gdb can't read. For gdb, Lazarus's choice is
+**Dwarf 2 with sets (`-gw2 -godwarfsets`)**, where an AnsiString is a plain pointer to chars that gdb
+prints as text (FpDebug reads it too). The project also had "Use external debug symbols file (`-Xg`)" on;
+gdb found the `.dbg` file through its debug link, so breakpoints worked. And Self appears to gdb as
 `this` (`Execute (this=0x…)`), so fields are watched as `this.<Field>` from a method's frame.
 
 | Choice: the command | |
@@ -507,8 +510,9 @@ DWARF 3 (`-gw3`) is what gdb reads Free Pascal's strings and classes with. And S
   - Writes `.vscode/extensions.json` (recommendations above).
   - **Debug info check:** if the build mode used has no debug info (`GenerateDebugInfo` false), it says
     so and how to turn it on (Project Options → Compiler Options → Debugging), since gdb then can't stop
-    at breakpoints. If the type isn't DWARF 3 (`-gw3`), it says that gdb will show strings and some
-    types as `<unknown>` (Oct 26) and how to switch it; it doesn't edit the `.lpi`. The build confirms
+    at breakpoints. If the type is DWARF 3 (`-gw3`), it says that gdb will show strings and some types
+    as `<unknown>` (Oct 26) and how to switch to Dwarf 2 with sets (`-gw2 -godwarfsets`); it doesn't
+    edit the `.lpi`. The build confirms
     the exact `.lpi` keys and `lazbuild`'s mode flag.
   - Existing files are kept unless `--force` (a NOTICE names them), so your own edits survive.
 - **`delphi N build PROJECT.dpr`** (new): runs that version's `dcc32.exe` (found under the prefix's
