@@ -1,6 +1,6 @@
 # dev-setup-chromebook v95 plan
 
-Oct 25, 2026 · all choices made Oct 25
+Oct 25, 2026 · choices made Oct 25 (items 1–4) and Oct 26 (items 5–6)
 
 ## Scope
 
@@ -11,8 +11,10 @@ tagged release (`v94` on `main`, Oct 25 2026).
 2. **The qt5ct check** stops warning about a palette you chose yourself.
 3. ~~Floating launchers~~ for Lazarus: **not doing** (decided Oct 25; two launchers plus `lazmode dock` stay).
 4. **Packages installed from inside the IDE** survive `lazmode dock on|off` (found Oct 25 in use).
+5. **herdr**, a terminal multiplexer for coding agents: new flag `install-herdr` (added Oct 26).
+6. **tmux** in the base packages (added Oct 26).
 
-Items 2 and 4 change scripts, so the bundle goes to v95: all four scripts bumped, CHANGELOG entries under
+Items 2, 4, 5 and 6 change scripts, so the bundle goes to v95: all four scripts bumped, CHANGELOG entries under
 all four sections ("version bump only" where nothing changed). Anything v94 use turns up can join.
 
 Each item below lists the choices that were offered; the decision is marked. The build starts once
@@ -161,6 +163,71 @@ them, and docked becomes active again (`lazmode rebuild` treats "matches neither
 `lazmode status` afterwards shows the adopted build and the floating layout as stale; `dock off` (A:
 rebuilds it) gives a floating IDE that opens the project without asking.
 
+## 5. herdr (new flag: install-herdr)
+
+**What:** [herdr](https://github.com/herdrdev/herdr) (herdrdev/herdr, AGPL-3.0, v0.9.5 of Oct 14 2026)
+is a terminal multiplexer for coding agents: tmux-style workspaces and panes, plus each agent's state
+(working, blocked, done) and session restore after a server restart. One Rust binary for Linux x86-64,
+no Node. It detects Claude Code, Codex, Hermes, Antigravity CLI, Cursor Agent and others; Gemini CLI
+and aider are not on its integration list (they run in panes, without state tracking or restore).
+
+**Flag (decided Oct 26):** `install-herdr`, in `install-all` (README's "single flags" table), pulling in
+`install-node` through a dependency guard like `install-playwright`'s, so `install-herdr` alone also
+gives Claude Code, Codex and Gemini CLI. `install-node` does not pull in herdr. Same flag expansion in
+all four scripts.
+
+**Setup:**
+
+- herdr's own installer, the install `herdr update` knows how to update (Homebrew, mise and Nix
+  installs update through those instead). Saved to `assets/downloads/herdr-install.sh` and run with
+  `sh`, not piped from curl. It fetches `https://herdr.dev/latest.json`, checks the binary's SHA-256
+  from that manifest, and installs to `~/.local/bin/herdr` (`HERDR_INSTALL_DIR`), already on PATH.
+- Guarded: an installed herdr is left alone (it updates itself; `herdr update` by hand). A failed
+  download or check is a NOTICE and the run goes on, named in the closing summary.
+- No config written: `~/.config/herdr/config.toml` stays herdr's defaults until you change it.
+
+**Init** (integrations are config, so init, not setup):
+
+- For each agent on PATH that herdr supports (`claude`, `codex`; also `hermes`, `agy`/Antigravity CLI
+  and `cursor-agent` when installed): `herdr integration install <agent>` when `herdr integration
+  status` doesn't show the current one, reported as already / done.
+- Claude Code's integration writes `~/.claude/hooks/herdr-agent-state.sh` and adds hook entries to
+  `~/.claude/settings.json` (or under `CLAUDE_CONFIG_DIR`). It needs `~/.claude` to exist, which happens
+  on Claude Code's first run: before that, a skip ("start claude once, then rerun init"), not a todo.
+- No keys, no prompts.
+
+**Test:**
+
+- `herdr --version`, and that it is `~/.local/bin/herdr` (check).
+- `herdr --default-config` prints a config (check).
+- `herdr integration status` shows the Claude Code integration installed and current (WARN: init or
+  `herdr integration install claude` is the fix); the same for Codex.
+- Disk report: a line for herdr (`~/.local/bin/herdr`, `~/.config/herdr`).
+
+**Docs:** README (single-flags table, and `herdr` among the commands), `docs/init-checklist.md` (flag,
+the integration step, the tmux note from item 6), CHANGELOG. dev-demo: flag expansion only.
+
+**To verify on the Chromebook:** herdr in ChromeOS's Terminal (keys, mouse, colours); its background
+server keeps running after the terminal that started it closes (herdr says so for Linux since 0.9.4);
+a Claude Code pane shows blocked when it asks a question, and comes back after `herdr server stop` and
+a restart.
+
+## 6. tmux (base packages)
+
+**Why:** the bundle doesn't install tmux. herdr is better for agents (item 5); tmux stays the general
+tool for detaching long jobs, SSH sessions to the other laptops over Tailscale that survive a dropped
+connection, and scripts. It is a small Debian package with no setup, like jq, htop and direnv.
+
+**Decided Oct 26:** no flag. `tmux` joins setup's base apt list (always installed). No `~/.tmux.conf`
+written and no auto-start added to `~/.bashrc`.
+
+**Test:** `tmux -V` added to the base section's command check.
+
+**Docs:** the init checklist notes that tmux and herdr both use **Ctrl+B** as their prefix; herdr inside
+tmux works, but a shell that auto-starts tmux makes herdr see `tmux` instead of the agent in a pane.
+If you add such a rule, skip it when `HERDR_ENV=1` (herdr's documented guard):
+`if [[ -z ${TMUX:-} && ${HERDR_ENV:-} != 1 ]]; then tmux new-session -A -s main; fi`.
+
 ## Carried forward
 
 **From the v93 plan, on-hardware checks still open** (fixes they need become v95 items):
@@ -183,4 +250,6 @@ rebuilds it) gives a floating IDE that opens the project without asking.
 - [x] Item 2: A (PASS for any working palette; WARN only when the dark launcher wouldn't look dark)
 - [x] Item 3: A (no extra launchers)
 - [x] Item 4: A (a switch to a stale layout rebuilds it first); cause confirmed from the dark profile
+- [x] Item 5: `install-herdr` in `install-all`, pulling in `install-node`; init installs the integrations
+- [x] Item 6: tmux in the base packages, no flag
 - [ ] Anything else for v95
