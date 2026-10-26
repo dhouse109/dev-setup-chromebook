@@ -1,6 +1,6 @@
 # dev-setup-chromebook v96 plan
 
-Oct 26, 2026 · item 1 chosen Oct 26
+Oct 26, 2026 · item 1 chosen Oct 26 · item 2 added Oct 26
 
 ## Scope
 
@@ -9,9 +9,12 @@ run turns up and doesn't go into v95 itself can join this plan.
 
 1. **Thread support for Free Pascal programs:** setup defines `UseCThreads` for every compile, in
    `~/.fpc.cfg` (found Oct 26 2026 with a Lazarus example).
+2. **Headless Drupal + Astro demo:** a new dev-demo, `drupal/drupal-astro`, that builds Umami's recipes
+   into a static Astro site from core's JSON:API, next to `drupal/drupal-nuxt` for a "one Drupal, two
+   front ends" comparison. Nothing is installed for Astro itself.
 
 Item 1 changes scripts, so the bundle goes to v96: all four scripts bumped, CHANGELOG entries under all
-four sections ("version bump only" where nothing changed).
+four sections ("version bump only" where nothing changed). Item 2 changes dev-demo only.
 
 Each item lists the choices that were offered; the decision is marked. The build starts once "anything
 else for v96" is settled.
@@ -113,6 +116,86 @@ created with the right `#INCLUDE`. TDaemon (Clean up and Build), `sudo ./TestDae
 `sudo systemctl daemon-reload`, `sudo systemctl start TestDaemon`: the log shows "Daemon received
 start signal". `lazmode rebuild` still works with the new file in place.
 
+## 2. Headless Drupal + Astro demo (dev-demo, `drupal/drupal-astro`)
+
+**Asked Oct 26 2026:** whether Astro belongs in the bundle. Astro is not a CMS: it is a JavaScript
+framework for content sites (static by default, no JavaScript shipped unless a component asks for it),
+with no admin UI or content store of its own. Its content comes from Markdown or from a CMS, and headless
+Drupal is a common source. Cloudflare acquired the company in January 2026; the framework stays MIT
+and open source. Astro 7 is the current major (June 2026).
+
+**Setup, test, init: nothing.** Astro follows the bundle's rule that frameworks stay per-project: it has
+no global CLI (`npm create astro@latest` scaffolds a project, which pins its own version), and Node,
+Composer and wrangler are already there. So Astro gets a demo, not a flag.
+
+**The demo** mirrors `drupal/drupal-nuxt` (v91) so the two read side by side: the same Umami recipes
+from the same JSON:API, rendered two ways.
+
+| | drupal-nuxt (v91) | drupal-astro (v96) |
+| --- | --- | --- |
+| Rendering | On the server, per request (Nuxt 4 SSR) | Ahead of time: `astro build` writes one HTML file per recipe |
+| Drupal needed | While the site runs | Only while it builds |
+| Change a recipe in Drupal | Shows on the next page load | Shows after the next build |
+| JavaScript in the browser | Nuxt's runtime (hydration) | None |
+| Ports | Nuxt dev :3020, production :3021 | Astro dev :4321, `astro preview` of the build :4322 |
+
+**What it generates** (in `~/dev-demo/drupal/drupal-astro`):
+
+- `astro/` with `package.json` (`astro` `^7`, no UI framework), `astro.config.mjs`, and a content
+  collection whose loader reads `node/recipe` from JSON:API at build time (following `links.next`, only
+  the fields it shows) and validates them with `astro/zod`. Drupal's address is config, overridable
+  with `DRUPAL_URL`.
+- `src/pages/index.astro` (the recipe list) and `src/pages/recipes/[slug].astro` (one static page per
+  recipe from `getStaticPaths`), with the same titles and difficulty labels as the Nuxt version.
+- Images go through Astro's `<Image>` with Drupal's host in `image.domains`, so the build downloads and
+  resizes them into `dist/`. The built site then stands alone: no links back to `127.0.0.1:8891`.
+- A launcher (`run`), checking `demo_need php`, `composer install-web` and `npm install-node` the way
+  drupal-nuxt's does.
+
+**Launcher items:**
+
+- `serve`: start Drupal (installing Umami the first time) and Astro's dev server on :4321.
+- `build`: `astro build`, then `astro preview` serving `dist/` on :4322.
+- `api`: one raw JSON:API request, the data the loader turns into pages (same as drupal-nuxt's).
+- `source`: show the recipe titles in the files under `dist/`, then stop Drupal and show they are
+  still served: the point of a static build.
+- `compare`: open Nuxt (:3020) and Astro (:4321) together; edit a recipe title in Drupal and see Nuxt
+  pick it up on reload while Astro's build needs `build` again. Only when drupal-nuxt is installed.
+- `drupal`: open Drupal (admin / admin).
+- `deploy`: with wrangler (install-cloudflare), deploy `dist/` as static assets on Cloudflare after
+  asking, with `CLOUDFLARE_API_TOKEN` or `wrangler login`, as the cloudflare demo's `deploy` does.
+  Drupal stays on the Chromebook; only the built pages go up.
+- `stop` and `reset`, as in drupal-nuxt.
+
+| Choice: where the Drupal back end comes from | |
+| --- | --- |
+| **A (recommended)** | One shared site. Umami moves to `drupal/umami-headless` (PHP's built-in server + SQLite, :8891) with a small launcher of its own (`up`, `stop`, `reset`), and both drupal-nuxt and drupal-astro use it. An existing `drupal-nuxt/drupal` is moved there on the first run, not reinstalled. The comparison is on literally the same content, and the second copy's \~250 MB isn't spent. drupal-nuxt's launcher changes to call it. |
+| B | Its own site: drupal-astro installs a second Umami on :8892. Self-contained, drupal-nuxt untouched, but \~250 MB more and the two sites' content can drift, so `compare` edits one site only. |
+
+| Choice: which flag brings the demo | |
+| --- | --- |
+| **A (recommended)** | `install-web` (Composer, Drupal's PHP extensions; in install-all), next to the `demo_web` and `demo_drupal` demos. Astro has nothing to do with Vue. |
+| B | `install-vue`, next to drupal-nuxt, so the pair always arrive together. |
+
+| Choice: rendering modes shown | |
+| --- | --- |
+| **A (recommended)** | Static only, Astro's default, which is what sets it apart from Nuxt here. |
+| B | Static plus one page rendered on demand (the `@astrojs/node` adapter and a live content collection), to show Astro can do both. Adds an adapter and a server process. |
+
+**Docs:**
+
+- `docs/dev-demo.md`: a paragraph for `drupal/drupal-astro` after drupal-nuxt's, the footprint rows
+  (generated sources under 1 MB; `node_modules` on first serve, measured during the build), and, under
+  choice A, `drupal/umami-headless` replacing drupal-nuxt's own Drupal row.
+- README's demo list. CHANGELOG, dev-demo section.
+
+**To verify on the Chromebook:** `dev-demo-chromebook.sh install-web` (with install-node) creates
+`drupal/drupal-astro`; `serve` shows the recipes on :4321; `build` then `source` lists the titles from
+`dist/` and the preview still serves them with Drupal stopped; images load from `dist/`, not :8891.
+Under choice A, a machine that already has drupal-nuxt's site keeps its content after the move, and
+drupal-nuxt's `serve` still works. `compare` shows Nuxt picking up an edit that Astro shows only after
+`build`. `deploy` is a hand check once wrangler is logged in.
+
 ## Carried forward
 
 **From v95** (its own on-hardware checks, in the v95 plan): `lazmode`'s install-list handling and
@@ -139,4 +222,8 @@ go into v95 if you keep them there, otherwise here.
 - [x] Item 1: C (`-dUseCThreads` in `~/.fpc.cfg`, written by setup under install-lazarus)
 - [ ] Item 1, off switch: A (none) or B (`FPC_USE_CTHREADS=0`)
 - [ ] Item 1, demo: A (TDaemon note) or B (no change)
+- [x] Item 2: an Astro + Drupal demo (dev-demo only; no setup flag for Astro)
+- [ ] Item 2, back end: A (shared `drupal/umami-headless`) or B (its own site on :8892)
+- [ ] Item 2, flag: A (`install-web`) or B (`install-vue`)
+- [ ] Item 2, rendering: A (static only) or B (static plus one on-demand page)
 - [ ] Anything else for v96
