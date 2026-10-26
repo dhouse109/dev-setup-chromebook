@@ -1,6 +1,6 @@
 # dev-setup-chromebook v96 plan
 
-Oct 26, 2026 · item 1 chosen Oct 26 (all choices) · item 2 added Oct 26, back end, flag and rendering chosen Oct 26 · item 3 added and chosen Oct 26, Gemini and profile findings added Oct 26
+Oct 26, 2026 · item 1 chosen Oct 26 (all choices) · item 2 added Oct 26, back end, flag and rendering chosen Oct 26 · item 3 added and chosen Oct 26, revised Oct 26 (memory) · item 4 added and chosen Oct 26
 
 ## Scope
 
@@ -12,12 +12,13 @@ run turns up and doesn't go into v95 itself can join this plan.
 2. **Headless Drupal + Astro demo:** a new dev-demo, `drupal/drupal-astro`, that builds Umami's recipes
    into a static Astro site from core's JSON:API, next to `drupal/drupal-nuxt` for a "one Drupal, two
    front ends" comparison. Nothing is installed for Astro itself.
-3. **Devin Desktop (formerly Windsurf) under X11, and CodeLLDB:** install-windsurf starts Devin Desktop
-   with `--ozone-platform=x11` from its own launcher entry and a terminal wrapper (it froze or closed
-   on Wayland, Oct 26 2026), installs CodeLLDB's Linux add-on (which can't install itself there) into
-   every Devin profile, and the test warns about Gemini Code Assist, which crashed its window.
+3. **Devin Desktop (formerly Windsurf) under X11:** install-windsurf starts Devin Desktop with
+   `--ozone-platform=x11` from its own launcher entry and a terminal wrapper (it froze or closed on
+   Wayland, Oct 26 2026); the later freezes were memory, documented as a Crostini gotcha.
+4. **Links from Linux open in ChromeOS's browser:** setup registers ChromeOS's browser as Linux's
+   handler for web links, instead of the Linux Google Chrome the base install registers.
 
-Items 1 and 3 change scripts, so the bundle goes to v96: all four scripts bumped, CHANGELOG entries under all
+Items 1, 3 and 4 change scripts, so the bundle goes to v96: all four scripts bumped, CHANGELOG entries under all
 four sections ("version bump only" where nothing changed). Item 2 changes dev-demo only.
 
 Each item lists the choices that were offered; the decision is marked. The build starts once "anything
@@ -215,56 +216,67 @@ drupal-nuxt's `serve` still works. `compare` shows Nuxt and the island picking u
 page shows only after `build`. `deploy` is a hand check once wrangler is logged in (pages up, island
 on its fallback).
 
-## 3. Devin Desktop (formerly Windsurf) under X11, and CodeLLDB (install-windsurf)
+## 3. Devin Desktop (formerly Windsurf) under X11 (install-windsurf)
 
 **Found Oct 26 2026** (installed Oct 24, worked at first, then wouldn't sign in or stay open). Windsurf is
 now **Devin Desktop** (1.126.0): the apt package is `devin-desktop`, and `windsurf` is a transitional
 package that pulls it in. Its window either froze ("The window is not responding") or vanished ("The
-window terminated unexpectedly (reason: 'clean-exit', code: '0')"), about 30 s after launch or when
-**Login** was clicked. What the logs ruled out and what fixed it:
+window terminated unexpectedly (reason: 'clean-exit', code: '0')"). Two separate causes:
+
+**Cause 1, the Wayland path** (the sign-in freeze):
 
 - Not the extensions: `devin-desktop --disable-extensions --verbose` froze the same way.
 - Not the shell: the launcher-started run logged "Unable to resolve your shell environment in a
   reasonable time", but a terminal-started run skips that step (`resolveShellEnv(): skipped`) and failed
   the same way.
 - Not the keyring: the stored `windsurf_auth.sessions` secret was found and decrypted.
-- **The Wayland path.** Electron ran on ChromeOS's Wayland (`ozone/platform/wayland`). Right after
-  `devin.login`, the log went silent for 62 s, a child process died, then `Fatal Wayland communication
-  error: Broken pipe` and `FATAL ... Failed to shutdown`.
-- **Fix:** `devin-desktop --ozone-platform=x11` (XWayland). Sign-in through ChromeOS's browser then
-  worked, all extensions loaded, and it stayed up. No `--disable-gpu` needed.
+- Electron ran on ChromeOS's Wayland (`ozone/platform/wayland`). Right after `devin.login`, the log went
+  silent for 62 s, a child process died, then `Fatal Wayland communication error: Broken pipe` and
+  `FATAL ... Failed to shutdown`.
+- **Fix:** `devin-desktop --ozone-platform=x11` (XWayland). Sign-in then completed and the window stayed
+  up. Same family as Android Studio's Wayland dimming (v70).
 - **The launcher ignored an edited copy.** A copy of `devin-desktop.desktop` in
   `~/.local/share/applications` with the flag added was **not** used by the ChromeOS launcher, even after
   shutting Linux down: the icon still started it on Wayland and it crashed. A **separately named** entry
-  (`devin-desktop-x11.desktop`, "Devin (X11)") worked. Same family as Android Studio's Wayland dimming
-  (v70).
+  (`devin-desktop-x11.desktop`, "Devin (X11)") worked.
 
-**CodeLLDB** (`vadimcn.vscode-lldb`, imported from VS Code): Open VSX serves the universal package,
-which downloads its Linux add-on on first start through `workbench.extensions.command.installFromVSIX`.
-Devin Desktop doesn't have that command: "Platform package installation failed ... command not found".
-Installing the platform `.vsix` with `devin-desktop --install-extension` fixed it, once it went into the
-right profile (below).
+**Cause 2, memory** (the freezes that came back on X11):
 
-**Gemini Code Assist crashed the window, even on X11** (found later on Oct 26). After the X11 fix,
-three launches in a row still died: once frozen and closed 35 s later, once gone 11 s after launch with no
-freeze, the last after a Linux restart. Both logs end the same way: the Devin cloud panel mounts and
-`google.geminicodeassist` activates (`onLanguage:Log`, because the window reopened with the Output panel
-showing logs; its log grammar also failed to load), and seconds later the window's renderer exits
-("clean-exit"). CodeLLDB was cleared: it activates on `onStartupFinished`, which neither run reached. Two
-native crash dumps were also written during the X11 runs that seemed fine (11:32 and 11:39). Started with
-`--disable-extension google.geminicodeassist`, Devin stayed up; uninstalling it fixed it. Google
-supports Gemini Code Assist in VS Code and JetBrains, not in VS Code forks, and Devin has its own agent.
-Two other imported extensions failed on every start without causing the crash, and were removed too:
-`coenraads.bracket-pair-colorizer-2` (needs a `vscode-textmate` module the fork doesn't ship; bracket
-pair colouring is built in now) and `s-nlf-fh.glassit` (`pgrep 'code'` fails).
+- With X11 in place, the window still froze or closed at random: once ~35 s in, once 11 s in, once
+  after a Linux restart. Each time some extension happened to be starting (Gemini Code Assist in two
+  runs, CodeLLDB in others), so each looked guilty in turn. They weren't: the extension host's exits all
+  read "renderer closed the MessagePort", i.e. it lost the frozen window. Switching groups of extensions
+  off gave contradictory results (fewer extensions froze, more didn't); no extensions at all held up.
+- Watching the live log, each freeze followed a burst of hundreds of renderer messages from Devin's own
+  Devin Cloud Session panel (`devin-webapp-host`, "Rendering was performed in a subtree hidden by
+  content-visibility"), and one startup took 66 s to reach Devin's cloud (`acpCloudConnectedMs=66561`).
+- **The snapshot settled it:** Linux had 6.4 GB, **no swap**, 1.2 GB available. All processes together
+  held 2.2 GB (Devin Desktop 1.65 GB of it, its window process at 91% CPU), Linux's own slab and shmem
+  ~0.2 GB, yet 4.9 GB showed as used: ChromeOS had reclaimed ~2.5 GB from the Linux VM for itself. A
+  copy of **Google Chrome inside Linux** (from the bundle's base install) was also running, ~0.3 GB once
+  shared pages are counted, with one process at 91% CPU: Devin's Login had opened the sign-in page there,
+  because Linux Chrome was registered as the default browser (item 4).
+- So Devin plus its agent extensions needs ~2 GB of headroom, and when ChromeOS takes memory back, Linux
+  has nowhere to put the overflow. **Fixes are operational:** keep ChromeOS's own tabs and Android apps
+  light while Devin is open (Search + Esc shows them), keep Linux Chrome closed (item 4 stops sign-ins
+  opening it), and keep Devin lean. Heavy Devin use belongs on the 16–32 GB Windows laptops.
+- Three imported extensions were removed along the way and stay removed by choice, not because they
+  caused this: Gemini Code Assist (Google supports it in VS Code and JetBrains, and Devin has its own
+  agent), `coenraads.bracket-pair-colorizer-2` and `s-nlf-fh.glassit` (both fail on every start: a
+  missing `vscode-textmate` module, and `pgrep 'code'`).
 
-**Devin's profile isn't the built-in Default.** Onboarding's VS Code import created a profile that is
-*named* "default" but lives at `~/.config/Devin/User/profiles/-164eb798` and is tied to Devin's
-workspace (`profileAssociations` and `userDataProfiles` in
-`~/.config/Devin/User/globalStorage/storage.json`). Command-line `--install-extension`,
-`--uninstall-extension` and `--list-extensions` act on the built-in Default unless given
-`--profile <name>`: `devin-desktop --uninstall-extension google.geminicodeassist` said "not installed",
-and the CodeLLDB `.vsix` installed earlier had gone into the built-in Default, not the profile in use.
+**Two Devin details found on the way** (docs only):
+
+- **CodeLLDB** (`vadimcn.vscode-lldb`): Open VSX serves the universal package, which downloads its Linux
+  add-on through `workbench.extensions.command.installFromVSIX`. Devin Desktop doesn't have that command
+  ("Platform package installation failed ... command not found"). The fix is to install
+  `codelldb-linux-x64.vsix` from its GitHub release with `devin-desktop --profile <name>
+  --install-extension <file>`.
+- **Devin's profile isn't the built-in Default.** Onboarding's VS Code import created a profile *named*
+  "default" at `~/.config/Devin/User/profiles/-164eb798`, tied to Devin's workspace (`userDataProfiles`
+  and `profileAssociations` in `~/.config/Devin/User/globalStorage/storage.json`). Command-line
+  `--install-extension`, `--uninstall-extension` and `--list-extensions` act on the built-in Default
+  unless given `--profile <name>`.
 
 **Setup** (under `install-windsurf`; the flag keeps its name, chosen Oct 26):
 
@@ -284,17 +296,8 @@ and the CodeLLDB `.vsix` installed earlier had gone into the built-in Default, n
   `/usr/bin/windsurf` exists) runs the system `/usr/bin/devin-desktop --ozone-platform=x11 "$@"`, by
   absolute path so it can't call itself. `~/.local/bin` is ahead of `/usr/bin` on PATH. CLI-only
   calls (`--install-extension`, `--list-extensions`, `--version`) ignore the flag.
-- **CodeLLDB** (chosen: always, under install-windsurf): the latest `codelldb-linux-x64.vsix` (tag from
-  the `releases/latest` redirect, not the API; GitHub publishes no checksum for it, so it is validated
-  with `unzip -t` before installing) goes in with `devin-desktop --install-extension`, into the built-in
-  Default **and** every profile listed in `userDataProfiles` (`--profile <name>`, names read from
-  `storage.json` with python3; a missing or unreadable file means Default only). Per profile, skipped
-  when the platform add-on of that version or newer is already there. On a clean machine only Default
-  exists until onboarding creates its profile, so the checklist says to rerun setup with install-windsurf
-  after onboarding (the test's check below catches it if not). Download in `$ASSETS/downloads`, removed
-  after.
-- **Imported extensions are left alone.** Setup doesn't uninstall anything you imported (Gemini Code
-  Assist included); the test warns instead.
+- **Extensions are left alone** (revised Oct 26): setup installs no extension into Devin (no CodeLLDB)
+  and removes none you imported.
 - **Idempotent:** each run regenerates the three entries and the wrapper; a hand-made
   `devin-desktop-x11.desktop` (the Oct 26 one) is replaced by the generated one, which differs only in
   following the installed stock file.
@@ -307,12 +310,6 @@ and the CodeLLDB `.vsix` installed earlier had gone into the built-in Default, n
   entry's program, and it has no `NoDisplay` (check).
 - Stock entry overridden with `NoDisplay=true` (warn: cosmetic).
 - `command -v devin-desktop` is the wrapper, and the wrapper passes the flag (check).
-- CodeLLDB's platform add-on in every Devin profile that has CodeLLDB (check, per profile, via
-  `--profile <name> --list-extensions --show-versions` and the extension folder: the native adapter
-  present and executable; the build confirms the exact path from the `.vsix`). Hint: rerun setup with
-  install-windsurf after onboarding.
-- Gemini Code Assist not installed in any Devin profile (warn; hint: `devin-desktop --profile <name>
-  --uninstall-extension google.geminicodeassist`, and use it in VS Code instead).
 - Disk report: measure `devin-desktop` (the transitional `windsurf` package is a few KB).
 
 No GUI launch in the test; that's the hand check.
@@ -321,29 +318,102 @@ No GUI launch in the test; that's the hand check.
 
 **Docs:**
 
-- `docs/crostini-gotchas.md`, Graphics: "Devin Desktop (Windsurf) freezes or closes under Wayland", and
-  that the ChromeOS launcher ignores an override with the same file name, so the fix is a separate entry.
-  A second entry: Gemini Code Assist crashes Devin Desktop's window (not Crostini-specific as far as
-  known, but where it bit), and that Devin's imported profile needs `--profile` on the command line.
-- `docs/init-checklist.md`: the editors line: open **Devin (X11)**; click Login once and give it 20–30 s
-  (each extra click opens another browser tab); finishing sign-in in ChromeOS's browser returns to the
-  app. After onboarding's VS Code import, rerun setup with install-windsurf so CodeLLDB's add-on reaches
-  the new profile. Don't keep Gemini Code Assist in Devin; command-line extension changes need
-  `--profile <name>` (the name is in `storage.json`). Machines set up before v96: rerun setup with
-  install-windsurf, then shut Linux down once so the launcher picks up the new entry.
-- README: the gotchas list gets a Devin line next to Android Studio's; flag table text "Windsurf (now
-  Devin Desktop)".
+- `docs/crostini-gotchas.md`:
+  - Graphics: "Devin Desktop (Windsurf) freezes or closes under Wayland", and that the ChromeOS launcher
+    ignores an override with the same file name, so the fix is a separate entry.
+  - Memory and disk: "ChromeOS takes memory back from Linux": the VM's "used" includes memory ChromeOS
+    reclaimed (2.5 GB of 4.9 GB on Oct 26), there is no swap, so a 2 GB Electron IDE freezes when it
+    runs out; how to tell (`ps` total vs `free`), and what helps.
+- `docs/init-checklist.md`, the editors line: open **Devin (X11)**; click Login once and give it
+  20–30 s; keep ChromeOS's tabs light while it's open. Command-line extension changes need
+  `--profile <name>` (the name is in `storage.json`); CodeLLDB's Linux add-on is a manual install with
+  that flag. Machines set up before v96: rerun setup with install-windsurf, then shut Linux down once so
+  the launcher picks up the new entry.
+- README: the gotchas list gets a Devin line next to Android Studio's, and a memory line; flag table
+  text "Windsurf (now Devin Desktop)".
 - CHANGELOG (all four sections).
 
 **To verify on the Chromebook:** on the machine fixed by hand on Oct 26, setup replaces the hand-made
 entry and the wrapper without breaking either; after a Linux restart the launcher shows **Devin (X11)**
 (and, if `NoDisplay` is honoured, not the stock icon); opened from it, `pgrep -af devin-desktop` shows
-`--ozone-platform=x11`; it stays up past 60 s, and Login completes. `devin-desktop` from a terminal also
-gets the flag. Setup puts CodeLLDB's add-on into the "default" profile (`-164eb798`) as well as the
-built-in Default; a CodeLLDB debug session (Rust or C) stops at a breakpoint with no platform-package
-error. The test warns when Gemini Code Assist is reinstalled in either profile. Devin stays up through
-several launches from the icon, including one after a Linux restart. On a clean machine: install-windsurf,
-onboarding, rerun setup; the test then passes the CodeLLDB check for the new profile.
+`--ozone-platform=x11`; Login completes in ChromeOS's browser (item 4). `devin-desktop` from a terminal
+also gets the flag. Devin stays up through several launches from the icon, including one after a Linux
+restart, with ChromeOS's tabs kept light.
+
+## 4. Links from Linux open in ChromeOS's browser (setup base)
+
+**Found Oct 26 2026** (with item 3): the base install's Google Chrome registered itself in Linux as the
+handler for web links (`com.google.Chrome.desktop` for `x-scheme-handler/http(s)` and `text/html`).
+So every link a Linux app opens (sign-in pages, `--open` dev servers, docs) starts a Linux copy of
+Chrome inside the VM's memory, separate from your ChromeOS browser and its sign-ins. Devin's Login did
+that, and the Linux Chrome left running added to the memory squeeze in item 3.
+
+`xdg-settings set default-web-browser` refuses ("$BROWSER is set"): ChromeOS's Linux sets
+`BROWSER=/usr/bin/garcon-url-handler` itself, and `xdg-open` checks the MIME registration before
+`$BROWSER` anyway. What worked:
+
+```
+xdg-mime default garcon_host_browser.desktop x-scheme-handler/https x-scheme-handler/http text/html
+```
+
+**Tested Oct 26** (all through `xdg-open`, landing in ChromeOS's browser):
+
+| Link | Result |
+| --- | --- |
+| `https://example.com` | Opened in ChromeOS's browser. |
+| `http://localhost:8765` (a Linux server bound to 127.0.0.1) | Opened, served from Linux: ChromeOS still passes `localhost` to Linux in the full-VM mode. |
+| `http://127.0.0.1:8765` | Opened, served from Linux. |
+| `~/xdg-test.html` | Opened from the Linux files share (`file:///media/fuse/crostini_…`). |
+| A DDEV site (`ddev launch`, `*.ddev.site` → 127.0.0.1, mkcert HTTPS) | **Not yet tested.** Expected to connect; expected certificate warning, since `mkcert -install` trusts its CA in Linux only. |
+
+So Playwright, Selenium, Cypress and Puppeteer are unaffected (they start their own browser), Linux
+Chrome stays installed and launchable, and command-line sign-ins with a localhost callback (`gh`,
+`gcloud`, `az`, `wrangler`, `vercel`, Hugging Face) should complete in ChromeOS's browser, since
+`localhost` and `127.0.0.1` both pass through.
+
+| Choice | |
+| --- | --- |
+| A | ChromeOS's browser for every link (the `xdg-mime` line above). |
+| B | A small router as the default handler (`~/.local/bin/open-url` plus a `.desktop` entry): `*.ddev.site` and other local HTTPS names stay in Linux Chrome, where the mkcert CA is trusted; everything else goes to ChromeOS's browser. |
+| **A now, B if DDEV fails (chosen)** | Build A. The DDEV check below decides: if `ddev launch` doesn't work in ChromeOS's browser even after the CA import, the build switches to B before release. |
+
+**Setup** (base, after the Google Chrome install, so Chrome's own registration comes first and this
+overrides it):
+
+- When `/usr/share/applications/garcon_host_browser.desktop` exists (ChromeOS only), run the `xdg-mime
+  default` line above; it writes `~/.config/mimeapps.list`. Rerun-safe. Not on ChromeOS: a NOTICE, and
+  nothing changes.
+- **DDEV's certificates:** print once, after the mkcert step, how to trust the mkcert CA in ChromeOS
+  (Settings → Privacy and security → Security → Manage certificates → Authorities → Import the
+  `rootCA.pem` from `mkcert -CAROOT`, "Trust this certificate for identifying websites"), so `*.ddev.site`
+  opens without a warning. ChromeOS's certificate store isn't reachable from Linux, so this stays a
+  manual step.
+- **Opting out:** `xdg-mime default com.google.Chrome.desktop x-scheme-handler/https
+  x-scheme-handler/http text/html` puts Linux Chrome back (in the checklist).
+
+**Test** (base section):
+
+- `xdg-mime query default x-scheme-handler/https` (and `http`, `text/html`) is
+  `garcon_host_browser.desktop` (warn, since it's your setting to change; hint: Linux Chrome may have
+  taken it back if you accepted its "make Chrome your default browser" prompt; rerun setup or the
+  `xdg-mime` line).
+- No live open in the test (it would open browser tabs).
+
+**Init:** version bump only.
+
+**Docs:**
+
+- `docs/crostini-gotchas.md`, a new section or Network: "Links from Linux open in Linux Chrome": why,
+  the `xdg-mime` fix, why `xdg-settings` refuses, and that localhost passes through.
+- `docs/init-checklist.md`: the ChromeOS CA import for DDEV; how to switch back to Linux Chrome.
+- README: one line in the gotchas list.
+- CHANGELOG (all four sections).
+
+**To verify on the Chromebook:** on a clean machine after setup, `xdg-open https://example.com` opens in
+ChromeOS's browser; `gh auth login --web` (or init's GitHub step) completes there; a demo's dev server
+opens with `--open`; `ddev launch` on a DDEV site opens in ChromeOS's browser, first with a certificate
+warning and, after the CA import, without one. If `ddev launch` can't be made to work there, switch the
+build to B.
 
 ## Carried forward
 
@@ -375,11 +445,11 @@ go into v95 if you keep them there, otherwise here.
 - [x] Item 2, back end: A (shared `drupal/umami-headless`)
 - [x] Item 2, flag: A (`install-web`)
 - [x] Item 2, rendering: C (static pages plus a server island, `@astrojs/node`)
-- [x] Item 3: Devin Desktop under X11 and CodeLLDB, under install-windsurf
+- [x] Item 3: Devin Desktop under X11, under install-windsurf
 - [x] Item 3, launcher: A (a separate "Devin (X11)" entry, stock entry hidden with `NoDisplay`)
 - [x] Item 3, terminal: A (`~/.local/bin/devin-desktop` wrapper adds the flag)
-- [x] Item 3, CodeLLDB: A (always installed under install-windsurf)
 - [x] Item 3, flag name: A (keep `install-windsurf`; it installs `devin-desktop`)
-- [x] Item 3, added Oct 26: CodeLLDB into every profile; the test warns about Gemini Code Assist; setup
-      leaves imported extensions alone
+- [x] Item 3, revised Oct 26: the later freezes were memory (gotcha doc); setup installs and removes no
+      Devin extensions (CodeLLDB and Gemini dropped from setup and test; CodeLLDB's profile fix in the docs)
+- [x] Item 4: ChromeOS's browser for Linux links: A now, B (router) if DDEV fails
 - [ ] Anything else for v96
