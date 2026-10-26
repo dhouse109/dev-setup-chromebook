@@ -458,7 +458,11 @@ neither IDE is needed to build:
 Devin offered Native Debug from Open VSX on the first F5, `lazbuild` built the Debug mode into
 `x86_64-linux/Debug/TestDaemon`, and gdb stopped at a breakpoint in `daemonworkerthread.pas` on the worker
 thread, switching between threads. The Debug Console takes gdb commands (`p <expr>`), not bare variable
-names: typing `FDaemonWorkerThread` there gives "Undefined command".
+names: typing `FDaemonWorkerThread` there gives "Undefined command". Two more from the same session:
+`string` locals (`aMessage`, `LogFilePath`) and a `Text` file variable showed as `<unknown>` / "unknown
+type" in Variables, which points at the project's debug-info type (DWARF 2 or "automatic") rather than gdb;
+DWARF 3 (`-gw3`) is what gdb reads Free Pascal's strings and classes with. And Self appears to gdb as
+`this` (`Execute (this=0x…)`), so fields are watched as `this.<Field>` from a method's frame.
 
 | Choice: the command | |
 | --- | --- |
@@ -501,9 +505,11 @@ names: typing `FDaemonWorkerThread` there gives "Undefined command".
   - Writes `.vscode/launch.json`: a Native Debug `gdb` launch of the target, `cwd` the project folder,
     `preLaunchTask` the build task.
   - Writes `.vscode/extensions.json` (recommendations above).
-  - **Debug info check:** if the build mode used has no debug info (`GenerateDebugInfo` false, or no
-    DWARF type), it says so and how to turn it on (Project Options → Debugging), since gdb then can't
-    stop at breakpoints. The build confirms the exact `.lpi` keys and `lazbuild`'s mode flag.
+  - **Debug info check:** if the build mode used has no debug info (`GenerateDebugInfo` false), it says
+    so and how to turn it on (Project Options → Compiler Options → Debugging), since gdb then can't stop
+    at breakpoints. If the type isn't DWARF 3 (`-gw3`), it says that gdb will show strings and some
+    types as `<unknown>` (Oct 26) and how to switch it; it doesn't edit the `.lpi`. The build confirms
+    the exact `.lpi` keys and `lazbuild`'s mode flag.
   - Existing files are kept unless `--force` (a NOTICE names them), so your own edits survive.
 - **`delphi N build PROJECT.dpr`** (new): runs that version's `dcc32.exe` (found under the prefix's
   `Delphi*/Bin`, as `delphi_bin` finds Delphi 1's) in the prefix, console only (no virtual desktop),
