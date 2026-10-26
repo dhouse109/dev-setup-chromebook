@@ -133,8 +133,9 @@ Proposed additions; strike any you don't want.
 
 ## Docs, housekeeping and cost
 
-**Cost:** expect roughly 10–20 extra minutes and several hundred MB over a plain Lazarus install on a
-clean machine. The first v94 disk report replaces these estimates with measured numbers.
+**Cost:** expect roughly 10–20 extra minutes over a plain Lazarus install on a clean machine. On disk,
+Lazarus with the four Qt5 IDE builds measured about 3.2 GB (dev-test disk report, Oct 25 2026), not the
+several hundred MB first estimated.
 
 **`docs/init-checklist.md`** — new Lazarus entry:
 
