@@ -433,6 +433,158 @@ wget -P "$ASSETS/downloads" https://dl.google.com/linux/direct/google-chrome-sta
 sudo apt install -y "$ASSETS/downloads/google-chrome-stable_current_amd64.deb"
 rm -f "$ASSETS/downloads/google-chrome-stable_current_amd64.deb"
 
+# 7. devmem, a memory report (v96)
+# v96: Oct 26 2026, with Devin Desktop freezing: Linux showed 6.4 GB total, 4.9 GB used, 1.5 GB available and no
+# swap, while its processes held only 2.2 GB (Devin 1.65 GB of it) and slab plus shmem ~0.2 GB: ChromeOS had taken
+# ~2.5 GB back from the Linux VM. Seeing that took several commands and some arithmetic, and with no swap a reclaim
+# at the wrong moment freezes a large app instead of slowing it. devmem does the arithmetic: PSS from smaps_rollup
+# (shared pages counted once; RSS where a process can't be read), kernel and shmem from /proc/meminfo, the rest of
+# "used" as ChromeOS's share (an estimate), the top programs, the bundle's containers and Ollama's loaded models,
+# and a verdict. Only procps, awk and (when there) docker and ollama.
+mkdir -p ~/.local/bin
+cat > "$HOME/.local/bin/devmem.new" << 'DEVMEM_EOF'
+#!/bin/bash
+# devmem: what is using Linux's memory, how much ChromeOS has taken back, and what to close (dev-setup v96).
+# Written by dev-setup and rewritten on every run: copy it before editing.
+#   devmem                  the full report: Memory, Where "used" is, Top programs, Bundle services, Verdict
+#   devmem --brief          the memory line and the verdict only
+#   devmem --watch [SECS]   the full report, refreshed in place every SECS seconds (default 5) until Ctrl-C
+# "Taken back by ChromeOS" is an estimate: what "used" holds beyond Linux's processes, kernel and shared memory.
+export LC_ALL=C
+usage() { awk 'NR > 1 && !/^#/ { exit } NR > 1 { sub(/^# ?/, ""); print }' "$0"; }
+# HEAVY: the containers that are one-at-a-time in devsvc (and mssql / oracle): NAME|COMMAND THAT STOPS IT
+HEAVY='devsvc-solr|devsvc down solr
+devsvc-opensearch|devsvc down opensearch
+devsvc-elasticsearch|devsvc down elasticsearch
+devsvc-milvus|devsvc down milvus
+devsvc-atlas-local|devsvc down atlas-local
+devsvc-selenium|devsvc down selenium
+devdb-mssql|mssql down
+devdb-oracle|oracle down'
+
+fmt() {   # fmt KB: "1.6 GB" or "350 MB"
+    awk -v k="$1" 'BEGIN { if (k >= 1048576 * 0.95) printf "%.1f GB", k / 1048576; else printf "%d MB", k / 1024 }'
+}
+meminfo() { awk -v k="$1" '$1 == k ":" { print $2; f = 1 } END { if (!f) print 0 }' /proc/meminfo; }
+
+collect() {   # sets the figures every section uses (KB)
+    TOTAL=$(meminfo MemTotal); AVAIL=$(meminfo MemAvailable)
+    SWAP=$(meminfo SwapTotal); SWAPFREE=$(meminfo SwapFree)
+    USED=$((TOTAL - AVAIL))
+    KERNEL=$(( $(meminfo Slab) + $(meminfo KernelStack) + $(meminfo PageTables) ))
+    SHMEM=$(meminfo Shmem)
+    # One line per process: PID<TAB>KB<TAB>pss|rss<TAB>PROGRAM<TAB>EXE PATH. PSS where smaps_rollup can be read (your own
+    # processes); RSS from status otherwise (root's). Kernel threads have neither and are left out.
+    PROCS=$(
+        declare -A pss=()
+        while IFS=: read -r f v; do
+            f=${f#/proc/}; pss[${f%%/*}]=$(awk '{ print $2 }' <<< "$v")   # v: "Pss:   1234 kB"
+        done < <(grep -H '^Pss:' /proc/[0-9]*/smaps_rollup 2> /dev/null)
+        while IFS=: read -r f v; do
+            p=${f#/proc/}; p=${p%%/*}
+            if [ -n "${pss[$p]:-}" ]; then kb=${pss[$p]}; how=pss; else kb=$(awk '{ print $2 }' <<< "$v"); how=rss; fi
+            [ "${kb:-0}" -gt 0 ] 2> /dev/null || continue
+            # The program: the executable's name (all of an Electron app's helpers share it), else comm.
+            exe=$(readlink "/proc/$p/exe" 2> /dev/null); exe=${exe% (deleted)}; prog=${exe##*/}
+            [ -n "$prog" ] || prog=$(cat "/proc/$p/comm" 2> /dev/null)
+            [ -n "$prog" ] || continue
+            printf '%s\t%s\t%s\t%s\t%s\n' "$p" "$kb" "$how" "$prog" "${exe:--}"
+        done < <(grep -H '^VmRSS:' /proc/[0-9]*/status 2> /dev/null)
+    )
+    PROC_KB=$(awk -F'\t' '{ s += $2 } END { print s + 0 }' <<< "$PROCS")
+    N_PSS=$(awk -F'\t' '$3 == "pss"' <<< "$PROCS" | grep -c .)
+    N_RSS=$(awk -F'\t' '$3 == "rss"' <<< "$PROCS" | grep -c .)
+    TAKEN=$((USED - PROC_KB - KERNEL - SHMEM)); [ "$TAKEN" -lt 0 ] && TAKEN=0
+    # Linux's Google Chrome, by its install path (Playwright's and Puppeteer's browsers are called chrome too)
+    LINUX_CHROME=$(awk -F'\t' 'index($5, "/opt/google/chrome/") == 1 { s += $2; n++ } END { if (n) print s }' <<< "$PROCS")
+    SERVICES=""; HEAVY_UP=()
+    local d=(docker)
+    if command -v docker > /dev/null 2>&1; then
+        timeout 5 docker info > /dev/null 2>&1 || d=(sudo -n docker)
+        SERVICES=$(timeout 20 "${d[@]}" stats --no-stream --format '{{.Name}}\t{{.MemUsage}}' 2> /dev/null \
+            | awk -F'\t' '$1 ~ /^(devsvc-|devdb-|devldap-|ddev-)/ { sub(/ \/.*/, "", $2); print $1 "\t" $2 }' | sort)
+        local name stop
+        while IFS='|' read -r name stop; do
+            grep -q "^$name"$'\t' <<< "$SERVICES" && HEAVY_UP+=("$name|$stop")
+        done <<< "$HEAVY"
+    fi
+    OLLAMA=""
+    command -v ollama > /dev/null 2>&1 && OLLAMA=$(timeout 5 ollama ps 2> /dev/null | awk 'NR > 1 && NF')
+}
+
+memory_line() {
+    local swap="none"
+    [ "$SWAP" -gt 0 ] && swap="$(fmt $((SWAP - SWAPFREE))) used of $(fmt "$SWAP")"
+    echo "Memory: $(fmt "$TOTAL") total, $(fmt "$USED") used, $(fmt "$AVAIL") available, swap: $swap"
+}
+
+verdict() {
+    local out=() h
+    [ "$TAKEN" -gt $((1536 * 1024)) ] && out+=("ChromeOS has taken back $(fmt "$TAKEN"): close ChromeOS tabs or Android apps (Search + Esc shows them).")
+    [ "$AVAIL" -lt $((1024 * 1024)) ] && out+=("Less than 1 GB available ($(fmt "$AVAIL")): close something before starting anything large.")
+    [ -n "$LINUX_CHROME" ] && out+=("Linux's Google Chrome is running ($(fmt "$LINUX_CHROME")): links open in ChromeOS's browser since v96, so it can usually be closed.")
+    for h in "${HEAVY_UP[@]}"; do out+=("A heavy engine or database server is running: ${h%%|*} (stop it with '${h#*|}')."); done
+    echo "Verdict:"
+    if [ ${#out[@]} -eq 0 ]; then
+        echo "  Memory looks fine.$([ "$SWAP" -eq 0 ] && echo " (No swap: a large app freezes instead of slowing down when memory runs out.)")"
+        return
+    fi
+    printf '  %s\n' "${out[@]}"
+    [ "$SWAP" -eq 0 ] && echo "  No swap: a large app freezes instead of slowing down when memory runs out."
+    return 0
+}
+
+report() {
+    local how
+    memory_line
+    echo
+    echo "Where \"used\" is:"
+    if [ "$N_RSS" -eq 0 ]; then how="PSS of $N_PSS processes, shared pages counted once"
+    else how="PSS of $N_PSS processes, RSS for $N_RSS that can't be read (other users')"; fi
+    printf '  %-34s %9s  (%s)\n' "Linux processes" "$(fmt "$PROC_KB")" "$how"
+    printf '  %-34s %9s  (Slab + KernelStack + PageTables)\n' "kernel" "$(fmt "$KERNEL")"
+    printf '  %-34s %9s  (Shmem)\n' "shared memory" "$(fmt "$SHMEM")"
+    printf '  %-34s %9s  (used minus the three above)\n' "taken back by ChromeOS (estimate)" "$(fmt "$TAKEN")"
+    echo
+    echo "Top programs by memory:"
+    awk -F'\t' 'NF >= 4 { s[$4] += $2; n[$4]++ } END { for (p in s) printf "%d\t%s\t%d\n", s[p], p, n[p] }' <<< "$PROCS" \
+        | sort -rn | head -n 10 | while IFS=$'\t' read -r kb p n; do
+            printf '  %-34s %9s  (%d process%s)\n' "$p" "$(fmt "$kb")" "$n" "$([ "$n" -eq 1 ] || echo es)"
+        done
+    echo
+    echo "Bundle services running:"
+    if [ -n "$SERVICES" ]; then
+        while IFS=$'\t' read -r c m; do printf '  %-34s %9s\n' "$c" "$m"; done <<< "$SERVICES"
+    elif command -v docker > /dev/null 2>&1; then echo "  no devsvc, devdb, devldap or DDEV containers running"
+    else echo "  (no docker)"; fi
+    if [ -n "$OLLAMA" ]; then
+        echo "  Ollama models loaded:"
+        while read -r line; do echo "    $line"; done <<< "$OLLAMA"
+    elif command -v ollama > /dev/null 2>&1; then echo "  Ollama: no model loaded"; fi
+    echo
+    verdict
+}
+
+case "${1:-}" in
+    "") collect; report ;;
+    --brief) collect; memory_line; verdict ;;
+    --watch)
+        secs=${2:-5}
+        [[ "$secs" =~ ^[0-9]+$ ]] && [ "$secs" -gt 0 ] || { echo "devmem: --watch takes a number of seconds, not '$secs'" >&2; exit 1; }
+        trap 'printf "\n"; exit 0' INT TERM
+        while :; do
+            collect; screen=$(report)
+            printf '\033[H\033[2J%s\n\n(every %ss, %s; Ctrl-C stops)\n' "$screen" "$secs" "$(date +%T)"
+            sleep "$secs"
+        done ;;
+    help|-h|--help) usage ;;
+    *) usage >&2; exit 1 ;;
+esac
+DEVMEM_EOF
+chmod +x "$HOME/.local/bin/devmem.new"
+mv -f "$HOME/.local/bin/devmem.new" "$HOME/.local/bin/devmem"
+echo "Wrote ~/.local/bin/devmem (what is using memory, what ChromeOS has taken back, what to close)."
+
 # =================================================================
 # SHARED HELPERS
 # =================================================================

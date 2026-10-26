@@ -599,6 +599,33 @@ check "mkcert installed and local CA present"              'mkcert -CAROOT && [ 
 check "mkcert issues a localhost cert"                     'mkcert -cert-file t.pem -key-file t-key.pem localhost 2>&1 && [ -s t.pem ]'
 check "Google Chrome"                                      'google-chrome-stable --version'
 slow  "Chrome headless renders a page"                     'google-chrome-stable --headless=new --disable-gpu --no-sandbox --dump-dom "data:text/html,<title>ok</title>" | grep -q "<title>ok</title>"' 90
+# v96: devmem, the memory report (Oct 26 2026: ChromeOS had taken ~2.5 GB back from Linux while Devin froze).
+cat > "$WORK/devmem_check.sh" << 'DEVMEM_EOF'
+case "$1" in
+    sections)   # exits 0, with every section
+        o=$(devmem) || { echo "devmem exited $?"; exit 1; }
+        for s in '^Memory: ' '^Where "used" is:' '^Top programs by memory:' '^Verdict:'; do
+            grep -q "$s" <<< "$o" || { echo "no section matching $s"; exit 1; }
+        done
+        echo "$o" | head -n 1 ;;
+    brief)   # the memory line and the verdict: a handful of lines
+        o=$(devmem --brief) || { echo "devmem --brief exited $?"; exit 1; }
+        n=$(grep -c . <<< "$o"); echo "$n lines"
+        grep -q '^Memory: ' <<< "$o" && grep -q '^Verdict:' <<< "$o" && [ "$n" -le 10 ] ;;
+    taken)   # "taken back by ChromeOS" is a size between 0 and the total
+        o=$(devmem) || exit 1
+        t=$(sed -n 's/^Memory: \([0-9.]* [MG]B\) total.*/\1/p' <<< "$o")
+        c=$(sed -n 's/^  taken back by ChromeOS (estimate) *\([0-9.]* [MG]B\).*/\1/p' <<< "$o")
+        echo "taken back by ChromeOS: ${c:-?} of ${t:-?}"
+        [ -n "$t" ] && [ -n "$c" ] || exit 1
+        awk -v t="$t" -v c="$c" 'function mb(x, a) { split(x, a, " "); return a[2] == "GB" ? a[1] * 1024 : a[1] }
+            BEGIN { exit !(mb(c) >= 0 && mb(c) <= mb(t)) }' ;;
+esac
+DEVMEM_EOF
+check "devmem: Memory, Where, Top programs and Verdict"     'bash devmem_check.sh sections'
+hint  "rerun setup (any flags): v96 writes ~/.local/bin/devmem"
+check "devmem --brief prints a few lines"                  'bash devmem_check.sh brief'
+check "devmem: 'taken back by ChromeOS' is between 0 and the total" 'bash devmem_check.sh taken'
 
 # =================================================================
 # CONDITIONAL SECTIONS (same order as the installer)

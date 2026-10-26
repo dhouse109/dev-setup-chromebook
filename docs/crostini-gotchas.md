@@ -57,6 +57,15 @@ to see it in context; the comment above each fix usually tells the story.
   running, and Solr, OpenSearch, Elasticsearch, Milvus and Atlas Local hold 1–3 GB. **Fix:** setup creates
   them stopped. `mssql up`, `oracle up` and `devsvc up` stop the other heavy engines first and check a
   memory budget (`DEVSVC_RAM_MB`).
+- **ChromeOS takes memory back from Linux** (setup base, v96). The Linux VM's "used" memory includes what
+  ChromeOS has reclaimed from it for itself: on Oct 26 2026 Linux showed 4.9 GB of 6.4 GB used, but its
+  processes held only 2.2 GB (Devin Desktop 1.65 GB of it) and slab plus shmem about 0.2 GB, so ChromeOS had
+  taken about 2.5 GB. There is no swap, so when a 2 GB Electron IDE runs out it freezes or closes instead of
+  slowing down. To tell: add up the processes (`ps`, or better PSS from `/proc/*/smaps_rollup`) and compare
+  with `free`. **Fix:** `devmem` does that arithmetic ("taken back by ChromeOS (estimate)"), names the top
+  programs and the bundle's running containers, and says what to close; `devmem --watch` follows it while
+  something misbehaves. What helps: keep ChromeOS's tabs and Android apps light while a heavy Linux app is
+  open (Search + Esc shows them), close Linux's Google Chrome, run one heavy engine at a time.
 - **`vm.max_map_count` can't be raised from inside the container** (`install-search`). OpenSearch and
   Elasticsearch normally insist on it. **Fix:** `node.store.allow_mmap=false`, so they don't need it, and
   their disk watermarks are off, so a nearly full disk doesn't turn an index read-only.
