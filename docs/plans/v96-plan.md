@@ -479,8 +479,13 @@ neither IDE is needed to build:
 - **gdb** joins install-lazarus's apt packages (it's only in install-cpp today).
 - **`lazmode vscode [dir] [--profile light|dark] [--force]`** (dir defaults to the current folder):
   - Finds the project's `.lpi` (one in the folder, or asks which when there are several; `dir` may also
-    be the `.lpi` itself). The executable's path comes from the `.lpi` (`Target/Filename`, made
-    absolute against the project folder; on Linux no `.exe`).
+    be the `.lpi` itself).
+  - The executable's path is **asked of `lazbuild`, not read from the `.lpi`**: TDaemon's target is
+    `x86_64-linux/Debug/TestDaemon`, built from macros (`$(TargetCPU)-$(TargetOS)/$(BuildModeName)`),
+    which a plain read of `Target/Filename` gets wrong (found Oct 26: the hand-written `launch.json`
+    pointed at `./TestDaemon`). First choice `lazbuild --pcp=<profile> [--bm=Debug]
+    --get-expand-text='$(TargetFile)' <project>.lpi`; if that option isn't there, one build and the path
+    from its `Linking <path>` line. The build confirms which works with Lazarus 4.8.
   - Profile: dark when `~/.lazarus-dark` exists, unless `--profile light` (you work in the dark one).
   - Writes `.vscode/tasks.json`: a default build task, `lazbuild --pcp=<profile> [--bm=Debug] <project>.lpi`
     (`--bm=Debug` when the `.lpi` has a build mode named Debug), with a problem matcher for Free Pascal's
@@ -533,7 +538,8 @@ item 3). The launcher's note says: F5 builds and debugs; for TDaemon, `-r` is al
 **To verify on the Chromebook:** `lazmode vscode` in `~/dev-demo/lazarus/examples/TDaemon`, open the
 folder in Devin and in VS Code, accept the recommended extensions; Ctrl+Shift+B builds and an error
 introduced on purpose shows in Problems at the right line; F5 stops at a breakpoint in
-`DaemonWorkerThread` with variables readable. The dark-profile packages are found (`--pcp`). For Delphi
+`DaemonWorkerThread` with variables readable, the target being `x86_64-linux/Debug/TestDaemon`. In Devin,
+the editor offers Native Debug (`webfreak.debug`, on Open VSX) when F5 first meets the `gdb` type. The dark-profile packages are found (`--pcp`). For Delphi
 (once a Delphi 3–7 is installed): `delphi 7 vscode` in a project folder, Ctrl+Shift+B builds it, the run
 task starts it in the Delphi desktop.
 
