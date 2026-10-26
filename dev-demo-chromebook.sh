@@ -1,5 +1,5 @@
 #!/bin/bash
-# dev-demo-chromebook - Version 95
+# dev-demo-chromebook - Version 96
 # Version history: CHANGELOG.md, next to this script in the bundle
 # (one section per script, newest version first).
 #
@@ -57,7 +57,7 @@ fi
 
 # Deliberately NO 'set -e': one demo failing to download must not stop the others.
 
-VERSION=95
+VERSION=96
 
 # =================================================================
 # FLAG EXPANSION (STACK SWITCHES)  -- copied verbatim from the installer
@@ -876,6 +876,17 @@ if [ -x "$HOME/.lazarus-dark/bin/lazarus" ]; then
 fi
 "${LOOK[@]}" "$IDE" "${PCP[@]}" "$DEMO_DIR/$PROJECT" > /dev/null 2>&1 &
 disown
+# v96: TDaemon is a systemd daemon, so it is run from a terminal, not with F9 (Oct 26 2026: its -r stopped with
+# runtime error 232 until setup v96 put -dUseCThreads in ~/.fpc.cfg; a build from before that needs Clean up and Build).
+case "$PROJECT" in
+    TDaemon/*)
+        demo_note "TDaemon: build with Run > Clean up and Build (once, if it was built before setup v96), then from a terminal"
+        demo_note "  in its build folder ($DEMO_DIR/${PROJECT%/*}/x86_64-linux/Debug for the Debug mode): sudo ./TestDaemon -i writes"
+        demo_note "  /lib/systemd/system/TestDaemon.service, which runs"
+        demo_note "  the binary from this build folder (so rebuild before starting it); sudo systemctl daemon-reload, then"
+        demo_note "  sudo systemctl start TestDaemon. Its log is a daily file next to the binary (tail -f \$(date +%Y%m%d).log)."
+        demo_note "  Remove it with sudo systemctl stop TestDaemon, then sudo ./TestDaemon -u. -i and -u need sudo." ;;
+esac
 EOF
     done_demo
 }

@@ -1,5 +1,5 @@
 #!/bin/bash
-# dev-test-chromebook - Version 95
+# dev-test-chromebook - Version 96
 # Version history: CHANGELOG.md, next to this script in the bundle
 # (one section per script, newest version first).
 #
@@ -423,7 +423,7 @@ info()  { printf '  %-62s %s\n' "$1" "${DIM}INFO${RST} $2"; echo "--- $1: INFO $
 # v92: a check that cannot run because an earlier one already failed for the same cause (counted as SKIP).
 skipped() { printf '  %-62s %s\n' "$1" "${DIM}SKIP${RST} $2"; SKIP=$((SKIP + 1)); LAST=skip; echo "--- $1: SKIP $2" >> "$LOG"; }
 
-echo "Testing Chromebook Linux provisioning (Version 95)... log: $LOG"
+echo "Testing Chromebook Linux provisioning (Version 96)... log: $LOG"
 [ "$QUICK" = 1 ] && echo "(quick mode: slow functional tests will be skipped)"
 
 # v68: say so when dev-init has not applied the secrets file yet. Filling in secrets.env logs
@@ -1202,6 +1202,19 @@ else:
 LIST_PY
 }
 case "$1" in
+    fpccfg)   # v96: fpc reads only the first config it finds, so ~/.fpc.cfg must #INCLUDE the system one (or set -Fu)
+        f="$HOME/.fpc.cfg"
+        [ -f "$f" ] || { echo "no ~/.fpc.cfg"; exit 1; }
+        grep -qiE '^[[:space:]]*-dUseCThreads([[:space:]]|$)' "$f" || { echo "~/.fpc.cfg does not define UseCThreads"; exit 1; }
+        if inc=$(grep -m1 -iE '^#INCLUDE[[:space:]]' "$f"); then
+            inc=$(printf '%s' "${inc#* }" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+            [ -f "$inc" ] || { echo "~/.fpc.cfg includes $inc, which is missing"; exit 1; }
+            echo "-dUseCThreads; #INCLUDE $inc"
+        elif grep -qE '^[[:space:]]*-Fu' "$f"; then
+            echo "-dUseCThreads; its own -Fu unit paths"
+        else
+            echo "~/.fpc.cfg neither #INCLUDEs a system config nor sets -Fu unit paths"; exit 1
+        fi ;;
     builds)   # all three binaries there and on Qt5
         for b in lazarus-floating lazarus-docked lazarus; do
             [ -x "$P/bin/$b" ] || { echo "missing: $P/bin/$b"; exit 1; }
@@ -1251,6 +1264,37 @@ case "$1" in
         echo "${s:-Fusion}, palette $(basename "$p" .conf)" ;;
 esac
 LAZ_EOF
+    # v96: -dUseCThreads in ~/.fpc.cfg (Oct 26 2026: TDaemon stopped with runtime error 232, "no thread support
+    # compiled in"). The program below has the same guard as Lazarus's templates and TDaemon, and starts a thread.
+    cat > "$WORK/thr.pas" << 'THR_EOF'
+program thr;
+{$mode objfpc}
+uses
+{$IFDEF UNIX}{$IFDEF UseCThreads}
+  cthreads,
+{$ENDIF}{$ENDIF}
+  Classes;
+type
+  TWorker = class(TThread)
+  protected
+    procedure Execute; override;
+  end;
+procedure TWorker.Execute;
+begin
+  writeln('hello from a thread');
+end;
+var
+  w: TWorker;
+begin
+  w := TWorker.Create(False);
+  w.WaitFor;
+  w.Free;
+end.
+THR_EOF
+    check "~/.fpc.cfg defines UseCThreads, keeps the system unit paths" 'bash lazarus_check.sh fpccfg'
+    hint  "rerun setup with install-lazarus (v96 writes ~/.fpc.cfg: '#INCLUDE <system fpc.cfg>', then -dUseCThreads)"
+    check "a program with the UseCThreads guard runs a thread"         'fpc thr.pas > /dev/null && ./thr | grep -q "hello from a thread"'
+    hint  "runtime error 232 is back: ~/.fpc.cfg needs -dUseCThreads (rerun setup with install-lazarus)"
     check "Qt5 packages for the IDE (libqt5pas-dev, qt5ct)"  'dpkg_has libqt5pas-dev && dpkg_has qt5ct'
     hint  "rerun setup with install-lazarus (v94 adds them)"
     check "Qt5 units folder in the Lazarus tree is yours"         'bash lazarus_check.sh unitsdir'
@@ -5264,7 +5308,7 @@ fi
 # =================================================================
 echo
 echo "================================================================="
-echo "Test Version 95 complete: ${GRN}PASS $PASS${RST}   ${RED}FAIL $FAIL${RST}   ${YEL}WARN $WARN${RST}   SKIP $SKIP"
+echo "Test Version 96 complete: ${GRN}PASS $PASS${RST}   ${RED}FAIL $FAIL${RST}   ${YEL}WARN $WARN${RST}   SKIP $SKIP"
 if [ ${#FAILED[@]} -gt 0 ]; then
     echo
     echo "Failed (must fix to get started):"

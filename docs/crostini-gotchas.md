@@ -103,6 +103,15 @@ to see it in context; the comment above each fix usually tells the story.
 - **InterBase's `isql -q` exits 1 even when `CREATE DATABASE` worked** (`install-interbase`).
   **Fix:** the test drops `-q`.
 
+## Lazarus and Free Pascal
+
+- **"This binary has no thread support compiled in", runtime error 232** (`install-lazarus`, v96). Not
+  Crostini-specific (any Linux does it), but this is where it bit: Lazarus's TDaemon example stopped on
+  `sudo ./TestDaemon -r` (Oct 26 2026). On Linux the RTL has no thread manager until `cthreads` is the first
+  unit loaded, and Lazarus's templates and examples load it only behind `{$IFDEF UseCThreads}`.
+  **Fix:** `-dUseCThreads` in `~/.fpc.cfg`, which must `#INCLUDE` the system `fpc.cfg` (fpc reads only the
+  first config it finds); rebuild an older project once with Run → Clean up and Build.
+
 ## Retro
 
 - **Delphi 1's IDE crashes in a shared Wine prefix** (`install-retro`). It fails with a `winevdm.exe` page

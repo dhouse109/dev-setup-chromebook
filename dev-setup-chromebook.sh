@@ -1,5 +1,5 @@
 #!/bin/bash
-# dev-setup-chromebook - Version 95
+# dev-setup-chromebook - Version 96
 # Version history: CHANGELOG.md, next to this script in the bundle
 # (one section per script, newest version first).
 
@@ -252,7 +252,7 @@ if [[ "$FLAGS" =~ " install-gemma " ]] || [[ "$FLAGS" =~ " install-models " ]] |
 fi
 # =================================================================
 
-echo "Starting comprehensive Chromebook Linux provisioning (Version 95)..."
+echo "Starting comprehensive Chromebook Linux provisioning (Version 96)..."
 
 # v93: prefer IPv4 when this network's IPv6 does not get out. On Oct 4 2026 a Chromebook's Linux got IPv6
 # addresses for dl.google.com but no IPv6 route out, and wget hung on one address after another (the
@@ -1373,6 +1373,50 @@ if [[ "$FLAGS" =~ " install-lazarus " ]]; then
 
     echo "Cleaning up Lazarus installers..."
     rm -f "$ASSETS"/downloads/fpc-laz_*.deb "$ASSETS"/downloads/fpc-src_*.deb "$ASSETS"/downloads/lazarus-project_*.deb
+
+    # v96: thread support for every compile: -dUseCThreads in ~/.fpc.cfg (Oct 26 2026: Lazarus's examples/TDaemon,
+    # dev-demo's copy, installed with 'sudo ./TestDaemon -i', then 'sudo ./TestDaemon -r' stopped with "This binary has
+    # no thread support compiled in" and runtime error 232). On Linux the RTL has no thread manager until the cthreads
+    # unit is loaded first, and Lazarus's templates and many of its examples load it only behind {$IFDEF UseCThreads},
+    # which nothing defines by default. fpc, lazbuild and both IDE profiles all read ~/.fpc.cfg. Not a Crostini
+    # difference: the same project fails the same way on any Linux. The IDE itself already uses cthreads (its own
+    # guard is DisableCThreads), so lazmode's builds come out the same.
+    # fpc reads only the FIRST config file it finds (./fpc.cfg, ~/.fpc.cfg, <fpc's dir>/../etc/fpc.cfg, /etc/fpc.cfg),
+    # so a ~/.fpc.cfg replaces the system file and must #INCLUDE it, or fpc loses its unit paths and nothing compiles.
+    FPC_SYS_CFG=""
+    FPC_BIN=$(command -v fpc 2> /dev/null || true)
+    for FPC_CAND in ${FPC_BIN:+"$(dirname "$(readlink -f "$FPC_BIN")")/../etc/fpc.cfg"} /etc/fpc.cfg; do
+        if [ -f "$FPC_CAND" ]; then FPC_SYS_CFG=$(realpath -s "$FPC_CAND"); break; fi
+    done
+    FPC_BLOCK=$(printf '%s\n' '# >>> dev-setup lazarus >>>' \
+        '# v96: thread support for programs whose uses clause has {$IFDEF UseCThreads} CThreads (Lazarus'"'"'s' \
+        '# templates and examples). Without it they stop with runtime error 232 when they start a thread.' \
+        '-dUseCThreads' '# <<< dev-setup lazarus <<<')
+    FPC_CFG="$HOME/.fpc.cfg"
+    if [ -z "$FPC_SYS_CFG" ]; then
+        echo "NOTICE: no system fpc.cfg found (looked next to fpc and in /etc), so ~/.fpc.cfg was not written:"
+        echo "        a ~/.fpc.cfg without '#INCLUDE <system fpc.cfg>' would cut fpc off from its units."
+    elif [ ! -f "$FPC_CFG" ]; then
+        printf '#INCLUDE %s\n%s\n' "$FPC_SYS_CFG" "$FPC_BLOCK" > "$FPC_CFG"
+        echo "Wrote ~/.fpc.cfg: #INCLUDE $FPC_SYS_CFG, then -dUseCThreads (thread support in Lazarus's templates and examples)."
+    else
+        # Your own -dUseCThreads (outside the marked block) is left alone; otherwise the block is rewritten in place,
+        # or appended to a file that can compile (it #INCLUDEs a system config or has its own -Fu unit paths).
+        FPC_OTHER=$(sed '/^# >>> dev-setup lazarus >>>$/,/^# <<< dev-setup lazarus <<<$/d' "$FPC_CFG")
+        if printf '%s\n' "$FPC_OTHER" | grep -qiE '^[[:space:]]*-dUseCThreads([[:space:]]|$)'; then
+            echo "~/.fpc.cfg: UseCThreads already set; left as it is."
+        elif ! printf '%s\n' "$FPC_OTHER" | grep -qiE '^[[:space:]]*(#INCLUDE[[:space:]]|-Fu)'; then
+            echo "NOTICE: ~/.fpc.cfg neither #INCLUDEs a system config nor has its own -Fu unit paths, so fpc cannot"
+            echo "        compile anything with it. Add '#INCLUDE $FPC_SYS_CFG' as its first line; setup left it unchanged."
+        else
+            awk -v block="$FPC_BLOCK" '
+                /^# >>> dev-setup lazarus >>>$/ { print block; skip = 1; done = 1; next }
+                skip && /^# <<< dev-setup lazarus <<<$/ { skip = 0; next }
+                !skip { print }
+                END { if (!done) print block }' "$FPC_CFG" > "$FPC_CFG.new" && mv -f "$FPC_CFG.new" "$FPC_CFG"
+            echo "~/.fpc.cfg: -dUseCThreads block in place (thread support in Lazarus's templates and examples)."
+        fi
+    fi
 
     # v94: the IDE rebuilt on Qt5, in a light and a dark profile, each with a docked and a floating layout
     # (Oct 24 2026: the stock GTK2 IDE drew some modal dialogs blank under Crostini, Run Parameters and New
@@ -9534,7 +9578,7 @@ echo "Cleaning up system packages..."
 sudo apt autoremove -y
 
 echo "================================================================="
-echo "Setup Version 95 complete! 🎉"
+echo "Setup Version 96 complete! 🎉"
 echo "NEXT, in this order:"
 echo "  a. source ~/.bashrc                      (or open a new terminal)"
 echo "  b. ./dev-init-chromebook.sh <flags>  applies ~/.config/dev-init/secrets.env: GitHub, Hugging Face,"

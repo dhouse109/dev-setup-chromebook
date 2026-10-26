@@ -1,6 +1,6 @@
 # dev-demo: the demos and their disk footprint
 
-*Working notes kept alongside the scripts, copied at the v93 release, updated for v94. The "since vNN" remarks date each behaviour; [CHANGELOG.md](../CHANGELOG.md) has the full story.*
+*Working notes kept alongside the scripts, copied at the v93 release, updated for v96. The "since vNN" remarks date each behaviour; [CHANGELOG.md](../CHANGELOG.md) has the full story.*
 
 A full `dev-demo-chromebook.sh install-all` downloads about 1 GB; running every demo once adds roughly 20–25 GB, mostly outside `~/dev-demo`.
 
@@ -113,6 +113,8 @@ The Vue and GitLab demos (v91) come with `install-vue` and `install-gitlab`. `vu
 The configuration management bake-off (v91) comes with `install-puppet` or `install-chef` (`install-config-mgmt` gives both). `iac/cm-bakeoff` builds the same small nginx server three times, each in its own Debian 13 container: Ansible pushes from the Chromebook (:8813), Puppet runs `puppet apply` in its container (:8811) and Chef runs `cinc-client -z` in its (:8812). Each tool takes part when it is set up here, so Ansible joins with `install-iac` or `install-ansible-core`. Items: one per tool, `all`, `idempotency` (a second run must change nothing), `report` (seconds for the first and second runs, lines of code per tool), `audit` (one InSpec profile run by cinc-auditor against all three), `noop` (a new headline tried as a dry run), `lint` and `down`. `CM_MESSAGE='Hello DC'` before the launcher changes the headline for real.
 
 The media demo (v78, `media/sintel`, with install-media) takes about 20 MB: a 60-second clip of Sintel (2:30-3:30) that ffmpeg cuts from the Blender Foundation's upload on archive.org, reading only the byte ranges it needs from the 283 MB film. v77 fetched the trailer from download.blender.org, which now answers scripted downloads with a Cloudflare challenge (HTTP 403), so it failed on every machine. If archive.org is unreachable too, the demo generates a 30-second test clip (about 4 MB) instead and is still ready; the next dev-demo run tries the download again. `SINTEL_START` and `SINTEL_SECONDS` pick another stretch, and `.dev-demo-source` in the folder says which clip it holds.
+
+The Lazarus examples (`lazarus/examples`, install-lazarus) are Lazarus's own example folder, copied so the projects can build in place. `run-examples.sh` opens a project in the IDE (light or dark profile). TDaemon (v96) is a systemd daemon rather than a program to run with F9, so picking it also prints how to run it: build it (Run → Clean up and Build once if it was built before setup v96 put `-dUseCThreads` in `~/.fpc.cfg`; before that its `-r` stopped with runtime error 232), then from a terminal in its build folder (`x86_64-linux/Debug` for the Debug mode) `sudo ./TestDaemon -i`, which writes `/lib/systemd/system/TestDaemon.service` pointing at the binary in that build folder (so rebuild before starting it), then `sudo systemctl daemon-reload` and `sudo systemctl start TestDaemon`. It logs to a daily file next to the binary (`YYYYMMDD.log`; "Daemon received start signal" once it runs). To remove it: `sudo systemctl stop TestDaemon`, then `sudo ./TestDaemon -u`. `-i` and `-u` need `sudo`.
 
 ## What it means per Chromebook
 
