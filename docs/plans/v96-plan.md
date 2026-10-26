@@ -464,7 +464,19 @@ type" in Variables. The project was already on **Dwarf 3 (beta) (`-gw3`)**: that
 own FpDebug and describes strings and file types in a way gdb can't read. For gdb, Lazarus's choice is
 **Dwarf 2 with sets (`-gw2 -godwarfsets`)**, where an AnsiString is a plain pointer to chars that gdb
 prints as text (FpDebug reads it too). The project also had "Use external debug symbols file (`-Xg`)" on;
-gdb found the `.dbg` file through its debug link, so breakpoints worked. And Self appears to gdb as
+gdb found the `.dbg` file through its debug link, so breakpoints worked.
+
+**Where gdb + Native Debug tops out** (same session, after switching to Dwarf 2 with sets): breakpoints,
+stepping, threads and the call stack work, and the Debug Console prints strings (`p LOGFILEPATH` gave
+`'/home/…/x86_64-linux/Debug/20261026.log'`, `p AMESSAGE` gave `'Daemon worker thread running'`). Two
+things don't: expanding a string in Variables or Watch ("A syntax error in expression, near
+`*LOGFILEPATH`": Native Debug builds C-style expressions, gdb is in Pascal mode), and `F: Text` stays
+`<unknown>` (Free Pascal doesn't describe file records for gdb). `set language c` didn't help (C-syntax
+expressions still failed), so the generated `launch.json` gets no `autorun`. The generated files and the
+checklist say so plainly: use the editor to build, run, step and print with `p`; open the project in the
+Lazarus IDE (FpDebug) to inspect records, objects and file variables. A DAP adapter for FpDebug existed as
+an experiment (`CNOC.fpdebug` with Joost van der Sluis's fpdserver, May 2020, on Microsoft's marketplace);
+whether it is maintained or on Open VSX is unchecked, so it isn't in this item. And Self appears to gdb as
 `this` (`Execute (this=0x…)`), so fields are watched as `this.<Field>` from a method's frame.
 
 | Choice: the command | |
