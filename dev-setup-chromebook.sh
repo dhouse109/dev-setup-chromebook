@@ -1559,7 +1559,85 @@ if [[ "$FLAGS" =~ " install-windsurf " ]]; then
     echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/windsurf-stable.gpg] https://windsurf-stable.codeiumdata.com/wVxQEIWkwPUEAGf3/apt stable main" | sudo tee /etc/apt/sources.list.d/windsurf.list > /dev/null
     rm -f "$KEY_TMP"
     sudo apt update
-    sudo apt install -y windsurf
+    # v96: Windsurf is now Devin Desktop (1.126.0, Oct 26 2026): the package is devin-desktop, and windsurf is a
+    # transitional package that pulls it in. Install devin-desktop by name, or windsurf where the source has no
+    # devin-desktop yet. The flag keeps its name.
+    if apt-cache policy devin-desktop 2> /dev/null | grep -q 'Candidate: [0-9]'; then
+        sudo apt install -y devin-desktop
+    else
+        echo "NOTICE: the Windsurf apt source offers no devin-desktop package yet; installing windsurf."
+        sudo apt install -y windsurf
+    fi
+    # v96: Devin Desktop on X11, from its own launcher entry and a terminal wrapper (Oct 26 2026). Under ChromeOS's
+    # Wayland its window froze at sign-in (62 s of silence after devin.login, then "Fatal Wayland communication
+    # error: Broken pipe") or closed ("clean-exit"); not the extensions (--disable-extensions froze too), not the
+    # keyring. '--ozone-platform=x11' (XWayland) fixed it, as for Android Studio's dimming (v70). Two launcher
+    # findings: a copy of devin-desktop.desktop in ~/.local/share/applications with the flag added was NOT used by
+    # the ChromeOS launcher (the icon still started it on Wayland), while a separately named entry was; and the
+    # entry must go through /usr/bin/devin-desktop, not the Electron binary the stock entry runs: started bare,
+    # Electron resolves the shell environment itself ('bash -i -l'; "Unable to resolve your shell environment in a
+    # reasonable time") and the icon crashed within 5 s every time, while /usr/bin/devin-desktop, the CLI launcher
+    # script, sets VSCODE_CLI so that step is skipped (resolveShellEnv(): skipped) and it stayed up. So both the
+    # icon and the terminal run the wrapper below. The freezes that came back later were memory, not X11 (devmem,
+    # docs/crostini-gotchas.md). No extension is installed or removed here (CodeLLDB's Linux add-on is a manual
+    # install with --profile, in the init checklist).
+    if [ -x /usr/bin/devin-desktop ]; then
+        mkdir -p ~/.local/bin ~/.local/share/applications
+        DEVIN_WRAP="$HOME/.local/bin/devin-desktop"
+        for DEVIN_W in devin-desktop windsurf; do
+            [ "$DEVIN_W" = windsurf ] && [ ! -e /usr/bin/windsurf ] && { rm -f "$HOME/.local/bin/windsurf.new"; continue; }
+            printf '%s\n' '#!/bin/sh' \
+                "# $DEVIN_W: Devin Desktop (formerly Windsurf) on X11. Written by dev-setup (install-windsurf, v96) and rewritten" \
+                '# on every run. ChromeOS'"'"'s Wayland froze or closed its window (Oct 26 2026); --ozone-platform=x11 runs it on' \
+                '# XWayland. /usr/bin/devin-desktop by absolute path, so this never calls itself; CLI-only calls' \
+                '# (--install-extension, --list-extensions, --version) ignore the flag.' \
+                'exec /usr/bin/devin-desktop --ozone-platform=x11 "$@"' > "$HOME/.local/bin/$DEVIN_W.new"
+            chmod +x "$HOME/.local/bin/$DEVIN_W.new" && mv -f "$HOME/.local/bin/$DEVIN_W.new" "$HOME/.local/bin/$DEVIN_W"
+        done
+        # The entries are generated from the installed stock files on every run (not a frozen copy), so vendor changes
+        # to Icon, StartupWMClass or MimeType carry over. In each Exec= the program (first word, quoted or not) is
+        # replaced and the stock arguments (%F, --new-window %F) are kept. A .desktop file expands neither ~ nor $HOME,
+        # and the launcher has no ~/.local/bin on PATH, so the wrapper's path is written out.
+        DEVIN_STOCK=/usr/share/applications/devin-desktop.desktop
+        DEVIN_APPS="$HOME/.local/share/applications"
+        if [ -f "$DEVIN_STOCK" ]; then
+            # "Devin (X11)": the main group's names get " (X11)", every Exec= runs the wrapper, and no NoDisplay.
+            awk -v wrap="$DEVIN_WRAP" '
+                /^\[/ { main = ($0 == "[Desktop Entry]") }
+                main && /^NoDisplay=/ { next }
+                main && /^Name(\[[^]]*\])?=/ { print $0 " (X11)"; next }
+                /^Exec=/ { rest = substr($0, 6)
+                    if (rest ~ /^"/) { sub(/^"[^"]*"/, "", rest) } else { sub(/^[^ ]*/, "", rest) }
+                    print "Exec=" wrap rest; next }
+                { print }' "$DEVIN_STOCK" > "$DEVIN_APPS/devin-desktop-x11.desktop.new" \
+                && mv -f "$DEVIN_APPS/devin-desktop-x11.desktop.new" "$DEVIN_APPS/devin-desktop-x11.desktop"
+            # The stock entry, hidden: the same file plus NoDisplay=true in its main group. If the launcher ignores
+            # this override as it ignored an Exec= change, the stock icon simply stays (the hand check tells).
+            awk '/^\[/ { main = ($0 == "[Desktop Entry]") } main && /^NoDisplay=/ { next }
+                 { print } $0 == "[Desktop Entry]" { print "NoDisplay=true" }' "$DEVIN_STOCK" > "$DEVIN_APPS/devin-desktop.desktop.new" \
+                && mv -f "$DEVIN_APPS/devin-desktop.desktop.new" "$DEVIN_APPS/devin-desktop.desktop"
+            echo "Added Devin (X11) to the ChromeOS launcher ($DEVIN_APPS/devin-desktop-x11.desktop) and hid the stock icon."
+        else
+            echo "NOTICE: no $DEVIN_STOCK, so the Devin (X11) launcher entry was not made; 'devin-desktop' in a terminal still runs on X11."
+        fi
+        # The URL handler (devin:// links, e.g. the sign-in callback) keeps the Electron binary and --open-url %U (going
+        # through the CLI script there is untested) with the flag added after the program. xdg-open inside Linux
+        # follows this user-directory override, so a devin:// link starts it on X11 too.
+        DEVIN_URL=/usr/share/applications/devin-desktop-url-handler.desktop
+        if [ -f "$DEVIN_URL" ]; then
+            awk '/^Exec=/ { rest = substr($0, 6)
+                    if (rest ~ /^"/) { match(rest, /^"[^"]*"/) } else { match(rest, /^[^ ]*/) }
+                    if (index(rest, "--ozone-platform=x11") == 0) rest = substr(rest, 1, RLENGTH) " --ozone-platform=x11" substr(rest, RLENGTH + 1)
+                    print "Exec=" rest; next }
+                 { print }' "$DEVIN_URL" > "$DEVIN_APPS/devin-desktop-url-handler.desktop.new" \
+                && mv -f "$DEVIN_APPS/devin-desktop-url-handler.desktop.new" "$DEVIN_APPS/devin-desktop-url-handler.desktop"
+        fi
+        command -v update-desktop-database > /dev/null 2>&1 && update-desktop-database "$DEVIN_APPS" > /dev/null 2>&1 || true
+        echo "Devin Desktop: open 'Devin (X11)' from the launcher (machines set up before v96: shut Linux down once so it"
+        echo "               appears); 'devin-desktop' in a terminal runs it on X11 too ($DEVIN_WRAP)."
+    else
+        echo "NOTICE: /usr/bin/devin-desktop is missing (the source installed windsurf only), so no X11 launcher or wrapper was made."
+    fi
 else
     echo "Skipping Windsurf. (Run with 'install-windsurf' flag to enable)"
 fi

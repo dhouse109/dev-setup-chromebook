@@ -92,7 +92,7 @@ pull in what they need. For example, `install-web` brings `install-node` with it
 
 | Group | Members |
 |---|---|
-| `install-editors` | `install-vscode` `install-windsurf` `install-cursor` `install-lazarus` (Lazarus / Free Pascal; the IDE on Qt5 with light and dark profiles, docked or floating, switched with `lazmode`) |
+| `install-editors` | `install-vscode` `install-windsurf` (Windsurf, now Devin Desktop) `install-cursor` `install-lazarus` (Lazarus / Free Pascal; the IDE on Qt5 with light and dark profiles, docked or floating, switched with `lazmode`) |
 | `install-languages` | `install-rust` (with WASM) `install-node` (nvm, Node LTS, Claude Code, Codex, Gemini CLI, aider) `install-go` `install-pwsh` `install-ruby` (Jekyll) `install-cpp` `install-asm` `install-dotnet` (C#, VB.NET) `install-java` (JDK, Maven, Gradle) |
 | `install-ecosystems` | `install-antigravity` `install-media` (Flatpak, HandBrake, KDiff3) `install-gemma` (Gemma on Ollama + Gemini) `install-mobile` (Android SDK, Tauri, React Native/Expo, Flutter) `install-android-native` (Android Studio, Kotlin) `install-godot` (standard + .NET editors) |
 | `install-cloud` | `install-aws` `install-azure` `install-gcp` `install-vercel` `install-cloudflare` (wrangler) |
@@ -251,6 +251,10 @@ A few of the findings:
   unless Homebrew goes last on PATH.
 - **Android Studio.** The window dims while focused under ChromeOS's Wayland. Forcing the X11 toolkit
   fixes it.
+- **Devin Desktop (Windsurf).** It froze or closed under Wayland; it runs on X11 from its own "Devin (X11)"
+  launcher entry, since the launcher ignored an edited copy of the stock one.
+- **Memory.** ChromeOS takes memory back from the Linux VM, which has no swap, so a large app freezes
+  instead of slowing down. `devmem` shows how much was taken and what to close.
 
 The full list, with the fix for each, is in [docs/crostini-gotchas.md](docs/crostini-gotchas.md).
 

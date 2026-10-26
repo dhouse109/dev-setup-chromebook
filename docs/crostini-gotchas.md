@@ -16,6 +16,15 @@ to see it in context; the comment above each fix usually tells the story.
 - **Android Studio's window dims while it has focus** (`install-android-native`). This happens under
   ChromeOS's Wayland, with the IDE's JetBrains runtime.
   **Fix:** `-Dawt.toolkit.name=XToolkit` in its VM options.
+- **Devin Desktop (Windsurf) freezes or closes under Wayland** (`install-windsurf`, v96). On ChromeOS's Wayland
+  its window froze at sign-in (62 s of silence, then `Fatal Wayland communication error: Broken pipe`) or
+  vanished ("clean-exit"), with or without extensions (Oct 26 2026). **Fix:** `--ozone-platform=x11`
+  (XWayland), through a wrapper, `~/.local/bin/devin-desktop`, and its own launcher entry, "Devin (X11)".
+  Two launcher traps: the ChromeOS launcher ignored an edited copy of `devin-desktop.desktop` with the same
+  file name in `~/.local/share/applications` (the icon still started it on Wayland), so the fix is a
+  separately named entry; and the entry must run `/usr/bin/devin-desktop` (the CLI script, which sets
+  `VSCODE_CLI`), not the Electron binary the stock entry runs, which resolved the shell environment itself
+  and crashed within 5 s every time. The freezes that came back on X11 were memory (see Memory and disk).
 - **GTK2 dialogs in Lazarus draw blank and freeze** (`install-lazarus`, v94). The SourceForge IDE is built on
   GTK2. Under Crostini some of its modal dialogs (Run Parameters, New Project) drew blank until resized and
   never took keyboard focus, while Tools → Options worked. Removing `gtk2-engines-pixbuf` didn't help, and

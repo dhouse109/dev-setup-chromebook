@@ -1272,11 +1272,50 @@ if has install-cursor; then
 
 fi
 
-# Windsurf
+# Windsurf, now Devin Desktop
 if has install-windsurf; then
-    section "Windsurf (install-windsurf)"
-    check "windsurf"                                       'windsurf --version'
+    section "Devin Desktop / Windsurf (install-windsurf)"
+    # v96: Devin Desktop (the windsurf package is now a transitional one) runs on X11, from its own launcher entry
+    # and a terminal wrapper, both through /usr/bin/devin-desktop (Oct 26 2026: it froze or closed on ChromeOS's
+    # Wayland, and an icon that ran the Electron binary directly crashed within 5 s). No GUI launch here: the
+    # Chromebook run is the hand check.
+    cat > "$WORK/devin_check.sh" << 'DEVIN_EOF'
+W="$HOME/.local/bin/devin-desktop"
+A="$HOME/.local/share/applications"
+case "$1" in
+    x11)   # "Devin (X11)": every Exec= runs the wrapper, and it is not hidden
+        f="$A/devin-desktop-x11.desktop"
+        [ -f "$f" ] || { echo "missing: $f"; exit 1; }
+        grep -m1 '^Name=' "$f"
+        n=$(grep -c '^Exec=' "$f"); bad=$(grep '^Exec=' "$f" | grep -cv "^Exec=$W\( \|$\)")
+        echo "$n Exec= line(s), $bad not running $W"
+        [ "$n" -gt 0 ] && [ "$bad" -eq 0 ] || exit 1
+        ! grep -q '^NoDisplay=true' "$f" || { echo "it has NoDisplay=true"; exit 1; } ;;
+    wrapper)   # runs /usr/bin/devin-desktop with --ozone-platform=x11
+        [ -x "$W" ] || { echo "missing: $W"; exit 1; }
+        grep -v '^#' "$W" | grep -q '/usr/bin/devin-desktop --ozone-platform=x11' || { echo "$W does not run /usr/bin/devin-desktop --ozone-platform=x11"; exit 1; }
+        echo "$W -> /usr/bin/devin-desktop --ozone-platform=x11" ;;
+    stock)   # the stock entry overridden with NoDisplay=true
+        f="$A/devin-desktop.desktop"
+        [ -f "$f" ] || { echo "no override: $f"; exit 1; }
+        awk '/^\[/ { m = ($0 == "[Desktop Entry]") } m && $0 == "NoDisplay=true" { f = 1 } END { exit !f }' "$f" || { echo "$f has no NoDisplay=true"; exit 1; }
+        echo "$f: NoDisplay=true" ;;
+    path)   # a terminal's devin-desktop is the wrapper (a login shell, as a new terminal has it)
+        p=$(bash -lc 'command -v devin-desktop' 2> /dev/null | tail -n 1)
+        echo "devin-desktop on PATH: ${p:-none}"
+        [ "$p" = "$W" ] ;;
+esac
+DEVIN_EOF
+    check "devin-desktop --version (through the X11 wrapper)"  '"$HOME/.local/bin/devin-desktop" --version | head -n 1'
+    hint  "rerun setup with install-windsurf (v96 installs devin-desktop and writes ~/.local/bin/devin-desktop)"
     check "Windsurf apt source"                            '[ -f /etc/apt/sources.list.d/windsurf.list ]'
+    check "Devin (X11) launcher entry runs the wrapper"    'bash devin_check.sh x11'
+    hint  "rerun setup with install-windsurf (it regenerates ~/.local/share/applications/devin-desktop-x11.desktop), then shut Linux down once"
+    check "the wrapper runs /usr/bin/devin-desktop --ozone-platform=x11" 'bash devin_check.sh wrapper'
+    warn  "stock Devin entry hidden (NoDisplay=true)"      'bash devin_check.sh stock'
+    hint  "cosmetic: the stock icon starts Devin on Wayland; rerun setup with install-windsurf"
+    check "devin-desktop in a terminal is the wrapper"     'bash devin_check.sh path'
+    hint  "~/.local/bin must come before /usr/bin on PATH (Debian's ~/.profile puts it first when the folder exists)"
 fi
 
 # Lazarus
@@ -5222,7 +5261,8 @@ if ! has nodisk; then
     dpaths base "Homebrew formulae: gcc, ddev, gh, mkcert"   "$CELLAR/gcc" "$CELLAR/ddev" "$CELLAR/gh" "$CELLAR/mkcert"
     dpaths base "pipx and uv"                                "$HOME/.local/share/pipx/venvs/uv" "$HOME/.local/share/pipx/shared"
     has install-vscode   && dapt   editors "VS Code"         code
-    has install-windsurf && dapt   editors "Windsurf"        windsurf
+    # v96: Devin Desktop is the real package; windsurf is a few KB of transitional package.
+    has install-windsurf && dapt   editors "Devin Desktop (Windsurf)" devin-desktop windsurf
     has install-cursor   && dpaths editors "Cursor AppImage" "$HOME/.local/bin/cursor"
     has install-herdr    && dpaths herdr "herdr (binary and config)" "$HOME/.local/bin/herdr" "$HOME/.config/herdr"
     # v94: plus the Qt5 IDE builds and their units in both profiles, the qt5 units folder setup makes in the
