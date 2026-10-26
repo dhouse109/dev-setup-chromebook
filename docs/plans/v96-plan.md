@@ -1,10 +1,10 @@
 # dev-setup-chromebook v96 plan
 
-Oct 26, 2026 · item 1 chosen Oct 26 (all choices) · item 2 added Oct 26, back end, flag and rendering chosen Oct 26
+Oct 26, 2026 · item 1 chosen Oct 26 (all choices) · item 2 added Oct 26, back end, flag and rendering chosen Oct 26 · item 3 added and chosen Oct 26
 
 ## Scope
 
-v96 follows v95. Base: v95, built on `release/v95` (PR #4), being released now. Anything v95's release
+v96 follows v95. Base: v95 (`release/v95`, merged into `main` as PR #4). Anything v95's release
 run turns up and doesn't go into v95 itself can join this plan.
 
 1. **Thread support for Free Pascal programs:** setup defines `UseCThreads` for every compile, in
@@ -12,8 +12,11 @@ run turns up and doesn't go into v95 itself can join this plan.
 2. **Headless Drupal + Astro demo:** a new dev-demo, `drupal/drupal-astro`, that builds Umami's recipes
    into a static Astro site from core's JSON:API, next to `drupal/drupal-nuxt` for a "one Drupal, two
    front ends" comparison. Nothing is installed for Astro itself.
+3. **Devin Desktop (formerly Windsurf) under X11, and CodeLLDB:** install-windsurf starts Devin Desktop
+   with `--ozone-platform=x11` from its own launcher entry and a terminal wrapper (it froze or closed
+   on Wayland, Oct 26 2026), and installs CodeLLDB's Linux add-on, which can't install itself there.
 
-Item 1 changes scripts, so the bundle goes to v96: all four scripts bumped, CHANGELOG entries under all
+Items 1 and 3 change scripts, so the bundle goes to v96: all four scripts bumped, CHANGELOG entries under all
 four sections ("version bump only" where nothing changed). Item 2 changes dev-demo only.
 
 Each item lists the choices that were offered; the decision is marked. The build starts once "anything
@@ -211,6 +214,98 @@ drupal-nuxt's `serve` still works. `compare` shows Nuxt and the island picking u
 page shows only after `build`. `deploy` is a hand check once wrangler is logged in (pages up, island
 on its fallback).
 
+## 3. Devin Desktop (formerly Windsurf) under X11, and CodeLLDB (install-windsurf)
+
+**Found Oct 26 2026** (installed Oct 24, worked at first, then wouldn't sign in or stay open). Windsurf is
+now **Devin Desktop** (1.126.0): the apt package is `devin-desktop`, and `windsurf` is a transitional
+package that pulls it in. Its window either froze ("The window is not responding") or vanished ("The
+window terminated unexpectedly (reason: 'clean-exit', code: '0')"), about 30 s after launch or when
+**Login** was clicked. What the logs ruled out and what fixed it:
+
+- Not the extensions: `devin-desktop --disable-extensions --verbose` froze the same way.
+- Not the shell: the launcher-started run logged "Unable to resolve your shell environment in a
+  reasonable time", but a terminal-started run skips that step (`resolveShellEnv(): skipped`) and failed
+  the same way.
+- Not the keyring: the stored `windsurf_auth.sessions` secret was found and decrypted.
+- **The Wayland path.** Electron ran on ChromeOS's Wayland (`ozone/platform/wayland`). Right after
+  `devin.login`, the log went silent for 62 s, a child process died, then `Fatal Wayland communication
+  error: Broken pipe` and `FATAL ... Failed to shutdown`.
+- **Fix:** `devin-desktop --ozone-platform=x11` (XWayland). Sign-in through ChromeOS's browser then
+  worked, all extensions loaded, and it stayed up. No `--disable-gpu` needed.
+- **The launcher ignored an edited copy.** A copy of `devin-desktop.desktop` in
+  `~/.local/share/applications` with the flag added was **not** used by the ChromeOS launcher, even after
+  shutting Linux down: the icon still started it on Wayland and it crashed. A **separately named** entry
+  (`devin-desktop-x11.desktop`, "Devin (X11)") worked. Same family as Android Studio's Wayland dimming
+  (v70).
+
+**CodeLLDB** (`vadimcn.vscode-lldb`, imported from VS Code): Open VSX serves the universal package,
+which downloads its Linux add-on on first start through `workbench.extensions.command.installFromVSIX`.
+Devin Desktop doesn't have that command: "Platform package installation failed ... command not found".
+Installing the platform `.vsix` with `devin-desktop --install-extension` fixed it.
+
+**Setup** (under `install-windsurf`; the flag keeps its name, chosen Oct 26):
+
+- **Package:** install `devin-desktop` directly from the same apt source (fall back to `windsurf` if the
+  source doesn't offer it yet). The existing `windsurf.list` and key stay.
+- **Launcher entry "Devin (X11)"** (chosen: A): generated from the installed
+  `/usr/share/applications/devin-desktop.desktop` at every run (not a frozen copy, so vendor changes to
+  `Exec`, `Icon`, `StartupWMClass` or `MimeType` carry over): `Name=` gets " (X11)" and every `Exec=`
+  gets `--ozone-platform=x11` after the program path. Written to
+  `~/.local/share/applications/devin-desktop-x11.desktop`.
+- **Stock entry hidden** (chosen: A): `~/.local/share/applications/devin-desktop.desktop` is the stock
+  file plus `NoDisplay=true`, also regenerated each run. If the launcher ignores that as it ignored the
+  `Exec` change, the stock icon simply stays; the hand check below tells.
+- **URL handler:** `devin-desktop-url-handler.desktop` copied the same way with the flag. Inside Linux,
+  `xdg-open` follows the user-directory override, so a `devin://` link starts it on X11 too.
+- **Terminal wrapper** (chosen: A): `~/.local/bin/devin-desktop` (and `~/.local/bin/windsurf` when
+  `/usr/bin/windsurf` exists) runs the system `/usr/bin/devin-desktop --ozone-platform=x11 "$@"`, by
+  absolute path so it can't call itself. `~/.local/bin` is ahead of `/usr/bin` on PATH. CLI-only
+  calls (`--install-extension`, `--list-extensions`, `--version`) ignore the flag.
+- **CodeLLDB** (chosen: always, under install-windsurf): the latest `codelldb-linux-x64.vsix` (tag from
+  the `releases/latest` redirect, not the API; GitHub publishes no checksum for it, so it is validated
+  with `unzip -t` before installing) goes in with `devin-desktop --install-extension`, so it's in place
+  before onboarding imports VS Code's extensions. Skipped when that version or newer is already
+  installed. Download in `$ASSETS/downloads`, removed after.
+- **Idempotent:** each run regenerates the three entries and the wrapper; a hand-made
+  `devin-desktop-x11.desktop` (the Oct 26 one) is replaced by the generated one, which differs only in
+  following the installed stock file.
+
+**Test** (Windsurf section, renamed "Devin Desktop / Windsurf (install-windsurf)"):
+
+- `devin-desktop --version` (check), via the wrapper.
+- Apt source present (check, as now).
+- `devin-desktop-x11.desktop`: every `Exec=` has `--ozone-platform=x11`, its program is the stock
+  entry's program, and it has no `NoDisplay` (check).
+- Stock entry overridden with `NoDisplay=true` (warn: cosmetic).
+- `command -v devin-desktop` is the wrapper, and the wrapper passes the flag (check).
+- CodeLLDB's platform add-on is in Devin's extensions folder: the native adapter present and executable
+  (check; the build confirms the exact path from the `.vsix`).
+- Disk report: measure `devin-desktop` (the transitional `windsurf` package is a few KB).
+
+No GUI launch in the test; that's the hand check.
+
+**Init:** version bump only. Sign-in is a browser step.
+
+**Docs:**
+
+- `docs/crostini-gotchas.md`, Graphics: "Devin Desktop (Windsurf) freezes or closes under Wayland", and
+  that the ChromeOS launcher ignores an override with the same file name, so the fix is a separate entry.
+- `docs/init-checklist.md`: the editors line: open **Devin (X11)**; click Login once and give it 20–30 s
+  (each extra click opens another browser tab); finishing sign-in in ChromeOS's browser returns to the
+  app. Machines set up before v96: rerun setup with install-windsurf, then shut Linux down once so the
+  launcher picks up the new entry.
+- README: the gotchas list gets a Devin line next to Android Studio's; flag table text "Windsurf (now
+  Devin Desktop)".
+- CHANGELOG (all four sections).
+
+**To verify on the Chromebook:** on the machine fixed by hand on Oct 26, setup replaces the hand-made
+entry and the wrapper without breaking either; after a Linux restart the launcher shows **Devin (X11)**
+(and, if `NoDisplay` is honoured, not the stock icon); opened from it, `pgrep -af devin-desktop` shows
+`--ozone-platform=x11`; it stays up past 60 s, and Login completes. `devin-desktop` from a terminal also
+gets the flag. A CodeLLDB debug session (Rust or C) stops at a breakpoint with no platform-package
+error. On a clean machine: install-windsurf, then onboarding's VS Code import doesn't replace the
+platform CodeLLDB with the universal one.
+
 ## Carried forward
 
 **From v95** (its own on-hardware checks, in the v95 plan): `lazmode`'s install-list handling and
@@ -241,4 +336,9 @@ go into v95 if you keep them there, otherwise here.
 - [x] Item 2, back end: A (shared `drupal/umami-headless`)
 - [x] Item 2, flag: A (`install-web`)
 - [x] Item 2, rendering: C (static pages plus a server island, `@astrojs/node`)
+- [x] Item 3: Devin Desktop under X11 and CodeLLDB, under install-windsurf
+- [x] Item 3, launcher: A (a separate "Devin (X11)" entry, stock entry hidden with `NoDisplay`)
+- [x] Item 3, terminal: A (`~/.local/bin/devin-desktop` wrapper adds the flag)
+- [x] Item 3, CodeLLDB: A (always installed under install-windsurf)
+- [x] Item 3, flag name: A (keep `install-windsurf`; it installs `devin-desktop`)
 - [ ] Anything else for v96
