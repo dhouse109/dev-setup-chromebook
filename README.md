@@ -27,7 +27,7 @@ the whole lab, as it is.
 
 All four take the same flags, so `install-web install-node` means the same thing to each of them.
 
-> **Current version: v94.** [CHANGELOG.md](CHANGELOG.md) has the full history.
+> **Current version: v95.** [CHANGELOG.md](CHANGELOG.md) has the full history.
 
 ## What it is, and what it isn't
 

@@ -1,5 +1,5 @@
 #!/bin/bash
-# dev-test-chromebook - Version 94
+# dev-test-chromebook - Version 95
 # Version history: CHANGELOG.md, next to this script in the bundle
 # (one section per script, newest version first).
 #
@@ -418,7 +418,7 @@ info()  { printf '  %-62s %s\n' "$1" "${DIM}INFO${RST} $2"; echo "--- $1: INFO $
 # v92: a check that cannot run because an earlier one already failed for the same cause (counted as SKIP).
 skipped() { printf '  %-62s %s\n' "$1" "${DIM}SKIP${RST} $2"; SKIP=$((SKIP + 1)); LAST=skip; echo "--- $1: SKIP $2" >> "$LOG"; }
 
-echo "Testing Chromebook Linux provisioning (Version 94)... log: $LOG"
+echo "Testing Chromebook Linux provisioning (Version 95)... log: $LOG"
 [ "$QUICK" = 1 ] && echo "(quick mode: slow functional tests will be skipped)"
 
 # v68: say so when dev-init has not applied the secrets file yet. Filling in secrets.env logs
@@ -1188,12 +1188,13 @@ case "$1" in
         case "$e" in *QT_QPA_PLATFORMTHEME=qt5ct*) ;; *) exit 1 ;; esac
         case "$e" in *"--pcp=$HOME/.lazarus-dark"*) ;; *) exit 1 ;; esac
         grep -q '^Name=Lazarus (Dark)$' "$f" || { echo "Name= is not 'Lazarus (Dark)'"; exit 1; } ;;
-    qt5ct)
+    qt5ct)   # v95: any palette that keeps the dark launcher dark; prints "STYLE, palette NAME"
         f="$HOME/.config/qt5ct/qt5ct.conf"
         s=$(sed -n 's/^style=//p' "$f" | head -n 1); c=$(sed -n 's/^custom_palette=//p' "$f" | head -n 1)
         p=$(sed -n 's/^color_scheme_path=//p' "$f" | head -n 1)
-        echo "style=$s custom_palette=$c color_scheme_path=$p"
-        [ "$s" = Fusion ] && [ "$c" = true ] && [ "${p##*/}" = darker.conf ] && [ -f "$p" ] ;;
+        [ "$c" = true ] || { echo "custom_palette=${c:-unset}: Lazarus (Dark) shows ${s:-Fusion}'s own light palette"; exit 1; }
+        [ -n "$p" ] && [ -f "$p" ] || { echo "the palette file is missing: ${p:-(no color_scheme_path)}"; exit 1; }
+        echo "${s:-Fusion}, palette $(basename "$p" .conf)" ;;
 esac
 LAZ_EOF
     check "Qt5 packages for the IDE (libqt5pas-dev, qt5ct)"  'dpkg_has libqt5pas-dev && dpkg_has qt5ct'
@@ -1215,8 +1216,12 @@ LAZ_EOF
     hint  "rerun setup with install-lazarus (it writes ~/.local/share/applications/lazarus-dark.desktop)"
     check "qt5ct config present (~/.config/qt5ct/qt5ct.conf)"          '[ -f ~/.config/qt5ct/qt5ct.conf ]'
     hint  "rerun setup with install-lazarus, or 'lazmode theme' and Apply"
-    warn  "qt5ct: Fusion style with the darker palette"                'bash lazarus_check.sh qt5ct'
-    hint  "changed in qt5ct ('lazmode theme')? That is your call; setup leaves an existing qt5ct.conf alone"
+    # v95: a palette you picked yourself passes, named in the line (Oct 25 2026: v94 warned about "waves",
+    # chosen in 'lazmode theme', and a WARN meant to be ignored hides real ones). It warns only when the dark
+    # launcher would not look dark: no custom palette, or its file is gone.
+    LAZ_QT=$(bash "$WORK/lazarus_check.sh" qt5ct 2> /dev/null) || LAZ_QT="a custom palette for Lazarus (Dark)"
+    warn  "qt5ct: $LAZ_QT"                                             'bash lazarus_check.sh qt5ct'
+    hint  "'lazmode theme': pick a palette under Palette > Custom (darker, waves, dusk...) and Apply"
     check "lazmode status"                                             'lazmode status'
     hint  "rerun setup with install-lazarus (it writes ~/.local/bin/lazmode)"
     check "lazbuild with the dark profile (--pcp=~/.lazarus-dark)"     'lazbuild --pcp="$HOME/.lazarus-dark" --version'
@@ -5202,7 +5207,7 @@ fi
 # =================================================================
 echo
 echo "================================================================="
-echo "Test Version 94 complete: ${GRN}PASS $PASS${RST}   ${RED}FAIL $FAIL${RST}   ${YEL}WARN $WARN${RST}   SKIP $SKIP"
+echo "Test Version 95 complete: ${GRN}PASS $PASS${RST}   ${RED}FAIL $FAIL${RST}   ${YEL}WARN $WARN${RST}   SKIP $SKIP"
 if [ ${#FAILED[@]} -gt 0 ]; then
     echo
     echo "Failed (must fix to get started):"

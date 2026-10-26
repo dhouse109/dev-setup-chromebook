@@ -1,5 +1,5 @@
 #!/bin/bash
-# dev-setup-chromebook - Version 94
+# dev-setup-chromebook - Version 95
 # Version history: CHANGELOG.md, next to this script in the bundle
 # (one section per script, newest version first).
 
@@ -247,7 +247,7 @@ if [[ "$FLAGS" =~ " install-gemma " ]] || [[ "$FLAGS" =~ " install-models " ]] |
 fi
 # =================================================================
 
-echo "Starting comprehensive Chromebook Linux provisioning (Version 94)..."
+echo "Starting comprehensive Chromebook Linux provisioning (Version 95)..."
 
 # v93: prefer IPv4 when this network's IPv6 does not get out. On Oct 4 2026 a Chromebook's Linux got IPv6
 # addresses for dl.google.com but no IPv6 route out, and wget hung on one address after another (the
@@ -9351,7 +9351,7 @@ echo "Cleaning up system packages..."
 sudo apt autoremove -y
 
 echo "================================================================="
-echo "Setup Version 94 complete! 🎉"
+echo "Setup Version 95 complete! 🎉"
 echo "NEXT, in this order:"
 echo "  a. source ~/.bashrc                      (or open a new terminal)"
 echo "  b. ./dev-init-chromebook.sh <flags>  applies ~/.config/dev-init/secrets.env: GitHub, Hugging Face,"

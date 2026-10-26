@@ -1,6 +1,6 @@
 # Init checklist
 
-*Working notes kept alongside the scripts, copied at the v93 release, updated for v94. The "since vNN" remarks date each behaviour; [CHANGELOG.md](../CHANGELOG.md) has the full story.*
+*Working notes kept alongside the scripts, copied at the v93 release, updated for v95. The "since vNN" remarks date each behaviour; [CHANGELOG.md](../CHANGELOG.md) has the full story.*
 
 ## Run order
 
@@ -128,7 +128,8 @@ The test script ends with a disk report (v77): the measured size of every instal
 
 Setup installs Lazarus from the SourceForge debs, then rebuilds the IDE on Qt5: the stock GTK2 IDE draws some dialogs blank under Crostini and they never take the keyboard (docs/crostini-gotchas.md). It builds four IDE binaries, so neither the first start nor a switch waits on a build: a light profile (`~/.lazarus`) and a dark one (`~/.lazarus-dark`), each docked and floating. Expect 10–20 minutes more than a plain Lazarus install on a clean machine. On disk, Lazarus with the four Qt5 IDE builds takes about 3.2 GB (dev-test disk report, Oct 25 2026); the test's disk report measures it on each machine. Build logs go to `assets/logs/lazarus-build-<profile>-<layout>.log`. There is no extra flag, no key and no prompt.
 
-- **Two launchers:** **Lazarus** opens the light profile; **Lazarus (Dark)** opens the dark one with qt5ct's Fusion style and darker palette (`env QT_QPA_PLATFORMTHEME=qt5ct startlazarus --pcp=$HOME/.lazarus-dark`). Pick light or dark by the launcher you open; both can run side by side.
+- **Two launchers:** **Lazarus** opens the light profile; **Lazarus (Dark)** opens the dark one through qt5ct (`env QT_QPA_PLATFORMTHEME=qt5ct startlazarus --pcp=$HOME/.lazarus-dark`). Pick light or dark by the launcher you open; both can run side by side.
+- **Any dark palette is fine** (v95). Setup starts qt5ct on Fusion with the **darker** palette, only when there is no `~/.config/qt5ct/qt5ct.conf` yet, and leaves yours alone. To pick another: `lazmode theme`, Appearance → Palette → **Custom**, choose one (darker, waves, dusk…), Apply. dev-test names the style and palette in use and passes for any of them; it warns only when the dark launcher wouldn't look dark (the custom palette is off, or its file is gone).
 - **Docked is the default.** The docked build has the main window docked (AnchorDocking) and the form designer as an editor tab (DockedFormEditor).
 - **`lazmode`** (in `~/.local/bin`) switches between the builds setup made, so a switch is a file copy that takes seconds. It refuses to switch or rebuild while Lazarus is running. `--profile light|dark|both` defaults to both.
 
