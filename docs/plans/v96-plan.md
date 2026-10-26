@@ -491,6 +491,12 @@ not found": those types are in the RTL, which ships without debug info. Workarou
 `fView: TextRec absolute f;` beside `f` puts `TextRec`'s layout into the unit's debug info, and a `fView`
 watch then expands (Name, Mode, Handle); in the checklist as a tip, not generated.
 
+Then, with `fView: TextRec absolute f;` added: `fView` expanded in Locals, and `TextRec(f)` worked as a
+watch too, since the unit's debug info now has `TextRec`. Stopped *on* `AssignFile` (before it runs), every
+field read `$5555…` (pointers `Pointer($5555555555555555)`, `bufpos` 6148914691236517205 = `$5555555555555555`,
+`UserData` bytes 85 = `$55`, `name` chars shown as '啕'): that is the project's "Trash variables (`-gt`)"
+option filling uninitialized locals with `$55` on purpose, so it looks like noise until `AssignFile` runs.
+
 So the two debuggers want opposite debug info: FpDebug needs DWARF 3, gdb reads strings only with DWARF 2
 with sets, and a build mode has one type.
 
@@ -524,6 +530,9 @@ with sets, and a build mode has one type.
 **Setup** (under `install-lazarus`, plus `install-retro` for the Delphi part):
 
 - **gdb** joins install-lazarus's apt packages (it's only in install-cpp today).
+- **GNU Global** (`global`, which provides `gtags` and `global`) joins them too (asked Oct 26): the Pascal
+  extension (`alefragnani.pascal`) uses it for Go to Definition and Find References, and without it shows
+  "The "global" command is not available. Make sure it is on PATH" (seen Oct 26 in VS Code).
 - **`lazmode vscode [dir] [--profile light|dark] [--force]`** (dir defaults to the current folder):
   - Finds the project's `.lpi` (one in the folder, or asks which when there are several; `dir` may also
     be the `.lpi` itself).
@@ -556,6 +565,10 @@ with sets, and a build mode has one type.
     `cwd` the project folder, `preLaunchTask` `lazbuild (Debug-gdb)` (for Devin and Cursor). No `autorun`.
     Each configuration's name says which editor it's for.
   - Writes `.vscode/extensions.json` (recommendations above).
+  - Writes `.vscode/settings.json` pointing the Pascal extension's code navigation at GNU Global (gtags)
+    and letting it generate the tags itself; the build confirms the setting names against the
+    extension's current documentation. `GTAGS`, `GRTAGS` and `GPATH` land in the project folder; the
+    generated settings exclude them from the Explorer and search.
   - Existing files are kept unless `--force` (a NOTICE names them), so your own edits survive.
 - **`delphi N build PROJECT.dpr`** (new): runs that version's `dcc32.exe` (found under the prefix's
   `Delphi*/Bin`, as `delphi_bin` finds Delphi 1's) in the prefix, console only (no virtual desktop),
@@ -569,7 +582,8 @@ with sets, and a build mode has one type.
 
 **Test:**
 
-- Lazarus section: gdb present (check). `lazmode vscode` on a copy of a small Lazarus example in the
+- Lazarus section: gdb present (check); `global --version` and `gtags` on the scratch example writes
+  `GTAGS` (check). `lazmode vscode` on a copy of a small Lazarus example in the
   test's scratch folder adds the Debug-gdb mode (its `.lpi` parses and `lazbuild --bm=Debug-gdb` builds,
   check), and writes three files that parse as JSON, `launch.json` holding one `fpDebug` and one `gdb`
   configuration (check); both build tasks' commands, run as written, build (check); the Debug binary
@@ -593,7 +607,9 @@ item 3). The launcher's note says: F5 builds and debugs; for TDaemon, `-r` is al
 - `docs/init-checklist.md`, Lazarus section: `lazmode vscode`, the Debug-gdb mode it adds and why,
   which configuration to pick in which editor, the extensions each editor will offer, `--profile`; what
   each debugger shows (FpDebug: strings and objects in Variables, `Self`; gdb: stepping, `p NAME` in the
-  Debug Console with names in capitals); the `fView: TextRec absolute f;` tip for file variables; retro section: `delphi N build` / `delphi N vscode` and why there's no
+  Debug Console with names in capitals); the `fView: TextRec absolute f;` tip for file variables, and that
+  stopping before `AssignFile` shows the `-gt` trash pattern (`$55…`) rather than real values; GNU Global
+  and what it adds (Ctrl+click navigation); retro section: `delphi N build` / `delphi N vscode` and why there's no
   debugging.
 - `docs/dev-demo.md`: the `editor` item.
 - README: one line each under install-lazarus and install-retro.
@@ -653,4 +669,6 @@ go into v95 if you keep them there, otherwise here.
       (A); dev-demo `editor` launcher item (A); Delphi build + run included (A)
 - [x] Item 5, two debuggers: B (a Debug-gdb build mode on Dwarf 2 with sets for gdb; Debug on DWARF 3 for
       VS Code's FpDebug, `CNOC.fpdebug`)
+- [x] Item 5, added Oct 26: GNU Global under install-lazarus, and `lazmode vscode` writes
+      `.vscode/settings.json` for the Pascal extension's gtags navigation
 - [ ] Anything else for v96
