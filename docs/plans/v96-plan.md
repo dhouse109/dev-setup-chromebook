@@ -1,6 +1,6 @@
 # dev-setup-chromebook v96 plan
 
-Oct 26, 2026 · item 1 chosen Oct 26 (all choices) · item 2 added Oct 26, back end, flag and rendering chosen Oct 26 · item 3 added and chosen Oct 26, revised Oct 26 (memory; launcher goes through `/usr/bin/devin-desktop`) · item 4 added and chosen Oct 26, DDEV ports settled Oct 26 · item 5 added and chosen Oct 26
+Oct 26, 2026 · item 1 chosen Oct 26 (all choices) · item 2 added Oct 26, back end, flag and rendering chosen Oct 26 · item 3 added and chosen Oct 26, revised Oct 26 (memory; launcher goes through `/usr/bin/devin-desktop`) · item 4 added and chosen Oct 26, DDEV ports settled Oct 26 · items 6 and 7 added Oct 26 · **plan final Oct 26** · item 5 added and chosen Oct 26
 
 ## Scope
 
@@ -19,12 +19,16 @@ run turns up and doesn't go into v95 itself can join this plan.
    handler for web links, instead of the Linux Google Chrome the base install registers.
 5. **Lazarus and Delphi projects in VS Code, Cursor and Devin:** `lazmode vscode` writes a project's build
    (`lazbuild`) and gdb debug setup; `delphi N vscode` writes build (`dcc32` under Wine) and run tasks.
+6. **How long a new login shell takes:** dev-test times `bash -i -l` and warns before VS Code-based editors'
+   10 s limit, naming the slow lines.
+7. **A memory report, `devmem`:** what's using Linux's memory, how much ChromeOS has taken back, and what to
+   close.
 
-Items 1, 3, 4 and 5 change scripts, so the bundle goes to v96: all four scripts bumped, CHANGELOG entries under all
+Items 1, 3, 4, 5, 6 and 7 change scripts, so the bundle goes to v96: all four scripts bumped, CHANGELOG entries under all
 four sections ("version bump only" where nothing changed). Item 2 changes dev-demo only.
 
-Each item lists the choices that were offered; the decision is marked. The build starts once "anything
-else for v96" is settled.
+Each item lists the choices that were offered; the decision is marked. All choices are settled (Oct 26);
+the plan is final and the build can start.
 
 ## 1. Thread support for Free Pascal programs (install-lazarus)
 
@@ -663,6 +667,88 @@ project still builds and debugs in the Lazarus IDE. The dark-profile packages ar
 (once a Delphi 3–7 is installed): `delphi 7 vscode` in a project folder, Ctrl+Shift+B builds it, the run
 task starts it in the Delphi desktop.
 
+## 6. How long a new login shell takes (dev-test, base)
+
+**Found Oct 26 2026** (with item 3): Devin's first launcher-started log said "Unable to resolve your shell
+environment in a reasonable time. Please review your shell configuration and restart." VS Code-based
+editors started from a launcher icon run the login shell (`$SHELL -i -l`) to read its environment, and
+give up after 10 s; when they do, the editor, its terminal tasks and its extensions run without the PATH
+entries `~/.bashrc` adds (`~/.local/bin`, Homebrew last, nvm's Node, `~/.gems/bin`, `~/.cargo/bin` and the
+rest), with nothing telling you why. Devin avoids the step since item 3 (its launcher goes through
+`/usr/bin/devin-desktop`, which sets `VSCODE_CLI`); **VS Code's and Cursor's launcher icons still run it**.
+The test already checks that a new shell starts *without errors* (v74), not how *fast*.
+
+**Test** (base, next to "a new interactive shell starts without errors"):
+
+- **"a new login shell starts in under 5 s"**: times `bash -i -l -c true` under the same harness as the
+  v74 check (`setsid -w env -i HOME USER LOGNAME SHELL TERM PATH=<system PATH>`, stdin from
+  `/dev/null`, `timeout 30`), three runs, the median reported in the line (`2.1 s`). **WARN** at 5 s or
+  more, **FAIL** at 10 s or more (VS Code's limit: an icon-started VS Code or Cursor then runs without
+  your PATH).
+- On WARN or FAIL, the hint names the slow part: the same shell run once more with `PS4='+ $EPOCHREALTIME '`
+  and `-x` into the test's scratch folder, and the five slowest lines (time to the next trace line) printed
+  with their source text. A shell that hangs past 30 s says so and prints the last traced line.
+- The median goes into the run's log line (not the disk TSV), so runs can be compared.
+
+**Setup, init, demo:** version bump only. No change to `~/.bashrc` from this item: what to speed up is
+decided once a measured run shows what's slow.
+
+**Docs:**
+
+- `docs/crostini-gotchas.md`, Packages and PATH: "An editor started from its icon can miss your PATH":
+  the 10 s limit, the message, which editors, and the test that measures it.
+- `docs/init-checklist.md`: what the new check means and how to read its hint.
+- CHANGELOG (all four sections).
+
+**To verify on the Chromebook:** the check reports a time on the machine from Oct 26 (dragonair), and the
+first run's figure goes into this plan's notes; a deliberately slow line (`sleep 6` at the end of
+`~/.bashrc`) gives a WARN whose hint points at it; removing it brings the check back to PASS.
+
+## 7. A memory report: `devmem` (setup base)
+
+**Found Oct 26 2026** (with item 3): Linux showed 6.4 GB total, 4.9 GB used, 1.5 GB available, **no swap**,
+while its processes held only 2.2 GB (Devin Desktop 1.65 GB of it) and slab plus shmem ~0.2 GB: ChromeOS
+had reclaimed ~2.5 GB from the Linux VM. Seeing that took several commands and some arithmetic. With no
+swap, a reclaim at the wrong moment freezes a large app instead of slowing it.
+
+**Setup** (base): a command, `~/.local/bin/devmem`, with no dependencies beyond procps, `awk` and (when
+there) `docker` and `ollama`. It prints:
+
+- **Memory:** total, used, available, swap (with "none" called out), from `/proc/meminfo`.
+- **Where "used" is:** Linux processes (sum of PSS from `/proc/*/smaps_rollup`, which counts shared pages
+  once, falling back to RSS where a process can't be read; the line says which), kernel (Slab +
+  KernelStack + PageTables), shared memory (Shmem), and the rest as **"taken back by ChromeOS (estimate)"**.
+- **Top programs by memory**, processes grouped by program name (all of Devin Desktop's, all of
+  Chrome's), the top 10.
+- **Bundle services running:** Docker containers that belong to the bundle (`devsvc-*`, `devdb-*`,
+  DDEV's), each with its memory from `docker stats --no-stream`; Ollama's loaded models (`ollama ps`).
+- **A verdict**, one line per finding that applies: ChromeOS has reclaimed more than 1.5 GB ("close
+  ChromeOS tabs or Android apps: Search + Esc shows them"); less than 1 GB available; Linux's Google Chrome
+  is running ("links open in ChromeOS's browser since v96, so it can usually be closed"); a heavy `devsvc`
+  engine or database server is running (named, with its stop command); no swap ("a large app freezes
+  instead of slowing down when memory runs out"). None: "Memory looks fine."
+- **Options:** `devmem --watch [seconds]` (default 5) refreshes in place until Ctrl-C, for watching while
+  something misbehaves; `devmem --brief` prints the memory line and the verdict only.
+
+**Test** (base): `devmem` runs and exits 0, and its output has the Memory, Where, Top programs and verdict
+sections (check); `devmem --brief` prints at most a few lines (check); the "taken back by ChromeOS" figure
+is a number between 0 and the total (check).
+
+**Init, demo:** version bump only.
+
+**Docs:**
+
+- `docs/crostini-gotchas.md`, Memory and disk: the item 3 memory entry points at `devmem`.
+- `docs/init-checklist.md`, "After it finishes": `devmem`, and when to reach for it (a freeze, a slow
+  machine, before starting a heavy engine).
+- README: one line in the commands list.
+- CHANGELOG (all four sections).
+
+**To verify on the Chromebook:** with Devin Desktop open and a few ChromeOS tabs, `devmem` shows Devin
+Desktop at the top and a "taken back by ChromeOS" figure close to what the Oct 26 arithmetic gave; opening
+heavy ChromeOS tabs makes that figure grow under `devmem --watch`; starting a `devsvc` heavy engine adds it
+to the services and the verdict; with Linux's Chrome open the verdict names it.
+
 ## Carried forward
 
 **From v95** (its own on-hardware checks, in the v95 plan): `lazmode`'s install-list handling and
@@ -709,4 +795,6 @@ go into v95 if you keep them there, otherwise here.
       VS Code's FpDebug, `CNOC.fpdebug`)
 - [x] Item 5, added Oct 26: GNU Global under install-lazarus, and `lazmode vscode` writes
       `.vscode/settings.json` for the Pascal extension's gtags navigation
-- [ ] Anything else for v96
+- [x] Item 6: dev-test times a new login shell (WARN 5 s, FAIL 10 s, slowest lines in the hint)
+- [x] Item 7: `devmem` memory report (with `--watch` and `--brief`)
+- [x] Anything else for v96: nothing further (Oct 26); plan final
