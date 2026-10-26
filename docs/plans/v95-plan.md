@@ -1,6 +1,6 @@
 # dev-setup-chromebook v95 plan
 
-Oct 25, 2026 · choices made Oct 25 (items 2 and 3); item 4 added Oct 25
+Oct 25, 2026 · all choices made Oct 25
 
 ## Scope
 
@@ -106,9 +106,20 @@ the IDE's build and its packages are thrown away.
 neither build)` with `bin/lazarus` on Qt5 (so the IDE's own rebuild stayed on Qt5), while both lazmode
 builds dated from 02:08. The light profile, not used for this, was as v94 left it: `bin/lazarus` equal
 to the docked build, and a list of DBFLaz and SynEditDsgn (`Count="4"` with two items: v94's scrub
-removes the docking entries and leaves the count, which Lazarus tolerates). Still to collect, before
-the build: the dark profile's `bin/` listing and install list, to confirm the IDE saved the new
-packages there and what it did with the docking ones.
+removes the docking entries and leaves the count, which Lazarus tolerates).
+
+**Dark profile, confirmed (Oct 25, 21:50, after the workaround below):**
+
+- The IDE's own build, kept as `bin/lazarus.ide-built`, is 140,605,952 bytes: byte for byte the size of
+  the floating build `lazmode rebuild` made a minute later from the same list. So the IDE's rebuild was
+  a floating build with the new packages.
+- The IDE saved the install list **without** the docking packages: `Printer4Lazarus`, `TurboPowerIPro`,
+  `SQLDBLaz`, `SynEditDsgn`, `DBFLaz`, `DesignBaseClassDemoPkg` (`Count="6"`). So the docked IDE
+  rebuilds from the list as saved, not from the packages compiled into it: a list that names the
+  docking packages while docked is active should be enough to keep the layout (to verify on the
+  Chromebook, below).
+- `lazmode rebuild --profile dark` with that list took about 11 s per layout (a relink) and left docked
+  active (143,048,264 bytes, the new packages in both layouts).
 
 **Workaround until v95:** after the IDE installs packages, close Lazarus and run
 `lazmode rebuild --profile <light|dark>`. The list now names the new packages, so both layouts get
@@ -142,7 +153,7 @@ them, and docked becomes active again (`lazmode rebuild` treats "matches neither
 
 | Choice: switching to a stale layout | What `lazmode dock on|off` does |
 | --- | --- |
-| **A (recommended)** | Rebuilds that layout first (minutes, with the build log as in `rebuild`), then switches. A switch is a file copy again once both are current. |
+| **A (chosen)** | Rebuilds that layout first (minutes, with the build log as in `rebuild`), then switches. A switch is a file copy again once both are current. |
 | B | Refuses, naming the packages the layout lacks, and says to run `lazmode rebuild`. |
 
 **To verify on the Chromebook:** with the docking packages in the list, the docked IDE's own rebuild
@@ -171,6 +182,5 @@ rebuilds it) gives a floating IDE that opens the project without asking.
 
 - [x] Item 2: A (PASS for any working palette; WARN only when the dark launcher wouldn't look dark)
 - [x] Item 3: A (no extra launchers)
-- [ ] Item 4: switching to a stale layout, A or B (recommended: A); and the dark profile's `bin/` listing
-      and install list, to confirm the cause before the build
+- [x] Item 4: A (a switch to a stale layout rebuilds it first); cause confirmed from the dark profile
 - [ ] Anything else for v95
