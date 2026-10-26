@@ -1,6 +1,6 @@
 # dev-setup-chromebook v95 plan
 
-Oct 25, 2026 · choices made Oct 25 (items 2 and 3)
+Oct 25, 2026 · choices made Oct 25 (items 2 and 3); item 4 added Oct 25
 
 ## Scope
 
@@ -10,8 +10,9 @@ tagged release (`v94` on `main`, Oct 25 2026).
 1. **Branch names** that can't collide with release tags (repo process; no script change).
 2. **The qt5ct check** stops warning about a palette you chose yourself.
 3. ~~Floating launchers~~ for Lazarus: **not doing** (decided Oct 25; two launchers plus `lazmode dock` stay).
+4. **Packages installed from inside the IDE** survive `lazmode dock on|off` (found Oct 25 in use).
 
-Item 2 changes a script, so the bundle goes to v95: all four scripts bumped, CHANGELOG entries under
+Items 2 and 4 change scripts, so the bundle goes to v95: all four scripts bumped, CHANGELOG entries under
 all four sections ("version bump only" where nothing changed). Anything v94 use turns up can join.
 
 Each item below lists the choices that were offered; the decision is marked. The build starts once
@@ -87,6 +88,68 @@ Things the build has to handle:
 Test (B or C): the new launchers exist with the right `Exec=` and `Name=`; `lazmode open --help` exits 0.
 Init: the "configured" line names four launchers. Docs: checklist, README's `lazmode` mention, CHANGELOG.
 
+## 4. Packages installed from inside the IDE (lazmode)
+
+**Found Oct 25 2026, using the dark profile:** a project that needs packages makes the IDE offer to
+install them. Accepting rebuilds the IDE, which restarts **floating**. `lazmode dock on` then brings back
+the docked layout **without** those packages, the project asks again, and the loop repeats. In
+floating mode everything works.
+
+**Why:** the IDE installs packages by rebuilding itself from the profile's install list
+(`StaticAutoInstallPackages` in `miscellaneousoptions.xml`) and writing the result to `bin/lazarus`,
+which `startlazarus` restarts. v94 keeps the docking packages *out* of that list (so the floating
+build stays floating), so the IDE's own rebuild comes out floating. `lazmode dock on|off` then copies
+`lazarus-docked` or `lazarus-floating` over `bin/lazarus`; both were built before the new packages, so
+the IDE's build and its packages are thrown away.
+
+**Evidence (Oct 25, 21:35):** `lazmode status --profile dark` showed `active layout: other (matches
+neither build)` with `bin/lazarus` on Qt5 (so the IDE's own rebuild stayed on Qt5), while both lazmode
+builds dated from 02:08. The light profile, not used for this, was as v94 left it: `bin/lazarus` equal
+to the docked build, and a list of DBFLaz and SynEditDsgn (`Count="4"` with two items: v94's scrub
+removes the docking entries and leaves the count, which Lazarus tolerates). Still to collect, before
+the build: the dark profile's `bin/` listing and install list, to confirm the IDE saved the new
+packages there and what it did with the docking ones.
+
+**Workaround until v95:** after the IDE installs packages, close Lazarus and run
+`lazmode rebuild --profile <light|dark>`. The list now names the new packages, so both layouts get
+them, and docked becomes active again (`lazmode rebuild` treats "matches neither" as docked).
+
+**Fix (recommended design):**
+
+- **The install list follows the active layout.** While docked is active, the list names the docking
+  packages; `lazmode dock off` takes them out and `dock on` puts them back (same safe edit as v94's
+  scrub, a copy of the old file kept in `assets/logs`). The IDE's own rebuild then keeps the layout it
+  was started in. `lazmode rebuild` still builds the floating layout with them out (v94's save and
+  restore around the build) and leaves the list matching the active layout afterwards.
+- **lazmode adopts the IDE's build instead of overwriting it.** When `bin/lazarus` matches neither build
+  and is newer than both, every `lazmode` command first adopts it: if it links Qt5, it becomes
+  `lazarus-docked` or `lazarus-floating` (docked when it contains `TAnchorDockMaster`), and the old one
+  is kept as `.bak`. If it is not Qt5 (the IDE fell back to GTK2), it is not adopted: `lazmode` says
+  so, keeps it aside, and points to `lazmode rebuild`.
+- **Each build records the list it was built from** (the package names, docking ones left out, next to
+  the version in `bin/.lazmode-built`, one line per layout). A build whose list differs from the
+  profile's current list is **stale**, and `lazmode status` says so.
+- **Switching to a stale layout** (see the choice below).
+- **Setup:** a profile counts as done only when neither layout is stale, so a setup rerun brings both
+  up to date.
+- **Test:** per profile, both builds were built from the current install list (FAIL, with
+  `lazmode rebuild --profile X` as the fix); the active `bin/lazarus` is one of the two builds (as in
+  v94); the list names the docking packages exactly when docked is active.
+- **Init:** the "configured" line also requires that neither layout is stale.
+- **Docs:** `docs/init-checklist.md` and `docs/crostini-gotchas.md` drop "install packages with `lazmode
+  rebuild --add-package`, never from the IDE's Package menu": installing from the IDE (or when a project
+  asks) becomes the normal way, and `lazmode rebuild --add-package` stays for scripted installs.
+
+| Choice: switching to a stale layout | What `lazmode dock on|off` does |
+| --- | --- |
+| **A (recommended)** | Rebuilds that layout first (minutes, with the build log as in `rebuild`), then switches. A switch is a file copy again once both are current. |
+| B | Refuses, naming the packages the layout lacks, and says to run `lazmode rebuild`. |
+
+**To verify on the Chromebook:** with the docking packages in the list, the docked IDE's own rebuild
+(Package → Install/Uninstall Packages, or a project's install prompt) comes out docked and on Qt5;
+`lazmode status` afterwards shows the adopted build and the floating layout as stale; `dock off` (A:
+rebuilds it) gives a floating IDE that opens the project without asking.
+
 ## Carried forward
 
 **From the v93 plan, on-hardware checks still open** (fixes they need become v95 items):
@@ -108,4 +171,6 @@ Init: the "configured" line names four launchers. Docs: checklist, README's `laz
 
 - [x] Item 2: A (PASS for any working palette; WARN only when the dark launcher wouldn't look dark)
 - [x] Item 3: A (no extra launchers)
+- [ ] Item 4: switching to a stale layout, A or B (recommended: A); and the dark profile's `bin/` listing
+      and install list, to confirm the cause before the build
 - [ ] Anything else for v95
