@@ -83,6 +83,14 @@ to see it in context; the comment above each fix usually tells the story.
 - **Firebird's embedded lock directory** (`install-db`). If another user created `/tmp/firebird` first,
   every embedded open fails. **Fix:** setup probes once and, only if needed, sets a private
   `FIREBIRD_LOCK`.
+- **An editor started from its icon can miss your PATH** (dev-test base, v96). VS Code-based editors
+  started from a launcher icon run your login shell (`bash -i -l`) to read its environment and give up
+  after 10 s, with "Unable to resolve your shell environment in a reasonable time" in the log (Devin
+  Desktop, Oct 26 2026). The editor, its terminal tasks and extensions then run without what `~/.bashrc`
+  adds to PATH (`~/.local/bin`, nvm's Node, `~/.cargo/bin` and the rest), and nothing says why. VS Code
+  and Cursor still do this from their icons; Devin's icon goes through `/usr/bin/devin-desktop` since v96,
+  which skips the step. **Fix:** keep a new login shell fast. dev-test times it (median of three runs,
+  WARN from 5 s, FAIL from 10 s) and on a WARN or FAIL lists the five slowest lines of a traced run.
 - **The docker group isn't active in the run that adds you to it.** Group changes apply to new logins, so
   setup's own Docker calls go through `sudo`, and the helper commands fall back to `sudo -n docker`.
 

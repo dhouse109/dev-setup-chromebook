@@ -510,6 +510,77 @@ hint  "rerun the installer (any flags): v68 replaces the bare brew shellenv line
 # already contains Homebrew and would hide exactly this kind of ordering problem.
 check "a new interactive shell starts without errors"      'e=$(timeout 30 setsid -w env -i HOME="$HOME" USER="$USER" LOGNAME="$USER" SHELL=/bin/bash TERM=xterm-256color PATH=/usr/local/bin:/usr/bin:/bin bash -ic true < /dev/null 2>&1 > /dev/null | grep -v -e "cannot set terminal process group" -e "no job control in this shell"); [ -z "$e" ] || { echo "$e" | head -n 5; exit 1; }' 60
 hint  "these lines come from ~/.bashrc; 'command not found' there usually means a line needs a tool whose PATH entry comes later in the file"
+# v96: how long a new LOGIN shell takes (Oct 26 2026: Devin Desktop's first launcher-started log said "Unable to
+# resolve your shell environment in a reasonable time"). VS Code-based editors started from a launcher icon run
+# '$SHELL -i -l' to read its environment and give up after 10 s; the editor, its terminal tasks and its extensions
+# then run without the PATH ~/.bashrc builds, and nothing says why. Devin skips that step since v96 (its launcher
+# goes through /usr/bin/devin-desktop, which sets VSCODE_CLI); VS Code's and Cursor's icons still run it. The v74
+# check above is about errors, this one about time: three runs under the same harness, the median in the label
+# (and so in the log), WARN from 5 s, FAIL from 10 s. On WARN or FAIL one more run traces itself (PS4 with
+# $EPOCHREALTIME and the file:line, bash -x) into the scratch folder, and the hint lists the five slowest lines.
+cat > "$WORK/login_time.sh" << 'LOGIN_EOF'
+export LC_ALL=C   # $EPOCHREALTIME's decimal point follows the locale
+run_login() {   # run_login [bash option...]: one new login shell, as an editor starts it (v74's harness)
+    local extra=()
+    [ -n "${PS4_SET:-}" ] && extra=(PS4="$PS4_SET")
+    # -k 5: an interactive bash ignores SIGTERM, so a hung one needs the KILL that follows.
+    timeout -k 5 30 setsid -w env -i HOME="$HOME" USER="$USER" LOGNAME="$USER" SHELL=/bin/bash TERM=xterm-256color \
+        PATH=/usr/local/bin:/usr/bin:/bin "${extra[@]}" bash "$@" -i -l -c true < /dev/null
+}
+case "$1" in
+    measure)   # the median of three runs in ms, or "timeout" when one ran past 30 s
+        t=()
+        for i in 1 2 3; do
+            s=$EPOCHREALTIME; run_login > /dev/null 2>&1; rc=$?; e=$EPOCHREALTIME
+            [ "$rc" -eq 124 ] || [ "$rc" -eq 137 ] && { echo timeout; exit 0; }
+            t+=("$(awk -v s="$s" -v e="$e" 'BEGIN { printf "%d", (e - s) * 1000 }')")
+        done
+        printf '%s\n' "${t[@]}" | sort -n | sed -n 2p ;;
+    slow)   # the five slowest traced lines (time to the next trace line), or where a hung shell stopped
+        tr="$WORK/login-trace.txt"
+        # PS4 in single quotes: the traced shell expands it at each line.
+        PS4_SET='+ $EPOCHREALTIME ${BASH_SOURCE:-?}:$LINENO ' run_login -x > /dev/null 2> "$tr"; rc=$?; e=$EPOCHREALTIME
+        lines() {   # SECONDS<TAB>FILE:LINE<TAB>TRACED TEXT, in trace order
+            awk -v end="$e" '
+                /^\++ [0-9]+[.,][0-9]+ / { ts = $2; sub(",", ".", ts)
+                    if (n) d[n] = ts - t[n]
+                    n++; t[n] = ts; loc[n] = $3; x = $0; sub(/^\++ [^ ]+ [^ ]+ ?/, "", x); txt[n] = x; next }
+                END { if (n) d[n] = end - t[n]; for (i = 1; i <= n; i++) printf "%.2f\t%s\t%s\n", d[i], loc[i], txt[i] }' "$tr"
+        }
+        show() {   # one line: seconds, file:line with ~ for $HOME, and the source line (the traced text if unreadable)
+            local sec=$1 loc=$2 txt=$3 f n src=""
+            f=${loc%:*}; n=${loc##*:}
+            [ -f "$f" ] && [ "$n" -gt 0 ] 2> /dev/null && src=$(sed -n "${n}{s/^[[:space:]]*//;p}" "$f")
+            printf '        %8s  %s  %s\n' "$sec" "${loc/#$HOME/\~}" "$(printf '%s' "${src:-$txt}" | cut -c1-100)"
+        }
+        if [ "$rc" -eq 124 ] || [ "$rc" -eq 137 ]; then
+            echo "        the traced shell was still running after 30 s; the last line it traced:"
+            lines | tail -n 1 | while IFS=$'\t' read -r _ loc txt; do show "hung" "$loc" "$txt"; done
+        elif [ ! -s "$tr" ]; then
+            echo "        no trace came back (the shell printed nothing on stderr with -x)"
+        else
+            echo "        the five slowest lines of one traced run (trace: $tr):"
+            lines | sort -t $'\t' -k1,1 -rn | head -n 5 | while IFS=$'\t' read -r sec loc txt; do show "$sec s" "$loc" "$txt"; done
+        fi ;;
+esac
+LOGIN_EOF
+LOGIN_MS=$(bash "$WORK/login_time.sh" measure 2> /dev/null)
+case "$LOGIN_MS" in
+    timeout) LOGIN_S="over 30 s" ;;
+    ''|*[!0-9]*) LOGIN_MS=""; LOGIN_S="not measured" ;;
+    *) LOGIN_S="$(awk -v m="$LOGIN_MS" 'BEGIN { printf "%.1f s", m / 1000 }')" ;;
+esac
+echo "--- login shell (bash -i -l), median of 3 runs: $LOGIN_S" >> "$LOG"
+if [ -n "$LOGIN_MS" ] && [ "$LOGIN_MS" != timeout ] && [ "$LOGIN_MS" -lt 10000 ]; then
+    warn  "a new login shell starts in under 5 s ($LOGIN_S)" "echo \"median of 3 runs: $LOGIN_S (WARN from 5 s; VS Code's limit is 10 s)\"; [ $LOGIN_MS -lt 5000 ]" 60
+else
+    LOGIN_WHAT="median of 3 runs: $LOGIN_S"; [ "$LOGIN_MS" = timeout ] && LOGIN_WHAT="a run was still going after 30 s"
+    check "a new login shell starts in under 5 s ($LOGIN_S)" "echo \"$LOGIN_WHAT; past 10 s an editor started from its icon (VS Code, Cursor) runs without your PATH\"; exit 1" 60
+fi
+hint  "~/.bashrc (or ~/.profile) is slow to start; the lines below took longest in one traced run ('bash -x -i -l -c true' shows the rest)"
+if [ "$LAST" = warn ] || [ "$LAST" = fail ]; then
+    bash "$WORK/login_time.sh" slow 2>&1 | tee -a "$LOG"
+fi
 check "an interactive shell has /usr/bin ahead of Homebrew" 'p=$(timeout 30 setsid -w bash -ic "echo \"\$PATH\"" < /dev/null 2> /dev/null | tail -n 1); [ -n "$p" ] || { echo "could not read PATH from an interactive shell"; exit 1; }; echo "$p" | tr ":" "\n" | grep -n -x -e /usr/bin -e /home/linuxbrew/.linuxbrew/bin; u=$(echo "$p" | tr ":" "\n" | grep -n -x /usr/bin | head -n 1 | cut -d: -f1); b=$(echo "$p" | tr ":" "\n" | grep -n -x /home/linuxbrew/.linuxbrew/bin | head -n 1 | cut -d: -f1); [ -n "$u" ] && [ -n "$b" ] && [ "$u" -lt "$b" ]' 60
 hint  "something later in ~/.bashrc puts Homebrew back in front; look for a second brew shellenv line"
 check "python3 on PATH is Debian's"                        'p=$(command -v python3); echo "$p -> $(python3 --version)"; [ "$p" = /usr/bin/python3 ]'
