@@ -1,6 +1,6 @@
 # dev-setup-chromebook v96 plan
 
-Oct 26, 2026 · item 1 chosen Oct 26 (all choices) · item 2 added Oct 26, back end, flag and rendering chosen Oct 26 · item 3 added and chosen Oct 26
+Oct 26, 2026 · item 1 chosen Oct 26 (all choices) · item 2 added Oct 26, back end, flag and rendering chosen Oct 26 · item 3 added and chosen Oct 26, Gemini and profile findings added Oct 26
 
 ## Scope
 
@@ -14,7 +14,8 @@ run turns up and doesn't go into v95 itself can join this plan.
    front ends" comparison. Nothing is installed for Astro itself.
 3. **Devin Desktop (formerly Windsurf) under X11, and CodeLLDB:** install-windsurf starts Devin Desktop
    with `--ozone-platform=x11` from its own launcher entry and a terminal wrapper (it froze or closed
-   on Wayland, Oct 26 2026), and installs CodeLLDB's Linux add-on, which can't install itself there.
+   on Wayland, Oct 26 2026), installs CodeLLDB's Linux add-on (which can't install itself there) into
+   every Devin profile, and the test warns about Gemini Code Assist, which crashed its window.
 
 Items 1 and 3 change scripts, so the bundle goes to v96: all four scripts bumped, CHANGELOG entries under all
 four sections ("version bump only" where nothing changed). Item 2 changes dev-demo only.
@@ -241,7 +242,29 @@ window terminated unexpectedly (reason: 'clean-exit', code: '0')"), about 30 s a
 **CodeLLDB** (`vadimcn.vscode-lldb`, imported from VS Code): Open VSX serves the universal package,
 which downloads its Linux add-on on first start through `workbench.extensions.command.installFromVSIX`.
 Devin Desktop doesn't have that command: "Platform package installation failed ... command not found".
-Installing the platform `.vsix` with `devin-desktop --install-extension` fixed it.
+Installing the platform `.vsix` with `devin-desktop --install-extension` fixed it, once it went into the
+right profile (below).
+
+**Gemini Code Assist crashed the window, even on X11** (found later on Oct 26). After the X11 fix,
+three launches in a row still died: once frozen and closed 35 s later, once gone 11 s after launch with no
+freeze, the last after a Linux restart. Both logs end the same way: the Devin cloud panel mounts and
+`google.geminicodeassist` activates (`onLanguage:Log`, because the window reopened with the Output panel
+showing logs; its log grammar also failed to load), and seconds later the window's renderer exits
+("clean-exit"). CodeLLDB was cleared: it activates on `onStartupFinished`, which neither run reached. Two
+native crash dumps were also written during the X11 runs that seemed fine (11:32 and 11:39). Started with
+`--disable-extension google.geminicodeassist`, Devin stayed up; uninstalling it fixed it. Google
+supports Gemini Code Assist in VS Code and JetBrains, not in VS Code forks, and Devin has its own agent.
+Two other imported extensions failed on every start without causing the crash, and were removed too:
+`coenraads.bracket-pair-colorizer-2` (needs a `vscode-textmate` module the fork doesn't ship; bracket
+pair colouring is built in now) and `s-nlf-fh.glassit` (`pgrep 'code'` fails).
+
+**Devin's profile isn't the built-in Default.** Onboarding's VS Code import created a profile that is
+*named* "default" but lives at `~/.config/Devin/User/profiles/-164eb798` and is tied to Devin's
+workspace (`profileAssociations` and `userDataProfiles` in
+`~/.config/Devin/User/globalStorage/storage.json`). Command-line `--install-extension`,
+`--uninstall-extension` and `--list-extensions` act on the built-in Default unless given
+`--profile <name>`: `devin-desktop --uninstall-extension google.geminicodeassist` said "not installed",
+and the CodeLLDB `.vsix` installed earlier had gone into the built-in Default, not the profile in use.
 
 **Setup** (under `install-windsurf`; the flag keeps its name, chosen Oct 26):
 
@@ -263,9 +286,15 @@ Installing the platform `.vsix` with `devin-desktop --install-extension` fixed i
   calls (`--install-extension`, `--list-extensions`, `--version`) ignore the flag.
 - **CodeLLDB** (chosen: always, under install-windsurf): the latest `codelldb-linux-x64.vsix` (tag from
   the `releases/latest` redirect, not the API; GitHub publishes no checksum for it, so it is validated
-  with `unzip -t` before installing) goes in with `devin-desktop --install-extension`, so it's in place
-  before onboarding imports VS Code's extensions. Skipped when that version or newer is already
-  installed. Download in `$ASSETS/downloads`, removed after.
+  with `unzip -t` before installing) goes in with `devin-desktop --install-extension`, into the built-in
+  Default **and** every profile listed in `userDataProfiles` (`--profile <name>`, names read from
+  `storage.json` with python3; a missing or unreadable file means Default only). Per profile, skipped
+  when the platform add-on of that version or newer is already there. On a clean machine only Default
+  exists until onboarding creates its profile, so the checklist says to rerun setup with install-windsurf
+  after onboarding (the test's check below catches it if not). Download in `$ASSETS/downloads`, removed
+  after.
+- **Imported extensions are left alone.** Setup doesn't uninstall anything you imported (Gemini Code
+  Assist included); the test warns instead.
 - **Idempotent:** each run regenerates the three entries and the wrapper; a hand-made
   `devin-desktop-x11.desktop` (the Oct 26 one) is replaced by the generated one, which differs only in
   following the installed stock file.
@@ -278,8 +307,12 @@ Installing the platform `.vsix` with `devin-desktop --install-extension` fixed i
   entry's program, and it has no `NoDisplay` (check).
 - Stock entry overridden with `NoDisplay=true` (warn: cosmetic).
 - `command -v devin-desktop` is the wrapper, and the wrapper passes the flag (check).
-- CodeLLDB's platform add-on is in Devin's extensions folder: the native adapter present and executable
-  (check; the build confirms the exact path from the `.vsix`).
+- CodeLLDB's platform add-on in every Devin profile that has CodeLLDB (check, per profile, via
+  `--profile <name> --list-extensions --show-versions` and the extension folder: the native adapter
+  present and executable; the build confirms the exact path from the `.vsix`). Hint: rerun setup with
+  install-windsurf after onboarding.
+- Gemini Code Assist not installed in any Devin profile (warn; hint: `devin-desktop --profile <name>
+  --uninstall-extension google.geminicodeassist`, and use it in VS Code instead).
 - Disk report: measure `devin-desktop` (the transitional `windsurf` package is a few KB).
 
 No GUI launch in the test; that's the hand check.
@@ -290,10 +323,14 @@ No GUI launch in the test; that's the hand check.
 
 - `docs/crostini-gotchas.md`, Graphics: "Devin Desktop (Windsurf) freezes or closes under Wayland", and
   that the ChromeOS launcher ignores an override with the same file name, so the fix is a separate entry.
+  A second entry: Gemini Code Assist crashes Devin Desktop's window (not Crostini-specific as far as
+  known, but where it bit), and that Devin's imported profile needs `--profile` on the command line.
 - `docs/init-checklist.md`: the editors line: open **Devin (X11)**; click Login once and give it 20–30 s
   (each extra click opens another browser tab); finishing sign-in in ChromeOS's browser returns to the
-  app. Machines set up before v96: rerun setup with install-windsurf, then shut Linux down once so the
-  launcher picks up the new entry.
+  app. After onboarding's VS Code import, rerun setup with install-windsurf so CodeLLDB's add-on reaches
+  the new profile. Don't keep Gemini Code Assist in Devin; command-line extension changes need
+  `--profile <name>` (the name is in `storage.json`). Machines set up before v96: rerun setup with
+  install-windsurf, then shut Linux down once so the launcher picks up the new entry.
 - README: the gotchas list gets a Devin line next to Android Studio's; flag table text "Windsurf (now
   Devin Desktop)".
 - CHANGELOG (all four sections).
@@ -302,9 +339,11 @@ No GUI launch in the test; that's the hand check.
 entry and the wrapper without breaking either; after a Linux restart the launcher shows **Devin (X11)**
 (and, if `NoDisplay` is honoured, not the stock icon); opened from it, `pgrep -af devin-desktop` shows
 `--ozone-platform=x11`; it stays up past 60 s, and Login completes. `devin-desktop` from a terminal also
-gets the flag. A CodeLLDB debug session (Rust or C) stops at a breakpoint with no platform-package
-error. On a clean machine: install-windsurf, then onboarding's VS Code import doesn't replace the
-platform CodeLLDB with the universal one.
+gets the flag. Setup puts CodeLLDB's add-on into the "default" profile (`-164eb798`) as well as the
+built-in Default; a CodeLLDB debug session (Rust or C) stops at a breakpoint with no platform-package
+error. The test warns when Gemini Code Assist is reinstalled in either profile. Devin stays up through
+several launches from the icon, including one after a Linux restart. On a clean machine: install-windsurf,
+onboarding, rerun setup; the test then passes the CodeLLDB check for the new profile.
 
 ## Carried forward
 
@@ -341,4 +380,6 @@ go into v95 if you keep them there, otherwise here.
 - [x] Item 3, terminal: A (`~/.local/bin/devin-desktop` wrapper adds the flag)
 - [x] Item 3, CodeLLDB: A (always installed under install-windsurf)
 - [x] Item 3, flag name: A (keep `install-windsurf`; it installs `devin-desktop`)
+- [x] Item 3, added Oct 26: CodeLLDB into every profile; the test warns about Gemini Code Assist; setup
+      leaves imported extensions alone
 - [ ] Anything else for v96
