@@ -1,6 +1,6 @@
 # dev-setup-chromebook v96 plan
 
-Oct 26, 2026 · item 1 chosen Oct 26 · item 2 added Oct 26, back end and flag chosen Oct 26
+Oct 26, 2026 · item 1 chosen Oct 26 · item 2 added Oct 26, back end, flag and rendering chosen Oct 26
 
 ## Scope
 
@@ -129,24 +129,30 @@ no global CLI (`npm create astro@latest` scaffolds a project, which pins its own
 Composer and wrangler are already there. So Astro gets a demo, not a flag.
 
 **The demo** mirrors `drupal/drupal-nuxt` (v91) so the two read side by side: the same Umami recipes
-from the same JSON:API, rendered two ways.
+from the same JSON:API, rendered two ways. Astro's pages are static, with one live part (a server
+island) to show that Astro mixes the two per component.
 
 | | drupal-nuxt (v91) | drupal-astro (v96) |
 | --- | --- | --- |
-| Rendering | On the server, per request (Nuxt 4 SSR) | Ahead of time: `astro build` writes one HTML file per recipe |
-| Drupal needed | While the site runs | Only while it builds |
-| Change a recipe in Drupal | Shows on the next page load | Shows after the next build |
-| JavaScript in the browser | Nuxt's runtime (hydration) | None |
-| Ports | Nuxt dev :3020, production :3021 | Astro dev :4321, `astro preview` of the build :4322 |
+| Rendering | On the server, per request (Nuxt 4 SSR) | Ahead of time: `astro build` writes one HTML file per recipe; one server island on each page renders per request |
+| Drupal needed | While the site runs | While it builds; at run time only for the island (the rest of the page works without it) |
+| Change a recipe in Drupal | Shows on the next page load | In the island on the next page load; in the page itself after the next build |
+| JavaScript in the browser | Nuxt's runtime (hydration) | Only Astro's small inline script that fetches the island |
+| Ports | Nuxt dev :3020, production :3021 | Astro dev :4321, the built site's Node server :4322 |
 
 **What it generates** (in `~/dev-demo/drupal/drupal-astro`):
 
-- `astro/` with `package.json` (`astro` `^7`, no UI framework), `astro.config.mjs`, and a content
+- `astro/` with `package.json` (`astro` `^7`, `@astrojs/node` in standalone mode, no UI framework),
+  `astro.config.mjs`, and a content
   collection whose loader reads `node/recipe` from JSON:API at build time (following `links.next`, only
   the fields it shows) and validates them with `astro/zod`. Drupal's address is config, overridable
   with `DRUPAL_URL`.
 - `src/pages/index.astro` (the recipe list) and `src/pages/recipes/[slug].astro` (one static page per
   recipe from `getStaticPaths`), with the same titles and difficulty labels as the Nuxt version.
+- `src/components/LatestFromDrupal.astro`, used with `server:defer` on every page: the most recently
+  changed recipe and when it changed, read live from JSON:API (`sort=-changed`, one item). Its
+  `fallback` slot says what it is waiting for, and stays in place when Drupal or the server is not
+  there.
 - Images go through Astro's `<Image>` with Drupal's host in `image.domains`, so the build downloads and
   resizes them into `dist/`. The built site then stands alone: no links back to `127.0.0.1:8891`.
 - A launcher (`run`), checking `demo_need php`, `composer install-web` and `npm install-node` the way
@@ -155,16 +161,19 @@ from the same JSON:API, rendered two ways.
 **Launcher items:**
 
 - `serve`: start Drupal (installing Umami the first time) and Astro's dev server on :4321.
-- `build`: `astro build`, then `astro preview` serving `dist/` on :4322.
+- `build`: `astro build` (static pages in `dist/client`, the island's server in `dist/server`), then
+  that server on :4322.
 - `api`: one raw JSON:API request, the data the loader turns into pages (same as drupal-nuxt's).
-- `source`: show the recipe titles in the files under `dist/`, then stop Drupal and show they are
-  still served: the point of a static build.
-- `compare`: open Nuxt (:3020) and Astro (:4321) together; edit a recipe title in Drupal and see Nuxt
-  pick it up on reload while Astro's build needs `build` again. Only when drupal-nuxt is installed.
+- `source`: show the recipe titles in the files under `dist/client`, then stop Drupal and show the
+  pages are still served, with the island showing its fallback: what is static and what is live.
+- `compare`: open Nuxt (:3020) and Astro (:4321) together; edit a recipe title in Drupal and reload:
+  Nuxt and Astro's island show the new title, Astro's page heading only after `build`. Only when
+  drupal-nuxt is installed.
 - `drupal`: open Drupal (admin / admin).
 - `deploy`: with wrangler (install-cloudflare), deploy `dist/` as static assets on Cloudflare after
   asking, with `CLOUDFLARE_API_TOKEN` or `wrangler login`, as the cloudflare demo's `deploy` does.
-  Drupal stays on the Chromebook; only the built pages go up.
+  Drupal stays on the Chromebook; only `dist/client` goes up, so the deployed pages show the island's
+  fallback (the launcher says so before deploying).
 - `stop` and `reset`, as in drupal-nuxt.
 
 | Choice: where the Drupal back end comes from | |
@@ -179,25 +188,28 @@ from the same JSON:API, rendered two ways.
 
 | Choice: rendering modes shown | |
 | --- | --- |
-| **A (recommended)** | Static only, Astro's default, which is what sets it apart from Nuxt here. |
+| A | Static only, Astro's default, which is what sets it apart from Nuxt here. |
 | B | Static plus one page rendered on demand (the `@astrojs/node` adapter and a live content collection), to show Astro can do both. Adds an adapter and a server process. |
-| C | Static pages plus one **server island** (`server:defer`, same `@astrojs/node` adapter): the recipe pages stay static, and one small part of them ("latest from Drupal", read live) renders on the server when the page loads. Shows Astro's own per-component mix, which drupal-nuxt can't. |
+| **C (chosen)** | Static pages plus one **server island** (`server:defer`, same `@astrojs/node` adapter): the recipe pages stay static, and one small part of them ("latest from Drupal", read live) renders on the server when the page loads. Shows Astro's own per-component mix, which drupal-nuxt can't. |
 
-Under B or C: `build` produces a static part (`dist/client`) and a Node server (`dist/server`), and `build` runs that server on :4322 instead of `astro preview`. `deploy` ships only the static part, since the live part would need Drupal reachable from Cloudflare; the deployed site shows the static fallback where the live part would be. The launcher says so.
+Under C (as it would under B): `build` produces a static part (`dist/client`) and a Node server (`dist/server`), and `build` runs that server on :4322 instead of `astro preview`. `deploy` ships only the static part, since the live part would need Drupal reachable from Cloudflare; the deployed site shows the static fallback where the live part would be. The launcher says so.
 
 **Docs:**
 
-- `docs/dev-demo.md`: a paragraph for `drupal/drupal-astro` after drupal-nuxt's, the footprint rows
+- `docs/dev-demo.md`: a paragraph for `drupal/drupal-astro` after drupal-nuxt's (static pages, the
+  server island, and why the deployed copy shows the fallback), the footprint rows
   (generated sources under 1 MB; `node_modules` on first serve, measured during the build), and, under
   choice A, `drupal/umami-headless` replacing drupal-nuxt's own Drupal row.
 - README's demo list. CHANGELOG, dev-demo section.
 
 **To verify on the Chromebook:** `dev-demo-chromebook.sh install-web` (with install-node) creates
 `drupal/drupal-astro`; `serve` shows the recipes on :4321; `build` then `source` lists the titles from
-`dist/` and the preview still serves them with Drupal stopped; images load from `dist/`, not :8891.
+`dist/client` and the :4322 server still serves them with Drupal stopped, the island showing its
+fallback; with Drupal up, the island shows the latest recipe; images load from `dist/`, not :8891.
 Under choice A, a machine that already has drupal-nuxt's site keeps its content after the move, and
-drupal-nuxt's `serve` still works. `compare` shows Nuxt picking up an edit that Astro shows only after
-`build`. `deploy` is a hand check once wrangler is logged in.
+drupal-nuxt's `serve` still works. `compare` shows Nuxt and the island picking up an edit that Astro's
+page shows only after `build`. `deploy` is a hand check once wrangler is logged in (pages up, island
+on its fallback).
 
 ## Carried forward
 
@@ -228,5 +240,5 @@ go into v95 if you keep them there, otherwise here.
 - [x] Item 2: an Astro + Drupal demo (dev-demo only; no setup flag for Astro)
 - [x] Item 2, back end: A (shared `drupal/umami-headless`)
 - [x] Item 2, flag: A (`install-web`)
-- [ ] Item 2, rendering: A (static only), B (static plus one on-demand page) or C (static plus a server island)
+- [x] Item 2, rendering: C (static pages plus a server island, `@astrojs/node`)
 - [ ] Anything else for v96
