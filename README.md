@@ -82,7 +82,7 @@ pull in what they need. For example, `install-web` brings `install-node` with it
 
 **The base, always installed:**
 - build tools, git, Python with pipx and uv
-- ffmpeg, jq, shellcheck, direnv, sqlite3 and psql
+- ffmpeg, jq, shellcheck, direnv, sqlite3, psql and tmux
 - Docker
 - Homebrew with DDEV, gh and mkcert
 - Google Chrome

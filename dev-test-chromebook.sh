@@ -481,7 +481,7 @@ hint  "rerun the installer with the flag that owns that venv (install-antigravit
 check "pipx on PATH"                                       'pipx --version'
 check "uv (installed via pipx)"                            'uv --version'
 # v58: base CLI utilities
-check "jq, shellcheck, direnv, htop, sqlite3, psql on PATH" 'jq --version && shellcheck --version && direnv version && htop --version && sqlite3 --version && psql --version'
+check "jq, shellcheck, direnv, htop, sqlite3, psql, tmux on PATH" 'jq --version && shellcheck --version && direnv version && htop --version && sqlite3 --version && psql --version && tmux -V'
 check "jq evaluates a filter"                              'echo "{\"a\":1}" | jq -e ".a == 1"'
 check "direnv hook line in ~/.bashrc"                      'grep -q "direnv hook bash" ~/.bashrc'
 warn  "shellcheck finds no error-level issues in this script" "shellcheck -S error '$SELF'"

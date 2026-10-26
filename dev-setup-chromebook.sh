@@ -309,7 +309,10 @@ sudo apt install -y \
   libx11-dev libxkbcommon-dev libwayland-dev libdbus-1-dev \
   libxcb-shape0-dev libxcb-xfixes0-dev libgtk-3-dev libwebkit2gtk-4.1-dev \
   librsvg2-dev \
-  jq shellcheck direnv htop sqlite3 postgresql-client
+  jq shellcheck direnv htop sqlite3 postgresql-client tmux
+# v95: tmux, the general terminal multiplexer: detached long jobs, SSH sessions to the other laptops over
+#      Tailscale that survive a dropped connection, scripts. No ~/.tmux.conf and no auto-start (herdr,
+#      install-herdr, is the one for coding agents; both use Ctrl+B).
 # v58: jq (JSON from the shell), shellcheck (these scripts), direnv (per-project env), htop,
 #      and the sqlite3/psql CLIs to go with the ODBC drivers and client libs in install-db*.
 # v52: librsvg2-dev is a Tauri Linux prerequisite ('tauri build' icon/bundle generation);

@@ -33,7 +33,7 @@ The same expansion is used by all three scripts, so a flag set that installs is 
 
 | Flag | Installs |
 | --- | --- |
-| *(none)* | Base: apt packages, pipx and uv, SSH key, Docker, Homebrew with ddev/gh/mkcert, Chrome |
+| *(none)* | Base: apt packages (tmux among them since v95), pipx and uv, SSH key, Docker, Homebrew with ddev/gh/mkcert, Chrome |
 | `install-all` | Every category below |
 | `install-editors` | vscode, windsurf, cursor, lazarus (since v94 the IDE is rebuilt on Qt5, in light and dark profiles with docked and floating layouts) |
 | `install-languages` | rust, node, go, pwsh, ruby, cpp, asm, dotnet, java |
@@ -144,6 +144,14 @@ Setup installs Lazarus from the SourceForge debs, then rebuilds the IDE on Qt5: 
 - **Still manual** (see GUI first-runs): the editor color scheme in each profile (Tools → Options → Editor → Display → Colors; e.g. Twilight for dark, Default for light) and the Object Inspector colors in the dark profile (Tools → Options → Environment → Object Inspector).
 - ChromeOS draws the window title bars, so no Linux theme changes them.
 - Init reports Lazarus as configured once the four builds and the dark launcher are there, and as a skip before setup has installed it.
+
+### tmux and herdr (v95)
+
+tmux is in the base packages since v95: no `~/.tmux.conf` is written and nothing starts it from `~/.bashrc`. Use it for long jobs you detach from, SSH sessions to the other laptops over Tailscale that should survive a dropped connection, and scripts. herdr (`install-herdr`) is the multiplexer for coding agents.
+
+- **Both use Ctrl+B as their prefix.** herdr inside tmux works: there, Ctrl+B Ctrl+B passes a Ctrl+B through to herdr (tmux's default `send-prefix`). Or change one of the two prefixes.
+- **A shell that starts tmux by itself** makes herdr see `tmux` instead of the agent in a pane. If you add such a rule to `~/.bashrc`, skip it inside herdr, which sets `HERDR_ENV=1` in its panes:
+  `if [[ -z ${TMUX:-} && ${HERDR_ENV:-} != 1 ]]; then tmux new-session -A -s main; fi`
 
 ## The secrets file
 
