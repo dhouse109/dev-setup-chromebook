@@ -1712,10 +1712,20 @@ if has install-lazarus; then
     done
     if ! dpkg-query -W -f='${Status}' lazarus-project 2> /dev/null | grep -q 'ok installed'; then
         skip "Lazarus is not installed yet: dev-setup with install-lazarus installs it and builds the Qt5 IDE"
-    elif [ -z "$LAZ_MISSING" ]; then
-        already "Lazarus configured: Qt5 IDE built docked and floating in ~/.lazarus (light) and ~/.lazarus-dark (dark), 'Lazarus (Dark)' launcher; 'lazmode status' shows the layouts"
-    else
+    elif [ -n "$LAZ_MISSING" ]; then
         todo "Lazarus Qt5 IDE incomplete (missing:$LAZ_MISSING): rerun dev-setup with install-lazarus, or 'lazmode rebuild'"
+    else
+        # v95: configured also means neither layout is stale (built before packages were installed from the IDE)
+        # and the install list follows the active layout: 'lazmode status --check', per profile.
+        LAZ_STALE=""
+        for LAZ_P in light dark; do
+            command -v lazmode > /dev/null 2>&1 && lazmode status --profile "$LAZ_P" --check > /dev/null 2>&1 || LAZ_STALE="$LAZ_STALE $LAZ_P"
+        done
+        if [ -z "$LAZ_STALE" ]; then
+            already "Lazarus configured: Qt5 IDE built docked and floating in ~/.lazarus (light) and ~/.lazarus-dark (dark), both current, 'Lazarus (Dark)' launcher; 'lazmode status' shows the layouts"
+        else
+            todo "Lazarus:$LAZ_STALE not up to date (a layout stale after packages were installed, or the install list not following the layout; 'lazmode status' says which): 'lazmode rebuild --profile <light|dark>', or 'lazmode dock on|off', which rebuilds a stale layout first"
+        fi
     fi
     skip "editor colors per profile (Tools > Options > Editor > Display > Colors) and the dark profile's Object Inspector colors are yours to pick (docs/init-checklist.md)"
 fi

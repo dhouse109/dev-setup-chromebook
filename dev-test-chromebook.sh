@@ -1173,6 +1173,34 @@ if has install-lazarus; then
 LAZ_VER=$(dpkg-query -W -f='${Version}' lazarus-project 2> /dev/null); LAZ_VER=${LAZ_VER#*:}; LAZ_VER=${LAZ_VER%%-*}
 LAZ_DIR="/usr/share/lazarus/$LAZ_VER"
 P="$HOME/.lazarus"; [ "${2:-}" = dark ] && P="$HOME/.lazarus-dark"
+# v95: the install list as the IDE reads it (Item1..ItemCount of StaticAutoInstallPackages, empty ones skipped).
+# listpy names: the packages other than the docking ones, sorted, one line (as lazmode records them);
+# listpy docking: exit 0 when a docking package is listed.
+listpy() {
+    python3 - "$1" "$P/miscellaneousoptions.xml" << 'LIST_PY'
+import re, sys
+act, path = sys.argv[1], sys.argv[2]
+dock = re.compile(r'(?:anchordock[^"]*|dockedformeditor)$', re.I)
+try:
+    text = open(path, encoding="utf-8").read()
+except FileNotFoundError:
+    text = ""
+names = []
+m = re.search(r'<StaticAutoInstallPackages(?:\s[^>]*)?(?<!/)>.*?</StaticAutoInstallPackages>', text, re.S)
+if m:
+    c = re.search(r'Count="(\d+)"', m.group(0)[:m.group(0).index(">")])
+    count = int(c.group(1)) if c else 0
+    names = [v for i, v in re.findall(r'<Item(\d+)\s+Value="([^"]*)"', m.group(0)) if 1 <= int(i) <= count and v]
+if act == "names":
+    seen = {}
+    for n in names:
+        if not dock.match(n):
+            seen.setdefault(n.lower(), n)
+    print(" ".join(seen[k] for k in sorted(seen)))
+else:
+    sys.exit(0 if any(dock.match(n) for n in names) else 1)
+LIST_PY
+}
 case "$1" in
     builds)   # all three binaries there and on Qt5
         for b in lazarus-floating lazarus-docked lazarus; do
@@ -1184,11 +1212,20 @@ case "$1" in
         [ -f "$P/bin/lazarus-floating" ] || { echo "missing: $P/bin/lazarus-floating"; exit 1; }
         if grep -qa TAnchorDockMaster "$P/bin/lazarus-floating"; then echo "lazarus-floating contains TAnchorDockMaster: it is docked"; exit 1; fi
         echo "no TAnchorDockMaster in lazarus-floating" ;;
-    list)   # lazbuild --add-package saves to this list, and every later --build-ide builds it in
-        f="$P/miscellaneousoptions.xml"
-        [ -f "$f" ] || { echo "no $f (nothing installed by name)"; exit 0; }
-        if grep -Eio '<Item[0-9]+ +Value="(anchordock[^"]*|dockedformeditor)"' "$f"; then exit 1; fi
-        echo "the install list names no docking package" ;;
+    list)   # v95: the IDE rebuilds itself from this list, so it names the docking packages exactly while docked is active
+        if cmp -s "$P/bin/lazarus" "$P/bin/lazarus-docked"; then a=docked; else a=floating; fi
+        if listpy docking; then l="names the docking packages"; else l="has no docking package"; fi
+        echo "$a is active, the install list $l"
+        if [ "$a" = docked ]; then listpy docking; else ! listpy docking; fi ;;
+    current)   # v95: each layout was built from the install list as it is now (lazmode records it in bin/.lazmode-built)
+        f="$P/bin/.lazmode-built"; now=$(listpy names)
+        [ "$(head -n 1 "$f" 2> /dev/null)" = "$LAZ_VER" ] || { echo "no record for Lazarus $LAZ_VER (built before v95?): $(head -n 1 "$f" 2> /dev/null)"; exit 1; }
+        for lay in docked floating; do
+            had=$(grep -m1 "^$lay=" "$f") || { echo "$lay: no record of the list it was built from"; exit 1; }
+            had=${had#*=}
+            [ "$had" = "$now" ] || { echo "$lay is stale: built from [$had], the list names [$now]"; exit 1; }
+        done
+        echo "both layouts built from the current list [${now:-no extra packages}]" ;;
     active)
         if cmp -s "$P/bin/lazarus" "$P/bin/lazarus-docked"; then echo "docked"
         elif cmp -s "$P/bin/lazarus" "$P/bin/lazarus-floating"; then echo "floating"
@@ -1224,8 +1261,10 @@ LAZ_EOF
         hint  "'lazmode rebuild --profile $LAZ_P' (logs in assets/logs/lazarus-build-$LAZ_P-*.log), or rerun setup with install-lazarus"
         check "$LAZ_P profile: the floating build has no AnchorDocking"      "bash lazarus_check.sh floating $LAZ_P"
         hint  "'lazmode rebuild --profile $LAZ_P' takes the docking packages out of the profile's install list and builds it again"
-        check "$LAZ_P profile: its install list names no docking package"   "bash lazarus_check.sh list $LAZ_P"
-        hint  "the next floating build would come out docked: 'lazmode rebuild --profile $LAZ_P' takes them out (a copy of the old miscellaneousoptions.xml goes to assets/logs)"
+        check "$LAZ_P profile: both layouts built from the current install list" "bash lazarus_check.sh current $LAZ_P"
+        hint  "packages were installed since (from the IDE, or a project's prompt): 'lazmode rebuild --profile $LAZ_P', or 'lazmode dock on|off', which rebuilds a stale layout before switching"
+        check "$LAZ_P profile: install list names docking only while docked" "bash lazarus_check.sh list $LAZ_P"
+        hint  "'lazmode dock on' or 'lazmode dock off' (whichever is active) sets the list; otherwise the IDE's own rebuild switches layout"
         check "$LAZ_P profile: bin/lazarus is one of the two builds"         "bash lazarus_check.sh active $LAZ_P"
         hint  "'lazmode dock on' (or off) puts a build back; the IDE's own Tools > Build Lazarus replaces bin/lazarus, possibly with GTK2"
     done
