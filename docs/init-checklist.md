@@ -1,10 +1,10 @@
 # Init checklist
 
-*Working notes kept alongside the scripts, copied at the v93 release. The "since vNN" remarks date each behaviour; [CHANGELOG.md](../CHANGELOG.md) has the full story.*
+*Working notes kept alongside the scripts, copied at the v93 release, updated for v94. The "since vNN" remarks date each behaviour; [CHANGELOG.md](../CHANGELOG.md) has the full story.*
 
 ## Run order
 
-Run init once before setup to get the secrets template, fill it while setup downloads, then run init again after setup. Only the first init run is safe before setup; the second needs the tools setup installs (`gh`, `hf`, `adb`, `eas`, `claude`, `codex`, `gemini`, `aws`, `az`, `gcloud`, `ng`, `dotnet`, `vercel`, `terminus`, `acli`). All three scripts take the same flags and are versioned as one bundle (v93 as of this doc).
+Run init once before setup to get the secrets template, fill it while setup downloads, then run init again after setup. Only the first init run is safe before setup; the second needs the tools setup installs (`gh`, `hf`, `adb`, `eas`, `claude`, `codex`, `gemini`, `aws`, `az`, `gcloud`, `ng`, `dotnet`, `vercel`, `terminus`, `acli`). All three scripts take the same flags and are versioned as one bundle (v94 as of this doc).
 
 1. `./dev-init-chromebook.sh install-all` — writes `~/.config/dev-init/secrets.env` and exits.
 2. Fill in the keys (sections below). Filling in the file logs nothing in by itself; step 5 applies it.
@@ -35,7 +35,7 @@ The same expansion is used by all three scripts, so a flag set that installs is 
 | --- | --- |
 | *(none)* | Base: apt packages, pipx and uv, SSH key, Docker, Homebrew with ddev/gh/mkcert, Chrome |
 | `install-all` | Every category below |
-| `install-editors` | vscode, windsurf, cursor, lazarus |
+| `install-editors` | vscode, windsurf, cursor, lazarus (since v94 the IDE is rebuilt on Qt5, in light and dark profiles with docked and floating layouts) |
 | `install-languages` | rust, node, go, pwsh, ruby, cpp, asm, dotnet, java |
 | `install-ecosystems` | antigravity, media, gemma (pulls in install-ollama), mobile, android-native, godot |
 | `install-godot` | Godot standard (GDScript) and .NET (C#) editors side by side, godot and godot-mono launchers, app-drawer entries; pulls in install-dotnet (v66, part of install-ecosystems) |
@@ -123,6 +123,26 @@ Through v67, `install-gemma` stopped at an interactive `hf auth login` unless `H
 Since v93 setup checks the network first: if IPv6 doesn't get out (the Oct 4 hang on Chrome's download), it makes Linux prefer IPv4 with the same two lines that fixed it by hand (`/etc/gai.conf` and `/etc/apt/apt.conf.d/99force-ipv4`; `DEV_PREFER_IPV4=0` skips the check). Every download gets a 20-second connection timeout, and a bad Go or PowerShell download now skips just that tool; the summary at the end names it and the flag to rerun.
 
 The test script ends with a disk report (v77): the measured size of every installed stack, then totals for apt, Homebrew (with its eight biggest formulae), Docker data, caches, `~/dev-demo`, the home directory and the Linux disk. It prints them as INFO lines and saves a copy to `assets/logs/disk-<timestamp>.tsv`, labelled with `MACHINE_LABEL` from `secrets.env` so reports from different Chromebooks can be compared. The totals overlap the per-stack lines on purpose, because apt and Homebrew each hold several stacks. Add `nodisk` to skip it; it takes a minute or two.
+
+### Lazarus (install-lazarus, v94)
+
+Setup installs Lazarus from the SourceForge debs, then rebuilds the IDE on Qt5: the stock GTK2 IDE draws some dialogs blank under Crostini and they never take the keyboard (docs/crostini-gotchas.md). It builds four IDE binaries, so neither the first start nor a switch waits on a build: a light profile (`~/.lazarus`) and a dark one (`~/.lazarus-dark`), each docked and floating. Expect 10–20 minutes more than a plain Lazarus install on a clean machine. On disk, Lazarus with the four Qt5 IDE builds takes about 3.2 GB (dev-test disk report, Oct 25 2026); the test's disk report measures it on each machine. Build logs go to `assets/logs/lazarus-build-<profile>-<layout>.log`. There is no extra flag, no key and no prompt.
+
+- **Two launchers:** **Lazarus** opens the light profile; **Lazarus (Dark)** opens the dark one with qt5ct's Fusion style and darker palette (`env QT_QPA_PLATFORMTHEME=qt5ct startlazarus --pcp=$HOME/.lazarus-dark`). Pick light or dark by the launcher you open; both can run side by side.
+- **Docked is the default.** The docked build has the main window docked (AnchorDocking) and the form designer as an editor tab (DockedFormEditor).
+- **`lazmode`** (in `~/.local/bin`) switches between the builds setup made, so a switch is a file copy that takes seconds. It refuses to switch or rebuild while Lazarus is running. `--profile light|dark|both` defaults to both.
+
+| Command | What it does |
+| --- | --- |
+| `lazmode status` | Per profile: the active layout, both builds and their widget set, the dark launcher's `Exec=` line, and qt5ct's style and palette |
+| `lazmode dock on` / `lazmode dock off` | The docked or the floating build becomes the active one (next IDE start) |
+| `lazmode rebuild [--add-package <lpk>…]` | Rebuilds both layouts on Qt5 and keeps the active one. Packages given here are recorded in `<profile>/lazmode-packages` and included in every later rebuild. The docking packages never stay in the profile's install list (`miscellaneousoptions.xml`, which `lazbuild --add-package` writes to): the file is saved before the docked build and put back after it, and a list that already names them (a profile set up by hand before v94) loses them first, with a copy of the old file in `assets/logs`. Also the way back after a Lazarus upgrade |
+| `lazmode theme` | Opens qt5ct for the dark profile's style and palette |
+
+- **Install IDE packages with `lazmode rebuild --add-package`,** not with Package → Install/Uninstall Packages. The IDE's own rebuild can fall back to GTK2, and GTK2 dialogs draw blank and freeze under Crostini. If that has happened, `lazmode dock on` puts the Qt5 build back.
+- **Still manual** (see GUI first-runs): the editor color scheme in each profile (Tools → Options → Editor → Display → Colors; e.g. Twilight for dark, Default for light) and the Object Inspector colors in the dark profile (Tools → Options → Environment → Object Inspector).
+- ChromeOS draws the window title bars, so no Linux theme changes them.
+- Init reports Lazarus as configured once the four builds and the dark launcher are there, and as a skip before setup has installed it.
 
 ## The secrets file
 
@@ -400,6 +420,7 @@ None of these can be scripted; do them once, in any order. Init's still-manual l
 - [ ] Android Studio: launch from the app drawer, accept the wizard defaults, point it at the existing SDK at `~/.android/sdk` if asked, skip the emulator. With ADB debugging enabled, the Chromebook appears as a connected device. Since v70 setup pins it to the X11 toolkit (`-Dawt.toolkit.name=XToolkit` in its VM options): its bundled runtime defaults to native Wayland, which on ChromeOS dims the IDE window whenever it has focus. If the window ever dims again after an Android Studio update, check Help → Edit Custom VM Options for that line.
 - [ ] Antigravity: launch Antigravity IDE (or Antigravity) from the app drawer, or run antigravity-ide, and sign in with your Google account. The CLI is `agy` at `~/.local/bin/agy`; the Python SDK venv is activated with `source ~/.antigravity-env/bin/activate`.
 - [ ] Cursor, Windsurf, VS Code: sign in only if you want their AI features; nothing else depends on it. Since v66 Cursor has its own ChromeOS launcher entry (it ships as a bare AppImage, so it had none); rerun setup with install-cursor on machines set up earlier, and give the app drawer a minute to pick it up.
+- [ ] Lazarus (v94): in each profile pick an editor color scheme (Tools → Options → Editor → Display → Colors; e.g. Twilight in **Lazarus (Dark)**, Default in **Lazarus**), and in the dark profile the Object Inspector colors (Tools → Options → Environment → Object Inspector). Install IDE packages with `lazmode rebuild --add-package <lpk>`, never from the IDE's Package menu (see Lazarus under Running setup).
 - [ ] Godot: launch Godot Engine or Godot Engine (.NET) from the app drawer. When creating a project choose the Compatibility renderer; Forward+ and Mobile need Vulkan, which the Linux container does not expose.
 - [ ] drupal.org: add `~/.ssh/id_ed25519.pub` at git.drupalcode.org → user settings → SSH keys. Issue forks and merge requests push over SSH, and there is no API for it, so init can only check. The test script warns until `ssh -T git@git.drupal.org` greets you.
 - [ ] Langfuse: `cp ~/agentic/.env.example ~/agentic/.env` and fill in the same Langfuse keys there for the agentic project (init sets them in the shell; the project reads its own `.env`).

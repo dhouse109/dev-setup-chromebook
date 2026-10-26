@@ -1,5 +1,5 @@
 #!/bin/bash
-# dev-setup-chromebook - Version 93
+# dev-setup-chromebook - Version 94
 # Version history: CHANGELOG.md, next to this script in the bundle
 # (one section per script, newest version first).
 
@@ -247,7 +247,7 @@ if [[ "$FLAGS" =~ " install-gemma " ]] || [[ "$FLAGS" =~ " install-models " ]] |
 fi
 # =================================================================
 
-echo "Starting comprehensive Chromebook Linux provisioning (Version 93)..."
+echo "Starting comprehensive Chromebook Linux provisioning (Version 94)..."
 
 # v93: prefer IPv4 when this network's IPv6 does not get out. On Oct 4 2026 a Chromebook's Linux got IPv6
 # addresses for dl.google.com but no IPv6 route out, and wget hung on one address after another (the
@@ -1365,6 +1365,390 @@ if [[ "$FLAGS" =~ " install-lazarus " ]]; then
 
     echo "Cleaning up Lazarus installers..."
     rm -f "$ASSETS"/downloads/fpc-laz_*.deb "$ASSETS"/downloads/fpc-src_*.deb "$ASSETS"/downloads/lazarus-project_*.deb
+
+    # v94: the IDE rebuilt on Qt5, in a light and a dark profile, each with a docked and a floating layout
+    # (Oct 24 2026: the stock GTK2 IDE drew some modal dialogs blank under Crostini, Run Parameters and New
+    # Project among them, and they never took keyboard focus; removing gtk2-engines-pixbuf did not help, Qt5
+    # did). docs/crostini-gotchas.md has the details. Read the installed version instead of hardcoding 4.8.0,
+    # so these paths keep working after a Lazarus upgrade.
+    LAZ_VER=$(dpkg-query -W -f='${Version}' lazarus-project 2> /dev/null || true)
+    LAZ_VER=${LAZ_VER#*:}; LAZ_VER=${LAZ_VER%%-*}   # 4.8.0-0 -> 4.8.0, the folder under /usr/share/lazarus
+    LAZ_DIR="/usr/share/lazarus/$LAZ_VER"
+    if [ -z "$LAZ_VER" ] || [ ! -d "$LAZ_DIR" ]; then
+        echo "ERROR: lazarus-project is not installed (or $LAZ_DIR is missing), so the Qt5 IDE cannot be built. Aborting."
+        exit 1
+    fi
+    echo "Setting up the Lazarus $LAZ_VER IDE on Qt5 (light and dark profiles, docked and floating layouts)..."
+    sudo apt install -y libqt5pas-dev qt5ct
+    # The SourceForge tree is root's and read-only. The IDE's own units build into ~/.lazarus, but the final
+    # make step of a Qt5 build writes here too and stops with "mkdir: Permission denied" without it (Oct 24 2026).
+    # install -d also takes over a folder made by hand as root.
+    sudo install -d -o "$(id -un)" -g "$(id -gn)" "$LAZ_DIR/units/x86_64-linux/qt5"
+
+    # lazmode: switches between the builds below (a file copy, seconds) and rebuilds them. Setup builds through
+    # it too, so the build steps live in one place. Its build logs go to assets/logs.
+    mkdir -p ~/.local/bin ~/.local/share/applications
+    cat > "$HOME/.local/bin/lazmode.new" << 'LAZMODE_EOF'
+#!/bin/bash
+# lazmode: the Lazarus IDE of dev-setup's install-lazarus (v94): Qt5 builds in two profiles, light (~/.lazarus,
+# the "Lazarus" launcher) and dark (~/.lazarus-dark, "Lazarus (Dark)"), each built docked and floating.
+# Written by dev-setup and rewritten on every run: copy it before editing.
+#   lazmode status [--profile light|dark|both]
+#   lazmode dock on|off [--profile light|dark|both]             docked or floating layout (copies a build)
+#   lazmode rebuild [--profile light|dark|both] [--add-package LPK...]
+#                                                              rebuild both layouts on Qt5, keep the active one
+#   lazmode theme                                              qt5ct (the dark profile's style and palette)
+# --profile defaults to both. Install IDE packages with 'lazmode rebuild --add-package', not with the IDE's
+# Package > Install/Uninstall Packages: the IDE's own rebuild can fall back to GTK2, whose dialogs draw blank
+# and freeze under Crostini. Packages added here are kept in <profile>/lazmode-packages for later rebuilds.
+LOGDIR="@LOGDIR@"
+LIGHT="$HOME/.lazarus"
+DARK="$HOME/.lazarus-dark"
+DARK_DESKTOP="$HOME/.local/share/applications/lazarus-dark.desktop"
+QT5CT_CONF="$HOME/.config/qt5ct/qt5ct.conf"
+
+die() { echo "lazmode: $*" >&2; exit 1; }
+usage() { sed -n '2,15s/^# \{0,1\}//p' "$0"; }
+laz_dir() {   # /usr/share/lazarus/<installed version>
+    local v
+    v=$(dpkg-query -W -f='${Version}' lazarus-project 2> /dev/null) || return 1
+    v=${v#*:}; v=${v%%-*}
+    [ -n "$v" ] && [ -d "/usr/share/lazarus/$v" ] && echo "/usr/share/lazarus/$v"
+}
+pdir() { if [ "$1" = dark ]; then echo "$DARK"; else echo "$LIGHT"; fi; }
+# Process names, not 'pgrep -f lazarus': that also matches this command's own --add-package paths and
+# dev-setup's command line (install-lazarus).
+running() { pgrep -x 'lazarus|startlazarus|lazarus-ide|lazbuild' > /dev/null 2>&1; }
+refuse_if_running() {
+    running && die "Lazarus (or a lazbuild) is running: close it first, then run 'lazmode $*' again."
+    return 0
+}
+widgetset() {   # from the libraries the binary links
+    local l
+    l=$(ldd "$1" 2> /dev/null) || { echo "unknown"; return; }
+    case "$l" in
+        *libQt5Pas*) echo "qt5" ;;
+        *libQt6Pas*) echo "qt6" ;;
+        *libgtk-x11-2.0*) echo "gtk2" ;;
+        *libgtk-3*) echo "gtk3" ;;
+        *) echo "unknown" ;;
+    esac
+}
+layout() {   # which build bin/lazarus is
+    local b="$1/bin"
+    [ -f "$b/lazarus" ] || { echo "none"; return; }
+    if [ -f "$b/lazarus-docked" ] && cmp -s "$b/lazarus" "$b/lazarus-docked"; then echo "docked"
+    elif [ -f "$b/lazarus-floating" ] && cmp -s "$b/lazarus" "$b/lazarus-floating"; then echo "floating"
+    else echo "other (matches neither build)"; fi
+}
+activate() {   # activate PROFILE_DIR docked|floating: a copy and a rename, so a running binary is never truncated
+    local b="$1/bin"
+    [ -x "$b/lazarus-$2" ] || return 1
+    cp "$b/lazarus-$2" "$b/.lazarus.lazmode" && mv -f "$b/.lazarus.lazmode" "$b/lazarus"
+}
+
+PROFILES=(light dark)
+ADD=()
+parse_opts() {
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --profile) shift
+                case "${1:-}" in
+                    light|dark) PROFILES=("$1") ;;
+                    both) PROFILES=(light dark) ;;
+                    *) die "--profile takes light, dark or both, not '${1:-}'" ;;
+                esac ;;
+            --profile=*) set -- --profile "${1#--profile=}" "${@:2}"; continue ;;
+            --add-package) shift
+                [ $# -gt 0 ] || die "--add-package needs at least one .lpk file"
+                while [ $# -gt 0 ] && [ "${1#--}" = "$1" ]; do
+                    [ -f "$1" ] && [ "${1%.lpk}" != "$1" ] || die "not a package file (.lpk): $1"
+                    ADD+=("$(realpath "$1")"); shift
+                done
+                continue ;;
+            *) die "unknown option '$1' (lazmode help)" ;;
+        esac
+        shift
+    done
+}
+
+cmd_status() {
+    local p d b f
+    for p in "${PROFILES[@]}"; do
+        d=$(pdir "$p"); b="$d/bin"
+        echo "$p profile ($d)"
+        echo "  active layout   $(layout "$d")"
+        for f in docked floating; do
+            if [ -x "$b/lazarus-$f" ]; then
+                printf '  %-15s %s\n' "$f build" "$(widgetset "$b/lazarus-$f"), built $(date -r "$b/lazarus-$f" '+%F %H:%M')"
+            else
+                printf '  %-15s %s\n' "$f build" "missing ('lazmode rebuild --profile $p')"
+            fi
+        done
+        [ -f "$b/lazarus" ] && printf '  %-15s %s\n' "bin/lazarus" "$(widgetset "$b/lazarus") widget set"
+        [ -s "$d/lazmode-packages" ] && printf '  %-15s %s\n' "extra packages" "$(tr '\n' ' ' < "$d/lazmode-packages")"
+        if docking_listed "$d"; then
+            printf '  %-15s %s\n' "install list" "names the docking packages: the next floating build would come out docked ('lazmode rebuild --profile $p' takes them out)"
+        fi
+        if [ -f "$b/lazarus-floating" ] && grep -qa "$DOCKING_CLASS" "$b/lazarus-floating"; then
+            printf '  %-15s %s\n' "floating build" "contains $DOCKING_CLASS, so it is docked too ('lazmode rebuild --profile $p')"
+        fi
+    done
+    if [ -f "$DARK_DESKTOP" ]; then
+        echo "dark launcher   $(grep -m1 '^Exec=' "$DARK_DESKTOP")"
+    else
+        echo "dark launcher   missing ($DARK_DESKTOP): rerun dev-setup with install-lazarus"
+    fi
+    if [ -f "$QT5CT_CONF" ]; then
+        local style custom scheme
+        style=$(sed -n 's/^style=//p' "$QT5CT_CONF" | head -n 1)
+        custom=$(sed -n 's/^custom_palette=//p' "$QT5CT_CONF" | head -n 1)
+        scheme=$(sed -n 's/^color_scheme_path=//p' "$QT5CT_CONF" | head -n 1)
+        if [ "$custom" = true ]; then scheme="palette $(basename "${scheme:-none}" .conf)"; else scheme="the style's own palette"; fi
+        echo "qt5ct           style ${style:-Fusion (default)}, $scheme"
+    else
+        echo "qt5ct           no $QT5CT_CONF ('lazmode theme' writes one)"
+    fi
+    running && echo "Lazarus is running now."
+    return 0
+}
+
+cmd_dock() {
+    local want p d
+    case "${1:-}" in
+        on) want=docked ;;
+        off) want=floating ;;
+        *) die "dock takes on or off" ;;
+    esac
+    refuse_if_running "dock $1"
+    shift; parse_opts "$@"
+    for p in "${PROFILES[@]}"; do
+        d=$(pdir "$p")
+        [ -x "$d/bin/lazarus-$want" ] || die "$p: no $want build in $d/bin: run 'lazmode rebuild --profile $p'"
+        activate "$d" "$want" || die "$p: could not copy lazarus-$want over bin/lazarus"
+        echo "$p: $want layout active (next IDE start)"
+    done
+}
+
+# v94: lazbuild --add-package does not only build a package in: it saves it to the profile's install list
+# (StaticAutoInstallPackages in miscellaneousoptions.xml), and every later --build-ide builds that list in, so
+# each floating build after the first docked one came out docked (Oct 25 2026: grep -il anchordock ~/.lazarus/*
+# found the docking packages after the Oct 24 hand setup). So the docked build runs between a save and a restore
+# of the files it writes, and the docking packages are taken out of a list that already has them.
+LISTFILES=(miscellaneousoptions.xml packagefiles.xml staticpackages.inc idemake.cfg)
+DOCKING_CLASS=TAnchorDockMaster   # AnchorDocking's main class: its name is in any IDE binary built with it
+SAVED=""   # the profile whose list files are saved, while the docked build runs
+ACTIVE=""  # "PROFILE_DIR LAYOUT" to put back if a rebuild is interrupted
+save_lists() {   # save_lists PROFILE_DIR: copy the list files aside (or note that one is absent)
+    local s="$1/.lazmode-save" f
+    rm -rf "$s" && mkdir -p "$s" || return 1
+    for f in "${LISTFILES[@]}"; do
+        if [ -f "$1/$f" ]; then cp -p "$1/$f" "$s/$f" || return 1; else : > "$s/$f.absent"; fi
+    done
+    SAVED=$1
+}
+restore_lists() {   # restore_lists PROFILE_DIR: put them back exactly, removing any the build created
+    local s="$1/.lazmode-save" f
+    [ -d "$s" ] || return 0
+    for f in "${LISTFILES[@]}"; do
+        if [ -f "$s/$f" ]; then cp -p "$s/$f" "$1/$f"; elif [ -f "$s/$f.absent" ]; then rm -f "$1/$f"; fi
+    done
+    rm -rf "$s"
+    SAVED=""
+}
+# Ctrl-C during the docked build still leaves the list without the docking packages, and the layout that was
+# active stays active.
+trap '[ -n "$SAVED" ] && restore_lists "$SAVED"; [ -n "$ACTIVE" ] && activate "${ACTIVE% *}" "${ACTIVE##* }"; exit 130' INT TERM
+docking_listed() {   # does the profile's install list name a docking package?
+    grep -Eqi '<Item[0-9]+ +Value="(anchordock[^"]*|dockedformeditor)"' "$1/miscellaneousoptions.xml" 2> /dev/null
+}
+scrub_docking() {   # scrub_docking PROFILE_DIR NAME: take the docking packages out of the install list
+    local f="$1/miscellaneousoptions.xml"
+    docking_listed "$1" || return 0
+    # The IDE skips a missing ItemN when it reads the list (LoadStringList), so deleting the items is enough;
+    # the next save writes the list out renumbered. A copy of the file goes to the logs first.
+    cp -p "$f" "$LOGDIR/miscellaneousoptions-$2-$(date +%Y%m%d-%H%M%S).xml"
+    python3 - "$f" << 'SCRUB_PY' || return 1
+import re, sys
+path = sys.argv[1]
+with open(path, encoding="utf-8") as fh:
+    text = fh.read()
+item = re.compile(r'[ \t]*<Item\d+\s+Value="(?:anchordock[^"]*|dockedformeditor)"\s*/>[ \t]*\r?\n?', re.I)
+block = re.compile(r'<StaticAutoInstallPackages(?:\s[^>]*)?(?<!/)>.*?</StaticAutoInstallPackages>', re.S)
+new = block.sub(lambda m: item.sub("", m.group(0)), text)
+if new != text:
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write(new)
+SCRUB_PY
+    if docking_listed "$1"; then echo "$2: could not take the docking packages out of $f"; return 1; fi
+    echo "$2: docking packages taken out of the install list ($f; the old file is in $LOGDIR)"
+}
+
+build_one() {   # build_one PROFILE LAYOUT: lazbuild the IDE into <profile>/bin/lazarus, copy it to lazarus-LAYOUT
+    local p=$1 lay=$2 d dir log t0 pkgs=() args=(--build-ide= --ws=qt5)
+    d=$(pdir "$p"); dir=$(laz_dir)
+    [ "$p" = dark ] && args+=(--pcp="$d")
+    if [ "$lay" = docked ]; then
+        # The docked main window, and the form designer as an editor tab.
+        pkgs+=("$dir/components/anchordocking/design/anchordockingdsgn.lpk"
+               "$dir/components/dockedformeditor/dockedformeditor.lpk")
+    fi
+    if [ -s "$d/lazmode-packages" ]; then mapfile -t -O "${#pkgs[@]}" pkgs < "$d/lazmode-packages"; fi
+    [ ${#pkgs[@]} -gt 0 ] && args+=(--add-package "${pkgs[@]}")
+    log="$LOGDIR/lazarus-build-$p-$lay.log"
+    echo "$p, $lay: lazbuild ${args[*]}"
+    echo "  log: $log (the first build of a profile compiles every package and takes minutes)"
+    t0=$(date +%s)
+    if ! { echo "lazbuild ${args[*]}  ($(date '+%F %T'))"; lazbuild "${args[@]}"; } > "$log" 2>&1; then
+        echo "  FAILED after $(( $(date +%s) - t0 ))s; the end of the log:"
+        tail -n 15 "$log" | sed 's/^/    /'
+        return 1
+    fi
+    # A read-only Lazarus folder sends the IDE to <profile>/bin/lazarus; make sure that is what was just built.
+    if [ ! -f "$d/bin/lazarus" ] || [ "$(stat -c %Y "$d/bin/lazarus")" -lt "$t0" ] || [ "$(widgetset "$d/bin/lazarus")" != qt5 ]; then
+        echo "  lazbuild finished but $d/bin/lazarus is not a new Qt5 build; the end of the log:"
+        tail -n 15 "$log" | sed 's/^/    /'
+        return 1
+    fi
+    if [ "$lay" = floating ] && grep -qa "$DOCKING_CLASS" "$d/bin/lazarus"; then
+        echo "  the floating build came out docked (it contains $DOCKING_CLASS): not kept"
+        return 1
+    fi
+    cp "$d/bin/lazarus" "$d/bin/.lazarus-$lay.lazmode" && mv -f "$d/bin/.lazarus-$lay.lazmode" "$d/bin/lazarus-$lay" || return 1
+    tail -n 2 "$log" | sed 's/^/  | /'
+    echo "  built in $(( $(date +%s) - t0 ))s: $d/bin/lazarus-$lay"
+}
+
+cmd_rebuild() {
+    local p d dir was f ok fail=0
+    parse_opts "$@"
+    refuse_if_running rebuild
+    dir=$(laz_dir) || die "lazarus-project is not installed: run dev-setup with install-lazarus"
+    command -v lazbuild > /dev/null || die "lazbuild not found: run dev-setup with install-lazarus"
+    dpkg-query -W -f='${Status}' libqt5pas-dev 2> /dev/null | grep -q 'ok installed' \
+        || die "libqt5pas-dev is not installed: run dev-setup with install-lazarus"
+    # After a Lazarus upgrade the new version's folder needs its qt5 units folder again (see dev-setup).
+    if [ ! -d "$dir/units/x86_64-linux/qt5" ] || [ ! -O "$dir/units/x86_64-linux/qt5" ]; then
+        sudo install -d -o "$(id -un)" -g "$(id -gn)" "$dir/units/x86_64-linux/qt5" || die "could not create $dir/units/x86_64-linux/qt5"
+    fi
+    mkdir -p "$LOGDIR" 2> /dev/null && [ -w "$LOGDIR" ] || LOGDIR="$HOME/.cache/lazmode"
+    mkdir -p "$LOGDIR"
+    for p in "${PROFILES[@]}"; do
+        d=$(pdir "$p")
+        # The dark profile starts as a copy of the light one's settings (not its builds, which are rebuilt
+        # for it), and only when it does not exist yet.
+        if [ "$p" = dark ] && [ ! -d "$d" ] && [ -d "$LIGHT" ]; then
+            mkdir -p "$d"
+            (cd "$LIGHT" && tar --exclude=./bin --exclude=./units --exclude=./lib -cf - .) | (cd "$d" && tar -xf -) \
+                && echo "dark: settings copied from $LIGHT"
+        fi
+        mkdir -p "$d/bin"
+        # A save left behind by an interrupted docked build is put back first; then a list from before v94
+        # (the Oct 24 hand setup, or the IDE's own Install Packages) loses its docking packages.
+        restore_lists "$d"
+        scrub_docking "$d" "$p" || { echo "$p: rebuild skipped (logs in $LOGDIR)"; fail=1; continue; }
+        if [ ${#ADD[@]} -gt 0 ]; then
+            { cat "$d/lazmode-packages" 2> /dev/null; printf '%s\n' "${ADD[@]}"; } | awk 'NF && !seen[$0]++' > "$d/lazmode-packages.new" \
+                && mv -f "$d/lazmode-packages.new" "$d/lazmode-packages"
+        fi
+        was=$(layout "$d")
+        case "$was" in docked|floating) ;; *) was=docked ;; esac
+        ACTIVE="$d $was"
+        # Floating first, then docked, with the list files saved around the docked build and put back after it,
+        # built or not: the docking packages never stay in the profile's install list.
+        ok=0
+        if build_one "$p" floating && save_lists "$d"; then
+            build_one "$p" docked && ok=1
+            restore_lists "$d"
+        fi
+        if [ "$ok" = 1 ]; then
+            activate "$d" "$was"
+            printf '%s\n' "$(basename "$dir")" > "$d/bin/.lazmode-built"
+            echo "$p: both layouts built on Qt5, $was active"
+        else
+            # Leave the layout that was active in place, whatever this build left in bin/lazarus.
+            for f in "$was" docked floating; do activate "$d" "$f" && break; done
+            echo "$p: rebuild failed (logs in $LOGDIR)"; fail=1
+        fi
+        ACTIVE=""
+    done
+    return $fail
+}
+
+case "${1:-status}" in
+    status) shift; parse_opts "$@"; cmd_status ;;
+    dock) shift; cmd_dock "$@" ;;
+    rebuild) shift; cmd_rebuild "$@" ;;
+    theme) command -v qt5ct > /dev/null || die "qt5ct is not installed: run dev-setup with install-lazarus"
+           QT_QPA_PLATFORMTHEME=qt5ct exec qt5ct ;;
+    help|-h|--help) usage ;;
+    *) usage; exit 1 ;;
+esac
+LAZMODE_EOF
+    sed -i "s|@LOGDIR@|$ASSETS/logs|" "$HOME/.local/bin/lazmode.new"
+    chmod +x "$HOME/.local/bin/lazmode.new"
+    mv -f "$HOME/.local/bin/lazmode.new" "$HOME/.local/bin/lazmode"
+
+    # The dark launcher, made from the system one so it keeps its icon and categories; the stock launcher stays
+    # the light one. A .desktop file does not expand ~ or $HOME, so the path is written out. Localized names and
+    # desktop actions are dropped: they would still say "Lazarus" or start the light profile.
+    LAZ_DARK_EXEC="Exec=env QT_QPA_PLATFORMTHEME=qt5ct startlazarus --pcp=$HOME/.lazarus-dark %f"
+    if [ -f /usr/share/applications/lazarus.desktop ]; then
+        sed -e '/^\[Desktop Action/,$d' -e '/^Actions=/d' -e '/^Name\[/d' -e '/^TryExec=/d' \
+            -e 's/^Name=.*/Name=Lazarus (Dark)/' -e "s|^Exec=.*|$LAZ_DARK_EXEC|" \
+            /usr/share/applications/lazarus.desktop > ~/.local/share/applications/lazarus-dark.desktop
+    else
+        printf '%s\n' '[Desktop Entry]' 'Type=Application' 'Name=Lazarus (Dark)' 'Comment=Lazarus IDE, dark profile' \
+            "$LAZ_DARK_EXEC" 'Icon=lazarus' 'Terminal=false' 'Categories=Development;IDE;' \
+            > ~/.local/share/applications/lazarus-dark.desktop
+    fi
+    echo "Added Lazarus (Dark) to the ChromeOS launcher (~/.local/share/applications/lazarus-dark.desktop)."
+
+    # qt5ct, which the dark launcher turns on: Fusion with qt5ct's "darker" palette, so it looks right on first
+    # start. Key names as qt5ct reads them ([Appearance] style / custom_palette / color_scheme_path). A config
+    # you made yourself ('lazmode theme') is left alone.
+    if [ ! -f ~/.config/qt5ct/qt5ct.conf ]; then
+        mkdir -p ~/.config/qt5ct
+        printf '%s\n' '[Appearance]' 'color_scheme_path=/usr/share/qt5ct/colors/darker.conf' 'custom_palette=true' \
+            'standard_dialogs=default' 'style=Fusion' > ~/.config/qt5ct/qt5ct.conf
+        echo "Wrote ~/.config/qt5ct/qt5ct.conf (Fusion, darker palette)."
+    fi
+
+    # The four builds (2 profiles x 2 layouts), all during setup so a first start or a switch never waits on one.
+    # A profile is done when both layouts and bin/lazarus are there, link Qt5, and were built for this version.
+    LAZ_TODO=()
+    for LAZ_P in light dark; do
+        LAZ_PD="$HOME/.lazarus"; [ "$LAZ_P" = dark ] && LAZ_PD="$HOME/.lazarus-dark"
+        LAZ_OK=1
+        for LAZ_B in lazarus-floating lazarus-docked lazarus; do
+            ldd "$LAZ_PD/bin/$LAZ_B" 2> /dev/null | grep -q libQt5Pas || LAZ_OK=0
+        done
+        [ "$(cat "$LAZ_PD/bin/.lazmode-built" 2> /dev/null)" = "$LAZ_VER" ] || LAZ_OK=0
+        # A floating build that came out docked, or an install list that names the docking packages (the Oct 24
+        # hand setup; the IDE's own Install Packages), is rebuilt: lazmode takes them out of the list first.
+        if grep -qa TAnchorDockMaster "$LAZ_PD/bin/lazarus-floating" 2> /dev/null \
+            || grep -Eqi '<Item[0-9]+ +Value="(anchordock[^"]*|dockedformeditor)"' "$LAZ_PD/miscellaneousoptions.xml" 2> /dev/null; then
+            LAZ_OK=0
+        fi
+        if [ "$LAZ_OK" = 1 ]; then
+            echo "Lazarus $LAZ_P profile: Qt5 builds for $LAZ_VER already in place ($("$HOME/.local/bin/lazmode" status --profile "$LAZ_P" | sed -n 's/^  active layout *//p'))."
+        else
+            LAZ_TODO+=("$LAZ_P")
+        fi
+    done
+    if [ ${#LAZ_TODO[@]} -gt 0 ]; then
+        if pgrep -x 'lazarus|startlazarus|lazarus-ide|lazbuild' > /dev/null 2>&1; then
+            echo "NOTICE: Lazarus is running, so the Qt5 IDE builds (${LAZ_TODO[*]}) were skipped: close it and"
+            echo "        run 'lazmode rebuild', or rerun setup."
+        else
+            for LAZ_P in "${LAZ_TODO[@]}"; do
+                # A failed build does not stop the rest of setup; dev-test reports it.
+                "$HOME/.local/bin/lazmode" rebuild --profile "$LAZ_P" \
+                    || echo "NOTICE: the Lazarus $LAZ_P builds failed (assets/logs/lazarus-build-$LAZ_P-*.log); 'lazmode rebuild --profile $LAZ_P' retries."
+            done
+        fi
+    fi
+    echo "Lazarus: 'Lazarus' (light) and 'Lazarus (Dark)' in the launcher; 'lazmode status', 'lazmode dock on|off'."
 else
     echo "Skipping Lazarus 4.8. (Run with 'install-lazarus' flag to enable)"
 fi
@@ -8967,7 +9351,7 @@ echo "Cleaning up system packages..."
 sudo apt autoremove -y
 
 echo "================================================================="
-echo "Setup Version 93 complete! 🎉"
+echo "Setup Version 94 complete! 🎉"
 echo "NEXT, in this order:"
 echo "  a. source ~/.bashrc                      (or open a new terminal)"
 echo "  b. ./dev-init-chromebook.sh <flags>  applies ~/.config/dev-init/secrets.env: GitHub, Hugging Face,"

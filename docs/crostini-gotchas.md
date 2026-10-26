@@ -16,6 +16,20 @@ to see it in context; the comment above each fix usually tells the story.
 - **Android Studio's window dims while it has focus** (`install-android-native`). This happens under
   ChromeOS's Wayland, with the IDE's JetBrains runtime.
   **Fix:** `-Dawt.toolkit.name=XToolkit` in its VM options.
+- **GTK2 dialogs in Lazarus draw blank and freeze** (`install-lazarus`, v94). The SourceForge IDE is built on
+  GTK2. Under Crostini some of its modal dialogs (Run Parameters, New Project) drew blank until resized and
+  never took keyboard focus, while Tools → Options worked. Removing `gtk2-engines-pixbuf` didn't help, and
+  GTK2 theming (`gnome-themes-extra`, Adwaita-dark gtkrc) doesn't touch the cause.
+  **Fix:** setup rebuilds the IDE with `lazbuild --build-ide= --ws=qt5` (needs `libqt5pas-dev`, and a
+  user-owned `/usr/share/lazarus/<ver>/units/x86_64-linux/qt5`, or the final make step stops with "mkdir:
+  Permission denied"). Packages go in with `lazmode rebuild --add-package`: the IDE's own rebuild can fall
+  back to GTK2. `lazbuild --add-package` also saves the packages to the profile's install list
+  (`StaticAutoInstallPackages` in `miscellaneousoptions.xml`), and every later `--build-ide` builds them in,
+  so `lazmode` saves and restores that file around the docked build and takes docking entries out of a list
+  that has them. The dark look comes from qt5ct
+  (`QT_QPA_PLATFORMTHEME=qt5ct`); ChromeOS draws the title bars, so no Linux theme changes them.
+  `startlazarus` buffers its output, so `--debug-log` and `tee` logs are cut off when a hung IDE is killed
+  and don't help diagnose a hang.
 
 ## Network
 

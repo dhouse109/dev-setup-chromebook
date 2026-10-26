@@ -133,8 +133,9 @@ Proposed additions; strike any you don't want.
 
 ## Docs, housekeeping and cost
 
-**Cost:** expect roughly 10–20 extra minutes and several hundred MB over a plain Lazarus install on a
-clean machine. The first v94 disk report replaces these estimates with measured numbers.
+**Cost:** expect roughly 10–20 extra minutes over a plain Lazarus install on a clean machine. On disk,
+Lazarus with the four Qt5 IDE builds measured about 3.2 GB (dev-test disk report, Oct 25 2026), not the
+several hundred MB first estimated.
 
 **`docs/init-checklist.md`** — new Lazarus entry:
 
@@ -184,7 +185,9 @@ QT_QPA_PLATFORMTHEME=qt5ct qt5ct        # Fusion + darker palette, Apply
 - GTK2 Lazarus under Crostini: some modal dialogs (Run Parameters, New Project) drew blank until resized
   and never took keyboard focus. Tools → Options worked. Removing `gtk2-engines-pixbuf` didn't help. Qt5
   fixed it.
-- A plain `--build-ide=` rebuild drops the docking packages, which is why the IDE came back floating.
+- The first Qt5 rebuild came back floating because the profile’s install list had no docking packages.
+  `--add-package` saves them to that list (`StaticAutoInstallPackages` in `miscellaneousoptions.xml`), so
+  every later `--build-ide=` keeps them unless they’re removed (corrected after the plan; fixed in 6db15e4).
 - `startlazarus` buffers its output, so `--debug-log` and `tee` logs get cut off when Lazarus is killed.
   They're not useful for diagnosing hangs.
 - ChromeOS draws the title bars, so no Linux theme changes them.

@@ -27,7 +27,7 @@ the whole lab, as it is.
 
 All four take the same flags, so `install-web install-node` means the same thing to each of them.
 
-> **Current version: v93.** [CHANGELOG.md](CHANGELOG.md) has the full history.
+> **Current version: v94.** [CHANGELOG.md](CHANGELOG.md) has the full history.
 
 ## What it is, and what it isn't
 
@@ -92,7 +92,7 @@ pull in what they need. For example, `install-web` brings `install-node` with it
 
 | Group | Members |
 |---|---|
-| `install-editors` | `install-vscode` `install-windsurf` `install-cursor` `install-lazarus` (Lazarus / Free Pascal) |
+| `install-editors` | `install-vscode` `install-windsurf` `install-cursor` `install-lazarus` (Lazarus / Free Pascal; the IDE on Qt5 with light and dark profiles, docked or floating, switched with `lazmode`) |
 | `install-languages` | `install-rust` (with WASM) `install-node` (nvm, Node LTS, Claude Code, Codex, Gemini CLI, aider) `install-go` `install-pwsh` `install-ruby` (Jekyll) `install-cpp` `install-asm` `install-dotnet` (C#, VB.NET) `install-java` (JDK, Maven, Gradle) |
 | `install-ecosystems` | `install-antigravity` `install-media` (Flatpak, HandBrake, KDiff3) `install-gemma` (Gemma on Ollama + Gemini) `install-mobile` (Android SDK, Tauri, React Native/Expo, Flutter) `install-android-native` (Android Studio, Kotlin) `install-godot` (standard + .NET editors) |
 | `install-cloud` | `install-aws` `install-azure` `install-gcp` `install-vercel` `install-cloudflare` (wrangler) |
@@ -200,7 +200,7 @@ Read [what they change](#what-they-change-on-your-system) before you run them.
   - its password removed (`passwd -d`), on ChromeOS only, where sudo needs none
 - **Your home:**
   - marked blocks in `~/.bashrc`, rewritten in place on each run
-  - commands in `~/.local/bin` (`devsvc`, `mssql`, `oracle`, `ldap`, `lan`, the retro guests…)
+  - commands in `~/.local/bin` (`devsvc`, `mssql`, `oracle`, `ldap`, `lan`, `lazmode`, the retro guests…)
   - settings in `~/.config/dev-*`, `devsvc`, `devldap` and `devdb`
   - downloads and logs in `./assets` next to the scripts
 - **Docker:** containers and named volumes called `devdb-*`, `devsvc-*` and `devldap-*`.

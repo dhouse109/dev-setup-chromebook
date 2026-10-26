@@ -1,6 +1,6 @@
 # dev-demo: the demos and their disk footprint
 
-*Working notes kept alongside the scripts, copied at the v93 release. The "since vNN" remarks date each behaviour; [CHANGELOG.md](../CHANGELOG.md) has the full story.*
+*Working notes kept alongside the scripts, copied at the v93 release, updated for v94. The "since vNN" remarks date each behaviour; [CHANGELOG.md](../CHANGELOG.md) has the full story.*
 
 A full `dev-demo-chromebook.sh install-all` downloads about 1 GB; running every demo once adds roughly 20–25 GB, mostly outside `~/dev-demo`.
 
@@ -13,7 +13,7 @@ The download itself is about 1 GB, and Godot's demo projects are half of it. Siz
 | godot/demo-projects | 530 MB |
 | web/drupal-umami (Composer project) | \~150 MB (estimate) |
 | cpp/raylib | 146 MB |
-| lazarus/examples + pwsh/spectre-demo module | \~70 MB (estimate) |
+| lazarus/examples + pwsh/spectre-demo module (since v94 the Lazarus launcher asks light or dark when setup built the dark profile: `run-examples.sh <project> dark` skips the menu; the IDE builds themselves come from setup, not dev-demo) | \~70 MB (estimate) |
 | android-native/jetnews | 10 MB |
 | agentic/temporal-ai-agent | 7 MB |
 | rust/ratatui | 7 MB |
@@ -67,6 +67,7 @@ First launches add roughly 20–25 GB (estimated), because they build code, inst
 | testing/e2e-bakeoff's first runs: node_modules for Playwright Test, playwright-bdd, cucumber-js and Cypress; Behat's vendor; the Reqnroll project with Playwright for .NET; behave's Playwright for Python and Selenium through uv; Cypress's Electron build (v91) | `~/dev-demo/testing/e2e-bakeoff, ~/.cache/uv, ~/.nuget, ~/.cache/Cypress` | \~0.5 GB without Cypress, \~0.8 GB with it (estimate until dev-test measures it) |
 | drupal/drupal-behat's first serve: Drupal 11 + Umami + Drush + the Drupal Extension in DDEV, the database volume, and the add-on's selenium/standalone-chromium image; core-dev and web/core's node_modules only if you run core-fjs or nightwatch (v91) | `~/dev-demo/drupal/drupal-behat/site, Docker's storage` | \~300 MB + \~1.5 GB image; core-dev and Nightwatch add \~0.5 GB (estimate) |
 | vue/vue-links' first launch: Vue, Pinia, Vite, Vitest and Playwright's test runner (v91) | `~/dev-demo/vue/vue-links/node_modules` | \~135 MB (measured in the sandbox) |
+| lazarus/examples, a project's first build in the IDE: its units and binary in the copied example folder; the IDE's Qt5 builds in \~/.lazarus and \~/.lazarus-dark are setup's (install-lazarus, v94), counted in dev-test's disk report | `~/dev-demo/lazarus/examples/<project>` | a few MB per project (estimate) |
 | drupal/drupal-nuxt's first serve: Drupal 11 + Umami + Drush on SQLite, and Nuxt 4's node_modules (v91) | `~/dev-demo/drupal/drupal-nuxt` | \~250 MB Drupal (estimate) + \~210 MB node_modules (measured in the sandbox) |
 | gitlab/ci-local's pipelines: node:24 and Playwright's image for vue-links; drupal.org's PHP, database and browser images for the module's pipeline (v91) | Docker's storage, and .gitlab-ci-local/ in each project | \~3 GB for vue-links' images, several GB more for the Drupal pipeline (estimate) |
 | iac/cm-bakeoff's containers: devdemo-cm-base (debian:trixie-slim with curl and procps), then Python for Ansible, OpenVox's agent for Puppet and Cinc Client for Chef (v91) | Docker's storage | \~0.6 GB for the four images (estimate) |

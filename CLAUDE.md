@@ -104,7 +104,5 @@ Update, in the same change:
 
 ## Known open items
 
-- `dev-demo-chromebook.sh` sets `VERSION=92` while its header says 93, so demo output and
-  `.dev-demo-source` files report v92. Fix with the next bump (see the v94 plan).
-- dev-demo still names itself `dev-demo-chromebook-v$VERSION.sh` in two generated files; the repo's
-  scripts are unversioned (`dev-demo-chromebook.sh`).
+- None carried over: v94 fixed dev-demo's `VERSION=92` and its versioned self-name in generated files.
+  CI now fails when the version strings disagree (`.github/workflows/lint.yml`).

@@ -1,5 +1,5 @@
 #!/bin/bash
-# dev-demo-chromebook - Version 93
+# dev-demo-chromebook - Version 94
 # Version history: CHANGELOG.md, next to this script in the bundle
 # (one section per script, newest version first).
 #
@@ -57,7 +57,7 @@ fi
 
 # Deliberately NO 'set -e': one demo failing to download must not stop the others.
 
-VERSION=92
+VERSION=94
 
 # =================================================================
 # FLAG EXPANSION (STACK SWITCHES)  -- copied verbatim from the installer
@@ -527,7 +527,7 @@ write_run() {
         echo '#!/bin/bash'
         echo "# $STACK/$NAME: $DESC"
         echo "# Source: $SRC"
-        echo "# Written by dev-demo-chromebook-v$VERSION.sh and rewritten on every run: copy it before editing."
+        echo "# Written by dev-demo-chromebook.sh (v$VERSION) and rewritten on every run: copy it before editing."
         echo 'source "$HOME/dev-demo/.demo-env.sh" || exit 1'
         echo "DEMO_DIR=\"\$HOME/dev-demo/$STACK/$NAME\""
         echo 'cd "$DEMO_DIR" 2> /dev/null || { echo "Missing $DEMO_DIR: rerun dev-demo with the matching flag."; exit 1; }'
@@ -860,7 +860,16 @@ demo_lazarus() {
 IDE=$(command -v startlazarus || command -v lazarus-ide) || { echo "Lazarus IDE not found (install-lazarus)."; exit 1; }
 mapfile -t LPI < <(find . -maxdepth 3 -name '*.lpi' -printf '%P\n' | sort)
 demo_menu "Open which project in Lazarus? (try opengl*, grid*, chart*, db*; press F9 in the IDE to run)" "${LPI[@]}" || exit 0
-"$IDE" "$DEMO_DIR/$DEMO_CHOICE" > /dev/null 2>&1 &
+PROJECT=$DEMO_CHOICE
+# v94: setup v94 builds a dark profile too (~/.lazarus-dark, qt5ct's darker palette). A second argument
+# picks it without the menu: run-examples.sh <project> dark
+LOOK=(); PCP=()
+if [ -x "$HOME/.lazarus-dark/bin/lazarus" ]; then
+    DEMO_ARG="${2:-}"
+    demo_menu "Light or dark IDE?" "light: the Lazarus launcher's profile (~/.lazarus)" "dark: the Lazarus (Dark) launcher's profile (~/.lazarus-dark)" || exit 0
+    case "$DEMO_CHOICE" in dark:*) LOOK=(env QT_QPA_PLATFORMTHEME=qt5ct); PCP=(--pcp="$HOME/.lazarus-dark") ;; esac
+fi
+"${LOOK[@]}" "$IDE" "${PCP[@]}" "$DEMO_DIR/$PROJECT" > /dev/null 2>&1 &
 disown
 EOF
     done_demo
@@ -3754,7 +3763,7 @@ write_index() {
     {
         echo "# dev-demo"
         echo
-        echo "Hands-on demos for the Chromebook dev environment, downloaded by \`dev-demo-chromebook-v$VERSION.sh\`."
+        echo "Hands-on demos for the Chromebook dev environment, downloaded by \`dev-demo-chromebook.sh\` (v$VERSION)."
         echo "Each folder is a stack; start a demo with its \`run-*.sh\` launcher (from any terminal). Launchers"
         echo "that take a menu also accept the item as an argument, e.g. \`rust/run-ratatui.sh demo2\`; those"
         echo "that leave something running (DDEV, kind, Terraform, Ansible) take \`down\`."
