@@ -89,20 +89,22 @@ Update, in the same change:
 
 - **Plans first.** Each version is planned in `docs/plans/vNN-plan.md` before it is built. The owner
   approves plan choices; if the plan doesn't settle something, ask rather than guess.
-- **One branch per version** (`vNN`), PR into `main`. Large versions can be built in stages, one commit
-  per stage.
+- **One branch per version** (`release/vNN`), PR into `main`. Plans go in on their own branch
+  (`plan/vNN`). Never name a branch plain `vNN`: that is the release tag, and a branch with the same name
+  makes `git checkout vNN` ambiguous (it happened with v94). Large versions can be built in stages, one
+  commit per stage.
 - **Checks before every push** (CI runs the same in `.github/workflows/lint.yml`):
   - `bash -n` on each script
   - `shellcheck -S error dev-*-chromebook*.sh` (warnings are left for comments to explain)
   - no secrets (gitleaks runs in CI; `.gitleaks.toml` has the two known false positives)
 - **A version isn't done until its `dev-test` run on a Chromebook is clean** (FAIL 0; WARNs only for
   optional credentials). Until then, describe it as "built, not yet confirmed run on a Chromebook".
-- **Release:** after a clean run, merge, tag `vNN`, and publish a GitHub Release with the changelog
-  entry. Fixes found during a version's own testing can be kept in that version if the owner says so.
+- **Release:** after a clean run, merge, delete the merged branch, tag `vNN`, and publish a GitHub
+  Release with the changelog entry. Fixes found during a version's own testing can be kept in that version if the owner says so.
 - The scripts are large (setup ~9,100 lines, demo ~10,700). Make targeted edits; never regenerate a
   whole script.
 
 ## Known open items
 
-- None carried over: v94 fixed dev-demo's `VERSION=92` and its versioned self-name in generated files.
-  CI now fails when the version strings disagree (`.github/workflows/lint.yml`).
+- dev-test's qt5ct check WARNs on any palette but darker, though setup leaves your own palette alone
+  (v95 plan, item 2).
