@@ -1,6 +1,6 @@
 # dev-setup-chromebook v96 plan
 
-Oct 26, 2026 · item 1 chosen Oct 26 (all choices) · item 2 added Oct 26, back end, flag and rendering chosen Oct 26 · item 3 added and chosen Oct 26, revised Oct 26 (memory; launcher goes through `/usr/bin/devin-desktop`) · item 4 added and chosen Oct 26
+Oct 26, 2026 · item 1 chosen Oct 26 (all choices) · item 2 added Oct 26, back end, flag and rendering chosen Oct 26 · item 3 added and chosen Oct 26, revised Oct 26 (memory; launcher goes through `/usr/bin/devin-desktop`) · item 4 added and chosen Oct 26 · item 5 added and chosen Oct 26
 
 ## Scope
 
@@ -17,8 +17,10 @@ run turns up and doesn't go into v95 itself can join this plan.
    Wayland, Oct 26 2026); the later freezes were memory, documented as a Crostini gotcha.
 4. **Links from Linux open in ChromeOS's browser:** setup registers ChromeOS's browser as Linux's
    handler for web links, instead of the Linux Google Chrome the base install registers.
+5. **Lazarus and Delphi projects in VS Code, Cursor and Devin:** `lazmode vscode` writes a project's build
+   (`lazbuild`) and gdb debug setup; `delphi N vscode` writes build (`dcc32` under Wine) and run tasks.
 
-Items 1, 3 and 4 change scripts, so the bundle goes to v96: all four scripts bumped, CHANGELOG entries under all
+Items 1, 3, 4 and 5 change scripts, so the bundle goes to v96: all four scripts bumped, CHANGELOG entries under all
 four sections ("version bump only" where nothing changed). Item 2 changes dev-demo only.
 
 Each item lists the choices that were offered; the decision is marked. The build starts once "anything
@@ -431,6 +433,110 @@ opens with `--open`; `ddev launch` on a DDEV site opens in ChromeOS's browser, f
 warning and, after the CA import, without one. If `ddev launch` can't be made to work there, switch the
 build to B.
 
+## 5. Build and debug Lazarus (and build Delphi) projects in VS Code, Cursor and Devin
+
+**Asked Oct 26 2026:** whether projects meant for the Lazarus or Delphi IDE can be built, run and
+debugged from VS Code, Windsurf/Devin or Cursor, using the settings the IDEs already keep. Yes, because
+neither IDE is needed to build:
+
+- **Lazarus / Free Pascal: build, run and debug.** `lazbuild` reads the project's `.lpi` (compiler
+  options, build modes, unit paths, package dependencies), as the IDE does, plus `~/.fpc.cfg` (item 1).
+  Packages installed from the IDE live in its profile, so `lazbuild` takes the same `--pcp` as the IDE
+  (`~/.lazarus` or `~/.lazarus-dark`). Free Pascal writes DWARF, which **gdb** reads, and gdb knows
+  Pascal; the editors drive it through **Native Debug** (`webfreak.debug`). CodeLLDB also works but
+  lldb doesn't know Pascal, so values display worse. Lazarus 4's own debugger is FpDebug, so gdb isn't
+  there unless install-cpp put it there.
+- **Delphi 3–7 (Wine): build and run, no debugging.** `dcc32.exe` runs under Wine and reads the
+  project's `.dpr` plus the `.cfg` the IDE writes next to it (search paths, defines), so it builds what
+  the IDE would. Delphi writes Borland's own debug format, which gdb and lldb can't read, and Wine's
+  debugger is minimal: debugging stays in the Delphi IDE (Wine, or the real Windows guests). A Delphi
+  project converted by Lazarus (Tools → Delphi Conversion; Free Pascal's `{$mode delphi}`) becomes a
+  Lazarus project with the full build-and-debug path.
+
+| Choice: the command | |
+| --- | --- |
+| **A (chosen)** | Subcommands on the commands you already use: `lazmode vscode [dir]` and `delphi N vscode [dir]`. |
+| B | One new command, `pas-vscode [dir]`, detecting `.lpi` or `.dpr` itself. |
+
+| Choice: the extensions | |
+| --- | --- |
+| **A (chosen)** | Recommended per project: the generated `.vscode/extensions.json` lists `alefragnani.pascal` and `webfreak.debug`, so VS Code, Cursor and Devin offer to install them when the folder opens. No editor CLIs, no Devin `--profile` handling. |
+| B | Setup installs both into every installed editor, each Devin profile included. |
+
+| Choice: dev-demo | |
+| --- | --- |
+| **A (chosen)** | A new `editor` item in the Lazarus examples launcher: pick a project, generate its `.vscode`, open it in VS Code, Cursor or Devin (whichever are installed). |
+| B | Pre-generate `.vscode` in every example project when the demo installs. |
+| C | TDaemon only, as the worked example. |
+
+| Choice: Delphi | |
+| --- | --- |
+| **A (chosen)** | Included: build and run tasks (`delphi N build`, `delphi N run`), no launch configuration. |
+| B | Lazarus only. |
+
+**Setup** (under `install-lazarus`, plus `install-retro` for the Delphi part):
+
+- **gdb** joins install-lazarus's apt packages (it's only in install-cpp today).
+- **`lazmode vscode [dir] [--profile light|dark] [--force]`** (dir defaults to the current folder):
+  - Finds the project's `.lpi` (one in the folder, or asks which when there are several; `dir` may also
+    be the `.lpi` itself). The executable's path comes from the `.lpi` (`Target/Filename`, made
+    absolute against the project folder; on Linux no `.exe`).
+  - Profile: dark when `~/.lazarus-dark` exists, unless `--profile light` (you work in the dark one).
+  - Writes `.vscode/tasks.json`: a default build task, `lazbuild --pcp=<profile> [--bm=Debug] <project>.lpi`
+    (`--bm=Debug` when the `.lpi` has a build mode named Debug), with a problem matcher for Free Pascal's
+    `file(line,col) Error|Fatal|Warning|Note|Hint: message` so errors land in Problems and click through.
+    Plus a clean-build task (`-B`).
+  - Writes `.vscode/launch.json`: a Native Debug `gdb` launch of the target, `cwd` the project folder,
+    `preLaunchTask` the build task.
+  - Writes `.vscode/extensions.json` (recommendations above).
+  - **Debug info check:** if the build mode used has no debug info (`GenerateDebugInfo` false, or no
+    DWARF type), it says so and how to turn it on (Project Options → Debugging), since gdb then can't
+    stop at breakpoints. The build confirms the exact `.lpi` keys and `lazbuild`'s mode flag.
+  - Existing files are kept unless `--force` (a NOTICE names them), so your own edits survive.
+- **`delphi N build PROJECT.dpr`** (new): runs that version's `dcc32.exe` (found under the prefix's
+  `Delphi*/Bin`, as `delphi_bin` finds Delphi 1's) in the prefix, console only (no virtual desktop),
+  from the project folder so it reads the `.cfg`. Output keeps dcc32's `file(line) Error: …` form.
+- **`delphi N vscode [dir] [--force]`**: finds the `.dpr`, writes `.vscode/tasks.json` with a default
+  build task (`delphi N build`, a problem matcher for dcc32's messages, paths mapped from Wine's
+  `C:\` / `Z:\` back to Linux where dcc32 prints them) and a run task (`delphi N run <Project>.exe`,
+  the existing subcommand with its desktop and fonts), plus `extensions.json` (Pascal only). No
+  `launch.json`; the generated file says why in a comment.
+- Both write only into the project's `.vscode/`; nothing in `~`.
+
+**Test:**
+
+- Lazarus section: gdb present (check). `lazmode vscode` on a copy of a small Lazarus example in the
+  test's scratch folder writes three files that parse as JSON (check); the build task's command, run as
+  is, builds the example (check); the binary has DWARF (`.debug_info` section) and `gdb -batch -ex run`
+  runs it to exit (check).
+- Retro section (when a Delphi 3–7 prefix with `dcc32.exe` exists): `delphi N build` compiles a
+  one-line console `.dpr` and `wine` runs the result (check); otherwise SKIP.
+- `delphi N vscode` writes JSON that parses (check), when that prefix exists.
+
+**Init:** version bump only.
+
+**Demo** (`lazarus examples` launcher, choice A): a new item, `editor`: pick a project (same menu as
+now), run `lazmode vscode` on it with the light/dark choice the launcher already asks, then open the
+project folder in VS Code, Cursor or Devin (a menu of those installed; Devin through its X11 wrapper,
+item 3). The launcher's note says: F5 builds and debugs; for TDaemon, `-r` is already the argument in
+`launch.json`, and the item 1 note applies.
+
+**Docs:**
+
+- `docs/init-checklist.md`, Lazarus section: `lazmode vscode`, the extensions the editor will offer,
+  `--profile`, debug info; retro section: `delphi N build` / `delphi N vscode` and why there's no
+  debugging.
+- `docs/dev-demo.md`: the `editor` item.
+- README: one line each under install-lazarus and install-retro.
+- CHANGELOG (all four sections).
+
+**To verify on the Chromebook:** `lazmode vscode` in `~/dev-demo/lazarus/examples/TDaemon`, open the
+folder in Devin and in VS Code, accept the recommended extensions; Ctrl+Shift+B builds and an error
+introduced on purpose shows in Problems at the right line; F5 stops at a breakpoint in
+`DaemonWorkerThread` with variables readable. The dark-profile packages are found (`--pcp`). For Delphi
+(once a Delphi 3–7 is installed): `delphi 7 vscode` in a project folder, Ctrl+Shift+B builds it, the run
+task starts it in the Delphi desktop.
+
 ## Carried forward
 
 **From v95** (its own on-hardware checks, in the v95 plan): `lazmode`'s install-list handling and
@@ -470,4 +576,6 @@ go into v95 if you keep them there, otherwise here.
 - [x] Item 3, launcher (found Oct 26): every `Exec=` runs the wrapper, i.e. `/usr/bin/devin-desktop`, not the
       Electron binary
 - [x] Item 4: ChromeOS's browser for Linux links: A now, B (router) if DDEV fails
+- [x] Item 5: `lazmode vscode` and `delphi N vscode` subcommands (A); extensions recommended per project
+      (A); dev-demo `editor` launcher item (A); Delphi build + run included (A)
 - [ ] Anything else for v96
