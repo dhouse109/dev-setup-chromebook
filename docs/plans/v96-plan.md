@@ -1,6 +1,6 @@
 # dev-setup-chromebook v96 plan
 
-Oct 26, 2026 · item 1 chosen Oct 26 (all choices) · item 2 added Oct 26, back end, flag and rendering chosen Oct 26 · item 3 added and chosen Oct 26, revised Oct 26 (memory) · item 4 added and chosen Oct 26
+Oct 26, 2026 · item 1 chosen Oct 26 (all choices) · item 2 added Oct 26, back end, flag and rendering chosen Oct 26 · item 3 added and chosen Oct 26, revised Oct 26 (memory; launcher goes through `/usr/bin/devin-desktop`) · item 4 added and chosen Oct 26
 
 ## Scope
 
@@ -239,6 +239,16 @@ window terminated unexpectedly (reason: 'clean-exit', code: '0')"). Two separate
   `~/.local/share/applications` with the flag added was **not** used by the ChromeOS launcher, even after
   shutting Linux down: the icon still started it on Wayland and it crashed. A **separately named** entry
   (`devin-desktop-x11.desktop`, "Devin (X11)") worked.
+- **The launcher must go through `/usr/bin/devin-desktop`, not the Electron binary.** Later the same day,
+  with everything else settled, Devin started from the terminal stayed up (all extensions on, CodeLLDB
+  included), while the "Devin (X11)" icon crashed within 5 s every time. The difference: the stock entry
+  runs `/usr/share/devin-desktop/devin-desktop` (Electron) directly, with ChromeOS's bare environment, so
+  Devin resolves the shell environment itself by running `bash -i -l` at startup (the step that had
+  logged "Unable to resolve your shell environment in a reasonable time" that morning). The terminal's
+  `devin-desktop` is `/usr/bin/devin-desktop`, the CLI launcher script, which sets `VSCODE_CLI` so that
+  step is skipped (`resolveShellEnv(): skipped (VSCODE_CLI is set)`). Pointing the icon's `Exec` at a
+  script that runs `/usr/bin/devin-desktop --ozone-platform=x11` fixed it. Icon launches never had the
+  shell environment anyway (the resolve had timed out), so nothing is lost.
 
 **Cause 2, memory** (the freezes that came back on X11):
 
@@ -284,14 +294,18 @@ window terminated unexpectedly (reason: 'clean-exit', code: '0')"). Two separate
   source doesn't offer it yet). The existing `windsurf.list` and key stay.
 - **Launcher entry "Devin (X11)"** (chosen: A): generated from the installed
   `/usr/share/applications/devin-desktop.desktop` at every run (not a frozen copy, so vendor changes to
-  `Exec`, `Icon`, `StartupWMClass` or `MimeType` carry over): `Name=` gets " (X11)" and every `Exec=`
-  gets `--ozone-platform=x11` after the program path. Written to
-  `~/.local/share/applications/devin-desktop-x11.desktop`.
+  `Icon`, `StartupWMClass` or `MimeType` carry over): `Name=` gets " (X11)" and every `Exec=` program is
+  replaced by the terminal wrapper below, by absolute path (`$HOME/.local/bin/devin-desktop`; the launcher
+  has no `~/.local/bin` on PATH), keeping the stock arguments (`%F`, `--new-window %F`). So the icon and
+  the terminal start Devin the same way: through `/usr/bin/devin-desktop` with `--ozone-platform=x11`.
+  Written to `~/.local/share/applications/devin-desktop-x11.desktop`.
 - **Stock entry hidden** (chosen: A): `~/.local/share/applications/devin-desktop.desktop` is the stock
   file plus `NoDisplay=true`, also regenerated each run. If the launcher ignores that as it ignored the
   `Exec` change, the stock icon simply stays; the hand check below tells.
-- **URL handler:** `devin-desktop-url-handler.desktop` copied the same way with the flag. Inside Linux,
-  `xdg-open` follows the user-directory override, so a `devin://` link starts it on X11 too.
+- **URL handler:** `devin-desktop-url-handler.desktop` copied with `--ozone-platform=x11` added after its
+  stock program (it keeps the Electron binary and `--open-url %U`; going through the CLI script there is
+  untested). Inside Linux, `xdg-open` follows the user-directory override, so a `devin://` link starts it
+  on X11 too.
 - **Terminal wrapper** (chosen: A): `~/.local/bin/devin-desktop` (and `~/.local/bin/windsurf` when
   `/usr/bin/windsurf` exists) runs the system `/usr/bin/devin-desktop --ozone-platform=x11 "$@"`, by
   absolute path so it can't call itself. `~/.local/bin` is ahead of `/usr/bin` on PATH. CLI-only
@@ -306,8 +320,9 @@ window terminated unexpectedly (reason: 'clean-exit', code: '0')"). Two separate
 
 - `devin-desktop --version` (check), via the wrapper.
 - Apt source present (check, as now).
-- `devin-desktop-x11.desktop`: every `Exec=` has `--ozone-platform=x11`, its program is the stock
-  entry's program, and it has no `NoDisplay` (check).
+- `devin-desktop-x11.desktop`: every `Exec=` runs `$HOME/.local/bin/devin-desktop` (the wrapper), and
+  it has no `NoDisplay` (check). The wrapper exists, runs `/usr/bin/devin-desktop`, and passes
+  `--ozone-platform=x11` (check).
 - Stock entry overridden with `NoDisplay=true` (warn: cosmetic).
 - `command -v devin-desktop` is the wrapper, and the wrapper passes the flag (check).
 - Disk report: measure `devin-desktop` (the transitional `windsurf` package is a few KB).
@@ -336,7 +351,8 @@ No GUI launch in the test; that's the hand check.
 **To verify on the Chromebook:** on the machine fixed by hand on Oct 26, setup replaces the hand-made
 entry and the wrapper without breaking either; after a Linux restart the launcher shows **Devin (X11)**
 (and, if `NoDisplay` is honoured, not the stock icon); opened from it, `pgrep -af devin-desktop` shows
-`--ozone-platform=x11`; Login completes in ChromeOS's browser (item 4). `devin-desktop` from a terminal
+`--ozone-platform=x11`, and its parent was `/usr/bin/devin-desktop` (`VSCODE_CLI` set, no shell-environment
+timeout in the log); Login completes in ChromeOS's browser (item 4). `devin-desktop` from a terminal
 also gets the flag. Devin stays up through several launches from the icon, including one after a Linux
 restart, with ChromeOS's tabs kept light.
 
@@ -451,5 +467,7 @@ go into v95 if you keep them there, otherwise here.
 - [x] Item 3, flag name: A (keep `install-windsurf`; it installs `devin-desktop`)
 - [x] Item 3, revised Oct 26: the later freezes were memory (gotcha doc); setup installs and removes no
       Devin extensions (CodeLLDB and Gemini dropped from setup and test; CodeLLDB's profile fix in the docs)
+- [x] Item 3, launcher (found Oct 26): every `Exec=` runs the wrapper, i.e. `/usr/bin/devin-desktop`, not the
+      Electron binary
 - [x] Item 4: ChromeOS's browser for Linux links: A now, B (router) if DDEV fails
 - [ ] Anything else for v96
