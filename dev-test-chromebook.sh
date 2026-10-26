@@ -114,7 +114,7 @@ echo "Active Test Flags: $FLAGS"
 
 # 1. The "Install All" Master Switch
 if [[ "$FLAGS" =~ " install-all " ]]; then
-    FLAGS+=" install-editors install-languages install-ecosystems install-db install-db-extra install-lakehouse install-agentic install-cloud install-iac install-web install-tanstack install-k8s install-jev install-drupal install-laravel install-symfony install-graphql install-cache install-search install-vector install-mongodb install-testing install-gitlab install-vue "
+    FLAGS+=" install-editors install-languages install-ecosystems install-db install-db-extra install-lakehouse install-agentic install-cloud install-iac install-web install-tanstack install-k8s install-jev install-drupal install-laravel install-symfony install-graphql install-cache install-search install-vector install-mongodb install-testing install-gitlab install-vue install-herdr "
 fi
 
 # 2. Category Stack Switches
@@ -279,6 +279,11 @@ fi
 # all three need Node. install-bdd and install-selenium need nothing else (install-bdd adds a language's
 # piece only where that language is installed).
 if [[ "$FLAGS" =~ " install-playwright " ]] || [[ "$FLAGS" =~ " install-cypress " ]] || [[ "$FLAGS" =~ " install-robot " ]]; then
+    FLAGS+=" install-node "
+fi
+# v95: install-herdr = herdr, a terminal multiplexer for coding agents (in install-all). It pulls in install-node, so
+# install-herdr alone also brings the agents it tracks (Claude Code, Codex, Gemini CLI); install-node does not pull in herdr.
+if [[ "$FLAGS" =~ " install-herdr " ]]; then
     FLAGS+=" install-node "
 fi
 # v91: gitlab-ci-local is an npm package, and the Vue scaffolders run through npx: both need Node.
@@ -575,6 +580,18 @@ if has install-node; then
     hint  "run 'claude' once to log in"
     check "Puppeteer env vars in ~/.bashrc"                'grep -q PUPPETEER_EXECUTABLE_PATH ~/.bashrc && grep -q PUPPETEER_SKIP_DOWNLOAD ~/.bashrc'
     slow  "puppeteer installs w/o Chromium and drives system Chrome" 'mkdir pptr && cd pptr && npm init -y > /dev/null && npm install --silent --no-audit --no-fund puppeteer && [ ! -d ~/.cache/puppeteer/chrome ] ; node -e "const p=require(\"puppeteer\");(async()=>{const b=await p.launch({args:[\"--no-sandbox\"]});const pg=await b.newPage();await pg.setContent(\"<title>pptr-ok</title>\");console.log(await pg.title());await b.close();})().catch(e=>{console.error(e);process.exit(1)})" | grep -q pptr-ok' 600
+fi
+
+# v95: herdr, the terminal multiplexer for coding agents (install-herdr); its agent integrations come from dev-init.
+if has install-herdr; then
+    section "herdr (install-herdr)"
+    check "herdr is ~/.local/bin/herdr and runs"                    '[ "$(command -v herdr)" = "$HOME/.local/bin/herdr" ] && herdr --version'
+    hint  "rerun setup with install-herdr (herdr's installer, into ~/.local/bin); a herdr from Homebrew or mise stays where it is"
+    check "herdr --default-config prints a config"                  'herdr --default-config | grep -q "[a-z_]* *="'
+    for HD_T in claude codex; do
+        warn  "herdr's $HD_T integration is installed and current"  "herdr integration status | grep \"^$HD_T:\"; herdr integration status | grep -q \"^$HD_T: current\""
+        hint  "dev-init with install-herdr installs it, or 'herdr integration install $HD_T' (start $HD_T once first, so its config folder exists)"
+    done
 fi
 
 # Web tooling
@@ -5005,6 +5022,7 @@ if ! has nodisk; then
     has install-vscode   && dapt   editors "VS Code"         code
     has install-windsurf && dapt   editors "Windsurf"        windsurf
     has install-cursor   && dpaths editors "Cursor AppImage" "$HOME/.local/bin/cursor"
+    has install-herdr    && dpaths herdr "herdr (binary and config)" "$HOME/.local/bin/herdr" "$HOME/.config/herdr"
     # v94: plus the Qt5 IDE builds and their units in both profiles, the qt5 units folder setup makes in the
     # system tree, and the two Qt5 packages: the debs alone left out most of what Lazarus takes.
     if has install-lazarus; then

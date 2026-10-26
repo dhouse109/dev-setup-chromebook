@@ -66,7 +66,7 @@ echo "Active Installation Flags: $FLAGS"
 
 # 1. The "Install All" Master Switch
 if [[ "$FLAGS" =~ " install-all " ]]; then
-    FLAGS+=" install-editors install-languages install-ecosystems install-db install-db-extra install-lakehouse install-agentic install-cloud install-iac install-web install-tanstack install-k8s install-jev install-drupal install-laravel install-symfony install-graphql install-cache install-search install-vector install-mongodb install-testing install-gitlab install-vue "
+    FLAGS+=" install-editors install-languages install-ecosystems install-db install-db-extra install-lakehouse install-agentic install-cloud install-iac install-web install-tanstack install-k8s install-jev install-drupal install-laravel install-symfony install-graphql install-cache install-search install-vector install-mongodb install-testing install-gitlab install-vue install-herdr "
 fi
 
 # 2. Category Stack Switches
@@ -233,6 +233,11 @@ fi
 # all three need Node. install-bdd and install-selenium need nothing else (install-bdd adds a language's
 # piece only where that language is installed).
 if [[ "$FLAGS" =~ " install-playwright " ]] || [[ "$FLAGS" =~ " install-cypress " ]] || [[ "$FLAGS" =~ " install-robot " ]]; then
+    FLAGS+=" install-node "
+fi
+# v95: install-herdr = herdr, a terminal multiplexer for coding agents (in install-all). It pulls in install-node, so
+# install-herdr alone also brings the agents it tracks (Claude Code, Codex, Gemini CLI); install-node does not pull in herdr.
+if [[ "$FLAGS" =~ " install-herdr " ]]; then
     FLAGS+=" install-node "
 fi
 # v91: gitlab-ci-local is an npm package, and the Vue scaffolders run through npx: both need Node.
@@ -9252,6 +9257,46 @@ else
 fi
 
 # =================================================================
+# =================================================================
+# install-herdr (added in v95): herdr (github.com/herdrdev/herdr, Apache-2.0), a terminal multiplexer for coding
+# agents: tmux-style workspaces and panes, each agent's state (working, blocked, idle) and the layout restored after a
+# server restart. One Rust binary, no Node. Installed with its own installer, the install 'herdr update' knows how to
+# update (Homebrew, mise and Nix installs update through those instead): saved to assets/downloads and run with sh,
+# not piped from curl. It reads https://herdr.dev/latest.json, checks the binary's SHA-256 from that manifest and
+# installs to HERDR_INSTALL_DIR, here ~/.local/bin (already on PATH). An installed herdr is left alone: it updates
+# itself ('herdr update'). No config is written (~/.config/herdr/config.toml stays herdr's defaults until you change
+# it), and its agent integrations are config, so dev-init installs them. tmux (base) is the general multiplexer.
+# =================================================================
+if [[ "$FLAGS" =~ " install-herdr " ]]; then
+    echo "================================================================="
+    echo "Installing herdr..."
+    echo "================================================================="
+    if command -v herdr > /dev/null 2>&1; then
+        echo "herdr is already installed ($(herdr --version 2> /dev/null | head -n 1), $(command -v herdr)): left alone; 'herdr update' updates it."
+    else
+        HERDR_INSTALLER="$ASSETS/downloads/herdr-install.sh"
+        if curl -fsSL --retry 3 -o "$HERDR_INSTALLER" https://herdr.dev/install.sh \
+            && head -n 1 "$HERDR_INSTALLER" | grep -q '^#!'; then
+            # Not fatal under set -e: a failed herdr install should not stop the rest of setup. No terminal for
+            # it to ask on, so a question would fail instead of waiting.
+            if HERDR_INSTALL_DIR="$HOME/.local/bin" sh "$HERDR_INSTALLER" < /dev/null \
+                && "$HOME/.local/bin/herdr" --version > /dev/null 2>&1; then
+                echo "herdr installed: $("$HOME/.local/bin/herdr" --version 2> /dev/null | head -n 1) in ~/.local/bin. Start it with 'herdr'; dev-init installs its agent integrations."
+                rm -f "$HERDR_INSTALLER"
+            else
+                echo "NOTICE: herdr's installer failed (kept as assets/downloads/herdr-install.sh); rerun setup with install-herdr."
+                DL_FAILED+=("herdr (install-herdr)")
+            fi
+        else
+            echo "NOTICE: could not download herdr's installer from https://herdr.dev/install.sh; rerun setup with install-herdr."
+            rm -f "$HERDR_INSTALLER"
+            DL_FAILED+=("herdr (install-herdr)")
+        fi
+    fi
+else
+    echo "Skipping herdr. (Run with 'install-herdr')"
+fi
+
 # install-hermes / install-openclaw : personal agents (added in v86). Both opt-in, in no group,
 # NOT in install-all. A personal agent is a long-running assistant with memory, skills and a gateway
 # you can message from Telegram, Discord, Slack and others; it is not a coding agent (Claude Code,

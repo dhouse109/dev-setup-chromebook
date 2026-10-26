@@ -81,6 +81,7 @@ The same expansion is used by all three scripts, so a flag set that installs is 
 | `install-gitlab` | glab, GitLab's CLI, from Homebrew (like gh; Debian's own glab is years behind) with bash completion, and gitlab-ci-local (npm) to run a project's .gitlab-ci.yml here, jobs with an image in Docker; plus rsync and git. Logins come from init. Pulls in install-node. In install-all (v91) |
 | `install-gitlab-runner` | GitLab Runner from GitLab's apt repository as the gitlab-runner service, its user in the docker group for the Docker executor; left unregistered until init registers it with GITLAB\_RUNNER\_TOKEN\_ONCE. Pulls in install-gitlab. Opt-in, in no group (v91) |
 | `install-vue` | Vue.js scaffolding warmed for offline use: create-vue and create-nuxt in npx's cache and Nuxt's minimal template in \~/.cache/giget. Nothing global: Vue, Pinia, Vue Router and Nuxt stay per project. Pulls in install-node. In install-all (v91) |
+| `install-herdr` | herdr, a terminal multiplexer for coding agents (github.com/herdrdev/herdr, Apache-2.0): workspaces and panes like tmux, each agent's state (working, blocked, idle), and the layout restored after a restart. Its own installer (saved to assets/downloads, run with sh; it checks the binary's SHA-256 from herdr's manifest) puts `herdr` in \~/.local/bin; an installed herdr is left alone (`herdr update` updates it). Pulls in install-node. In install-all (v95) |
 | `install-puppet` | OpenVox, Vox Pupuli's free fork of Puppet: openvox-agent (puppet, facter) and OpenBolt (bolt) from apt.voxpupuli.org, in /opt/puppetlabs/bin at the end of PATH. OpenVox 8; OPENVOX\_MAJOR=9 picks the next line. Masterless: the agent service is disabled. Opt-in, in no group, not in install-all (v91) |
 | `install-chef` | Cinc Workstation, the free build of Chef Workstation (cinc-client, knife, Test Kitchen with Dokken, Cookstyle, ChefSpec, Berkshelf, cinc-auditor), its .deb checked against Cinc's SHA-256, in /opt/cinc-workstation/bin at the end of PATH. No license key. Opt-in, in no group, not in install-all (v91) |
 | `install-config-mgmt` | Group: install-puppet + install-chef. Ansible stays in install-iac. Opt-in, not in install-all (v91) |
@@ -147,7 +148,7 @@ Setup installs Lazarus from the SourceForge debs, then rebuilds the IDE on Qt5: 
 
 ### tmux and herdr (v95)
 
-tmux is in the base packages since v95: no `~/.tmux.conf` is written and nothing starts it from `~/.bashrc`. Use it for long jobs you detach from, SSH sessions to the other laptops over Tailscale that should survive a dropped connection, and scripts. herdr (`install-herdr`) is the multiplexer for coding agents.
+tmux is in the base packages since v95: no `~/.tmux.conf` is written and nothing starts it from `~/.bashrc`. Use it for long jobs you detach from, SSH sessions to the other laptops over Tailscale that should survive a dropped connection, and scripts. herdr (`install-herdr`, in install-all) is the multiplexer for coding agents: start it with `herdr` where the work lives, run agents in its panes, `Ctrl+B q` detaches and `herdr` reattaches. Its server keeps running in the background after the terminal closes.
 
 - **Both use Ctrl+B as their prefix.** herdr inside tmux works: there, Ctrl+B Ctrl+B passes a Ctrl+B through to herdr (tmux's default `send-prefix`). Or change one of the two prefixes.
 - **A shell that starts tmux by itself** makes herdr see `tmux` instead of the agent in a pane. If you add such a rule to `~/.bashrc`, skip it inside herdr, which sets `HERDR_ENV=1` in its panes:
@@ -406,6 +407,10 @@ Nothing to log in to: Playwright, Selenium, the Gherkin runners, Robot Framework
 ### GitLab (install-gitlab, install-gitlab-runner)
 
 Optional: glab and gitlab-ci-local work without an account, and a missing token is a skip. With `GITLAB_TOKEN_ONCE`, init logs glab in to gitlab.com (`glab auth login --stdin`, SSH as the git protocol) and uploads `~/.ssh/id_ed25519.pub`; with `DRUPALCODE_TOKEN_ONCE`, it adds git.drupalcode.org as a second host. An existing login is kept; a rejected token is a to-do. `GITLAB_RUNNER_TOKEN_ONCE` registers the runner once (`gitlab-runner register --non-interactive`, Docker executor), after which init reports it as registered. `GITLAB_MCP=1` adds GitLab's MCP server (`https://gitlab.com/api/v4/mcp`) to Claude Code; its OAuth login comes on first use. GitLab itself is not installed: it needs 8 GB of RAM, more than the Linux container gets.
+
+### herdr (install-herdr, v95)
+
+No account and no key. Init installs herdr's integration for each supported agent on PATH (`claude`, `codex`; also `hermes`, Antigravity's `agy` and `cursor-agent` when installed) with `herdr integration install <agent>`, when `herdr integration status` doesn't show it as current. The integration is a hook in the agent's own config: for Claude Code, `~/.claude/hooks/herdr-agent-state.sh` and hook entries in `~/.claude/settings.json`. An agent's config folder appears on its first run, so until you have started it once that integration is a skip ("start claude once, then rerun init"), not a to-do. herdr's own settings stay its defaults (`~/.config/herdr/config.toml` once you change one); `herdr --default-config` prints them. Gemini CLI and aider are not on herdr's integration list: they run in herdr panes, without state tracking or session restore. See tmux and herdr under Running setup for the shared Ctrl+B prefix.
 
 ### Puppet and Chef (install-puppet, install-chef)
 

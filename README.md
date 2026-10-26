@@ -121,6 +121,7 @@ pull in what they need. For example, `install-web` brings `install-node` with it
 | `install-mongodb` | MongoDB 8, mongosh, Compass |
 | `install-gitlab` | glab, gitlab-ci-local |
 | `install-vue` | Vue and Nuxt tooling |
+| `install-herdr` | herdr, a terminal multiplexer for coding agents (pulls in `install-node`) |
 
 The shared services (Redis, Solr, MongoDB and the rest) run in Docker on 127.0.0.1 behind one command,
 `devsvc`. Only Redis and Memcached start with Linux. Everything else waits for `devsvc up NAME`, and the
@@ -200,7 +201,7 @@ Read [what they change](#what-they-change-on-your-system) before you run them.
   - its password removed (`passwd -d`), on ChromeOS only, where sudo needs none
 - **Your home:**
   - marked blocks in `~/.bashrc`, rewritten in place on each run
-  - commands in `~/.local/bin` (`devsvc`, `mssql`, `oracle`, `ldap`, `lan`, `lazmode`, the retro guests…)
+  - commands in `~/.local/bin` (`devsvc`, `mssql`, `oracle`, `ldap`, `lan`, `lazmode`, `herdr`, the retro guests…)
   - settings in `~/.config/dev-*`, `devsvc`, `devldap` and `devdb`
   - downloads and logs in `./assets` next to the scripts
 - **Docker:** containers and named volumes called `devdb-*`, `devsvc-*` and `devldap-*`.
