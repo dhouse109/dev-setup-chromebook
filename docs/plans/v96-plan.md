@@ -1,6 +1,6 @@
 # dev-setup-chromebook v96 plan
 
-Oct 26, 2026 · item 1 chosen Oct 26 · item 2 added Oct 26
+Oct 26, 2026 · item 1 chosen Oct 26 · item 2 added Oct 26, back end and flag chosen Oct 26
 
 ## Scope
 
@@ -169,18 +169,21 @@ from the same JSON:API, rendered two ways.
 
 | Choice: where the Drupal back end comes from | |
 | --- | --- |
-| **A (recommended)** | One shared site. Umami moves to `drupal/umami-headless` (PHP's built-in server + SQLite, :8891) with a small launcher of its own (`up`, `stop`, `reset`), and both drupal-nuxt and drupal-astro use it. An existing `drupal-nuxt/drupal` is moved there on the first run, not reinstalled. The comparison is on literally the same content, and the second copy's \~250 MB isn't spent. drupal-nuxt's launcher changes to call it. |
+| **A (chosen)** | One shared site. Umami moves to `drupal/umami-headless` (PHP's built-in server + SQLite, :8891) with a small launcher of its own (`up`, `stop`, `reset`), and both drupal-nuxt and drupal-astro use it. An existing `drupal-nuxt/drupal` is moved there on the first run, not reinstalled. The comparison is on literally the same content, and the second copy's \~250 MB isn't spent. drupal-nuxt's launcher changes to call it. |
 | B | Its own site: drupal-astro installs a second Umami on :8892. Self-contained, drupal-nuxt untouched, but \~250 MB more and the two sites' content can drift, so `compare` edits one site only. |
 
 | Choice: which flag brings the demo | |
 | --- | --- |
-| **A (recommended)** | `install-web` (Composer, Drupal's PHP extensions; in install-all), next to the `demo_web` and `demo_drupal` demos. Astro has nothing to do with Vue. |
+| **A (chosen)** | `install-web` (Composer, Drupal's PHP extensions; in install-all), next to the `demo_web` and `demo_drupal` demos. Astro has nothing to do with Vue. |
 | B | `install-vue`, next to drupal-nuxt, so the pair always arrive together. |
 
 | Choice: rendering modes shown | |
 | --- | --- |
 | **A (recommended)** | Static only, Astro's default, which is what sets it apart from Nuxt here. |
 | B | Static plus one page rendered on demand (the `@astrojs/node` adapter and a live content collection), to show Astro can do both. Adds an adapter and a server process. |
+| C | Static pages plus one **server island** (`server:defer`, same `@astrojs/node` adapter): the recipe pages stay static, and one small part of them ("latest from Drupal", read live) renders on the server when the page loads. Shows Astro's own per-component mix, which drupal-nuxt can't. |
+
+Under B or C: `build` produces a static part (`dist/client`) and a Node server (`dist/server`), and `build` runs that server on :4322 instead of `astro preview`. `deploy` ships only the static part, since the live part would need Drupal reachable from Cloudflare; the deployed site shows the static fallback where the live part would be. The launcher says so.
 
 **Docs:**
 
@@ -223,7 +226,7 @@ go into v95 if you keep them there, otherwise here.
 - [ ] Item 1, off switch: A (none) or B (`FPC_USE_CTHREADS=0`)
 - [ ] Item 1, demo: A (TDaemon note) or B (no change)
 - [x] Item 2: an Astro + Drupal demo (dev-demo only; no setup flag for Astro)
-- [ ] Item 2, back end: A (shared `drupal/umami-headless`) or B (its own site on :8892)
-- [ ] Item 2, flag: A (`install-web`) or B (`install-vue`)
-- [ ] Item 2, rendering: A (static only) or B (static plus one on-demand page)
+- [x] Item 2, back end: A (shared `drupal/umami-headless`)
+- [x] Item 2, flag: A (`install-web`)
+- [ ] Item 2, rendering: A (static only), B (static plus one on-demand page) or C (static plus a server island)
 - [ ] Anything else for v96
