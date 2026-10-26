@@ -453,6 +453,13 @@ neither IDE is needed to build:
   project converted by Lazarus (Tools → Delphi Conversion; Free Pascal's `{$mode delphi}`) becomes a
   Lazarus project with the full build-and-debug path.
 
+**Confirmed by hand Oct 26** (before any v96 code), in Devin on TDaemon with hand-written `tasks.json` and
+`launch.json`: gdb wasn't installed (no install-cpp on that machine; `apt install gdb` brought gdb 16.3),
+Devin offered Native Debug from Open VSX on the first F5, `lazbuild` built the Debug mode into
+`x86_64-linux/Debug/TestDaemon`, and gdb stopped at a breakpoint in `daemonworkerthread.pas` on the worker
+thread, switching between threads. The Debug Console takes gdb commands (`p <expr>`), not bare variable
+names: typing `FDaemonWorkerThread` there gives "Undefined command".
+
 | Choice: the command | |
 | --- | --- |
 | **A (chosen)** | Subcommands on the commands you already use: `lazmode vscode [dir]` and `delphi N vscode [dir]`. |
