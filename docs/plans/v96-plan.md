@@ -1,6 +1,6 @@
 # dev-setup-chromebook v96 plan
 
-Oct 26, 2026 · item 1 chosen Oct 26 · item 2 added Oct 26, back end, flag and rendering chosen Oct 26
+Oct 26, 2026 · item 1 chosen Oct 26 (all choices) · item 2 added Oct 26, back end, flag and rendering chosen Oct 26
 
 ## Scope
 
@@ -84,7 +84,7 @@ Pascal default, not a Crostini difference: the same project fails the same way o
 
 | Choice: a way to turn it off | |
 | --- | --- |
-| **A (recommended)** | None. A define that only switches `CThreads` on in programs that ask for it costs nothing. Deleting the block by hand lasts until the next setup run. |
+| **A (chosen)** | None. A define that only switches `CThreads` on in programs that ask for it costs nothing. Deleting the block by hand lasts until the next setup run. |
 | B | `FPC_USE_CTHREADS=0` in secrets.env: setup removes the block instead of writing it. |
 
 **Test** (Lazarus section, next to "fpc compiles and runs a program"):
@@ -100,7 +100,7 @@ Pascal default, not a Crostini difference: the same project fails the same way o
 
 | Choice | What changes |
 | --- | --- |
-| **A (recommended)** | A note in the launcher's output and in `docs/dev-demo.md` for TDaemon: it needs `sudo` for `-i` and `-u`, `-i` writes a systemd unit that runs the binary from its build folder (so rebuild before `systemctl start`), how to watch its daily log, and how to remove it (`systemctl stop`, then `sudo ./TestDaemon -u`). |
+| **A (chosen)** | A note in the launcher's output and in `docs/dev-demo.md` for TDaemon: it needs `sudo` for `-i` and `-u`, `-i` writes a systemd unit that runs the binary from its build folder (so rebuild before `systemctl start`), how to watch its daily log, and how to remove it (`systemctl stop`, then `sudo ./TestDaemon -u`). |
 | B | No demo change. |
 
 **Docs:**
@@ -235,8 +235,8 @@ go into v95 if you keep them there, otherwise here.
 ## Choices to make
 
 - [x] Item 1: C (`-dUseCThreads` in `~/.fpc.cfg`, written by setup under install-lazarus)
-- [ ] Item 1, off switch: A (none) or B (`FPC_USE_CTHREADS=0`)
-- [ ] Item 1, demo: A (TDaemon note) or B (no change)
+- [x] Item 1, off switch: A (none)
+- [x] Item 1, demo: A (TDaemon note in the launcher and `docs/dev-demo.md`)
 - [x] Item 2: an Astro + Drupal demo (dev-demo only; no setup flag for Astro)
 - [x] Item 2, back end: A (shared `drupal/umami-headless`)
 - [x] Item 2, flag: A (`install-web`)
