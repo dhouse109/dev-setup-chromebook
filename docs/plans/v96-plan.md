@@ -474,10 +474,31 @@ things don't: expanding a string in Variables or Watch ("A syntax error in expre
 `<unknown>` (Free Pascal doesn't describe file records for gdb). `set language c` didn't help (C-syntax
 expressions still failed), so the generated `launch.json` gets no `autorun`. The generated files and the
 checklist say so plainly: use the editor to build, run, step and print with `p`; open the project in the
-Lazarus IDE (FpDebug) to inspect records, objects and file variables. A DAP adapter for FpDebug existed as
-an experiment (`CNOC.fpdebug` with Joost van der Sluis's fpdserver, May 2020, on Microsoft's marketplace);
-whether it is maintained or on Open VSX is unchecked, so it isn't in this item. And Self appears to gdb as
+Lazarus IDE (FpDebug) to inspect records, objects and file variables. And Self appears to gdb as
 `this` (`Execute (this=0x…)`), so fields are watched as `this.<Field>` from a method's frame.
+
+**FpDebug in VS Code** (same day): **Free Pascal (fpc) Debugger**, `CNOC.fpdebug` (Joost van der Sluis's
+FPDServer, a Debug Adapter Protocol server around Lazarus's FpDebug, embedded for 64-bit Linux; ~76,600
+installs; Microsoft's marketplace only, not found on Open VSX, and Microsoft's terms keep its extensions to
+Microsoft's editors, so VS Code only). It needs DWARF 3 (`-gw3`) and doesn't build. With TDaemon's Debug
+mode back on `-gw3` and a clean `lazbuild -B`, launched with `"type": "fpDebug"`, `program`
+`${workspaceFolder}/x86_64-linux/Debug/TestDaemon`, `parameters` `["-r"]`, `preLaunchTask` the
+lazbuild task: it stopped at the breakpoint in `LogToFile` on the worker thread, listed all three threads,
+showed Arguments and Locals separately with their real case, and **showed strings as text**
+(`aMessage = 'Daemon worker thread running'`, `LogFilePath = '/home/…'`). Watches use Pascal (`Self`, not
+`this`). `f: Text` stays `Unknown type`, and casts to `TextRec`, `TTextRec` or `PLongInt` say "Identifier
+not found": those types are in the RTL, which ships without debug info. Workaround for your own code:
+`fView: TextRec absolute f;` beside `f` puts `TextRec`'s layout into the unit's debug info, and a `fView`
+watch then expands (Name, Mode, Handle); in the checklist as a tip, not generated.
+
+So the two debuggers want opposite debug info: FpDebug needs DWARF 3, gdb reads strings only with DWARF 2
+with sets, and a build mode has one type.
+
+| Choice: two debuggers, one project | |
+| --- | --- |
+| **B (chosen)** | `lazmode vscode` adds a second build mode, **Debug-gdb**, to the `.lpi`: a copy of Debug set to Dwarf 2 with sets. VS Code builds Debug and debugs it with FpDebug; Devin and Cursor build Debug-gdb and debug it with gdb. Each editor gets its best debugger; the project file gains one build mode (visible, and removable, in Lazarus). |
+| A | DWARF 3 everywhere, both launch configurations, no `.lpi` change; gdb in Devin/Cursor then reads strings only through console commands (`x/s *(char**)&NAME`). |
+| C | Dwarf 2 with sets everywhere, gdb only; FpDebug left out. |
 
 | Choice: the command | |
 | --- | --- |
@@ -486,7 +507,7 @@ whether it is maintained or on Open VSX is unchecked, so it isn't in this item. 
 
 | Choice: the extensions | |
 | --- | --- |
-| **A (chosen)** | Recommended per project: the generated `.vscode/extensions.json` lists `alefragnani.pascal` and `webfreak.debug`, so VS Code, Cursor and Devin offer to install them when the folder opens. No editor CLIs, no Devin `--profile` handling. |
+| **A (chosen)** | Recommended per project: the generated `.vscode/extensions.json` lists `alefragnani.pascal`, `webfreak.debug` and `CNOC.fpdebug`, so each editor offers what its store has when the folder opens (VS Code all three; Devin and Cursor won't find `CNOC.fpdebug` on Open VSX, which is expected). No editor CLIs, no Devin `--profile` handling. |
 | B | Setup installs both into every installed editor, each Devin profile included. |
 
 | Choice: dev-demo | |
@@ -513,19 +534,28 @@ whether it is maintained or on Open VSX is unchecked, so it isn't in this item. 
     --get-expand-text='$(TargetFile)' <project>.lpi`; if that option isn't there, one build and the path
     from its `Linking <path>` line. The build confirms which works with Lazarus 4.8.
   - Profile: dark when `~/.lazarus-dark` exists, unless `--profile light` (you work in the dark one).
-  - Writes `.vscode/tasks.json`: a default build task, `lazbuild --pcp=<profile> [--bm=Debug] <project>.lpi`
-    (`--bm=Debug` when the `.lpi` has a build mode named Debug), with a problem matcher for Free Pascal's
-    `file(line,col) Error|Fatal|Warning|Note|Hint: message` so errors land in Problems and click through.
-    Plus a clean-build task (`-B`).
-  - Writes `.vscode/launch.json`: a Native Debug `gdb` launch of the target, `cwd` the project folder,
-    `preLaunchTask` the build task.
+  - **Adds the Debug-gdb build mode** (choice B) to the `.lpi`, unless one by that name exists: a copy
+    of the Debug mode (or, with no Debug mode, of the default one with debug info turned on) whose debug
+    info type is Dwarf 2 with sets (`-gw2 -godwarfsets`). The `.lpi` is XML; the edit is done with python3
+    on a parsed copy, the original kept as `<project>.lpi.bak` the first time, and the result checked by
+    `lazbuild --bm=Debug-gdb` before it replaces the original. Nothing else in the `.lpi` changes. If the
+    Debug mode itself isn't on DWARF 3, it says that FpDebug needs `-gw3` and how to set it; it doesn't
+    change Debug. If either mode has no debug info at all (`GenerateDebugInfo` false), it says so (gdb
+    and FpDebug then can't stop at breakpoints). The build confirms the exact `.lpi` keys.
+  - The target path is asked of `lazbuild` once per mode (above), since a project's output path usually
+    includes `$(BuildModeName)` (TDaemon's does), so the two builds don't overwrite each other. A project
+    whose path doesn't vary by mode gets a NOTICE: the two builds then share one file, and each launch's
+    build step rebuilds it for its debugger.
+  - Writes `.vscode/tasks.json`: `lazbuild (Debug)` (the default build task, Ctrl+Shift+B) and
+    `lazbuild (Debug-gdb)`, each `lazbuild --pcp=<profile> --bm=<mode> <project>.lpi`, plus a clean
+    (`-B`) variant of each, all with a problem matcher for Free Pascal's
+    `file(line,col) Error|Fatal|Warning|Note|Hint: message`, so errors land in Problems and click through.
+  - Writes `.vscode/launch.json` with two configurations: `<project> (FpDebug)`, `"type": "fpDebug"`,
+    `program` the Debug target, `workingdirectory` the project folder, `preLaunchTask` `lazbuild (Debug)`
+    (for VS Code), and `<project> (gdb)`, Native Debug `"type": "gdb"`, `target` the Debug-gdb target,
+    `cwd` the project folder, `preLaunchTask` `lazbuild (Debug-gdb)` (for Devin and Cursor). No `autorun`.
+    Each configuration's name says which editor it's for.
   - Writes `.vscode/extensions.json` (recommendations above).
-  - **Debug info check:** if the build mode used has no debug info (`GenerateDebugInfo` false), it says
-    so and how to turn it on (Project Options → Compiler Options → Debugging), since gdb then can't stop
-    at breakpoints. If the type is DWARF 3 (`-gw3`), it says that gdb will show strings and some types
-    as `<unknown>` (Oct 26) and how to switch to Dwarf 2 with sets (`-gw2 -godwarfsets`); it doesn't
-    edit the `.lpi`. The build confirms
-    the exact `.lpi` keys and `lazbuild`'s mode flag.
   - Existing files are kept unless `--force` (a NOTICE names them), so your own edits survive.
 - **`delphi N build PROJECT.dpr`** (new): runs that version's `dcc32.exe` (found under the prefix's
   `Delphi*/Bin`, as `delphi_bin` finds Delphi 1's) in the prefix, console only (no virtual desktop),
@@ -540,9 +570,12 @@ whether it is maintained or on Open VSX is unchecked, so it isn't in this item. 
 **Test:**
 
 - Lazarus section: gdb present (check). `lazmode vscode` on a copy of a small Lazarus example in the
-  test's scratch folder writes three files that parse as JSON (check); the build task's command, run as
-  is, builds the example (check); the binary has DWARF (`.debug_info` section) and `gdb -batch -ex run`
-  runs it to exit (check).
+  test's scratch folder adds the Debug-gdb mode (its `.lpi` parses and `lazbuild --bm=Debug-gdb` builds,
+  check), and writes three files that parse as JSON, `launch.json` holding one `fpDebug` and one `gdb`
+  configuration (check); both build tasks' commands, run as written, build (check); the Debug binary
+  (or its `.dbg`) has DWARF version 3 and the Debug-gdb one version 2 (`readelf --debug-dump=info`,
+  check); `gdb -batch -ex run` runs the Debug-gdb binary to exit (check). FpDebug isn't run in the test
+  (it needs VS Code).
 - Retro section (when a Delphi 3–7 prefix with `dcc32.exe` exists): `delphi N build` compiles a
   one-line console `.dpr` and `wine` runs the result (check); otherwise SKIP.
 - `delphi N vscode` writes JSON that parses (check), when that prefix exists.
@@ -557,8 +590,10 @@ item 3). The launcher's note says: F5 builds and debugs; for TDaemon, `-r` is al
 
 **Docs:**
 
-- `docs/init-checklist.md`, Lazarus section: `lazmode vscode`, the extensions the editor will offer,
-  `--profile`, debug info; retro section: `delphi N build` / `delphi N vscode` and why there's no
+- `docs/init-checklist.md`, Lazarus section: `lazmode vscode`, the Debug-gdb mode it adds and why,
+  which configuration to pick in which editor, the extensions each editor will offer, `--profile`; what
+  each debugger shows (FpDebug: strings and objects in Variables, `Self`; gdb: stepping, `p NAME` in the
+  Debug Console with names in capitals); the `fView: TextRec absolute f;` tip for file variables; retro section: `delphi N build` / `delphi N vscode` and why there's no
   debugging.
 - `docs/dev-demo.md`: the `editor` item.
 - README: one line each under install-lazarus and install-retro.
@@ -568,7 +603,10 @@ item 3). The launcher's note says: F5 builds and debugs; for TDaemon, `-r` is al
 folder in Devin and in VS Code, accept the recommended extensions; Ctrl+Shift+B builds and an error
 introduced on purpose shows in Problems at the right line; F5 stops at a breakpoint in
 `DaemonWorkerThread` with variables readable, the target being `x86_64-linux/Debug/TestDaemon`. In Devin,
-the editor offers Native Debug (`webfreak.debug`, on Open VSX) when F5 first meets the `gdb` type. The dark-profile packages are found (`--pcp`). For Delphi
+the editor offers Native Debug (`webfreak.debug`, on Open VSX) when F5 first meets the `gdb` type, and the
+`(gdb)` configuration builds Debug-gdb. In VS Code, the `(FpDebug)` configuration stops at the same breakpoint
+with strings readable in Variables. The `.lpi` change shows in Lazarus as a Debug-gdb build mode, and the
+project still builds and debugs in the Lazarus IDE. The dark-profile packages are found (`--pcp`). For Delphi
 (once a Delphi 3–7 is installed): `delphi 7 vscode` in a project folder, Ctrl+Shift+B builds it, the run
 task starts it in the Delphi desktop.
 
@@ -613,4 +651,6 @@ go into v95 if you keep them there, otherwise here.
 - [x] Item 4: ChromeOS's browser for Linux links: A now, B (router) if DDEV fails
 - [x] Item 5: `lazmode vscode` and `delphi N vscode` subcommands (A); extensions recommended per project
       (A); dev-demo `editor` launcher item (A); Delphi build + run included (A)
+- [x] Item 5, two debuggers: B (a Debug-gdb build mode on Dwarf 2 with sets for gdb; Debug on DWARF 3 for
+      VS Code's FpDebug, `CNOC.fpdebug`)
 - [ ] Anything else for v96
