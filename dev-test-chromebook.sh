@@ -626,6 +626,27 @@ check "devmem: Memory, Where, Top programs and Verdict"     'bash devmem_check.s
 hint  "rerun setup (any flags): v96 writes ~/.local/bin/devmem"
 check "devmem --brief prints a few lines"                  'bash devmem_check.sh brief'
 check "devmem: 'taken back by ChromeOS' is between 0 and the total" 'bash devmem_check.sh taken'
+# v96: DDEV's router on 8080/8443, since ChromeOS passes high ports to Linux but not 80 and 443 (Oct 26 2026:
+# ERR_CONNECTION_REFUSED on https://ddev-test.ddev.site, fine on :8443). Setup sets them unless you set others:
+# missing (or DDEV's own 80/443, which it writes into the file on every save) is a FAIL, ports of your own a WARN.
+if [ "$DEV_ON_CHROMEOS" = 1 ]; then
+    DDEV_HP=$(sed -n 's/^router_http_port:[[:space:]]*"\{0,1\}\([0-9]*\)"\{0,1\}.*/\1/p' ~/.ddev/global_config.yaml 2> /dev/null | head -n 1)
+    DDEV_SP=$(sed -n 's/^router_https_port:[[:space:]]*"\{0,1\}\([0-9]*\)"\{0,1\}.*/\1/p' ~/.ddev/global_config.yaml 2> /dev/null | head -n 1)
+    if [ "${DDEV_HP:-80}" = 80 ] && [ "${DDEV_SP:-443}" = 443 ]; then
+        check "DDEV's router on 8080/8443 (ChromeOS passes no 80/443)" "echo \"router_http_port ${DDEV_HP:-unset}, router_https_port ${DDEV_SP:-unset} in ~/.ddev/global_config.yaml\"; exit 1"
+        hint  "rerun setup (any flags; v96 runs 'ddev config global --router-http-port=8080 --router-https-port=8443'), then 'ddev poweroff'"
+    else
+        warn  "DDEV's router on 8080/8443 (ChromeOS passes no 80/443)" "echo \"router ports $DDEV_HP/$DDEV_SP\"; [ \"$DDEV_HP\" = 8080 ] && [ \"$DDEV_SP\" = 8443 ]"
+        hint  "ports you set yourself: sites are https://<site>.ddev.site:$DDEV_SP; ChromeOS's browser can't reach 80 or 443 in Linux"
+    fi
+fi
+# v96: links from Linux open in ChromeOS's browser (Oct 26 2026: Linux Google Chrome had registered itself, and
+# Devin's sign-in opened there, inside the VM's memory). A WARN, since the handler is yours to change. No live open:
+# it would open browser tabs.
+if [ -f /usr/share/applications/garcon_host_browser.desktop ]; then
+    warn  "web links open in ChromeOS's browser (xdg-mime)"  'r=0; for t in x-scheme-handler/https x-scheme-handler/http text/html; do d=$(xdg-mime query default "$t" 2> /dev/null); echo "$t: ${d:-none}"; [ "$d" = garcon_host_browser.desktop ] || r=1; done; exit $r'
+    hint  "Linux Chrome may have taken them back (its \"make Chrome your default browser\" prompt): rerun setup, or xdg-mime default garcon_host_browser.desktop x-scheme-handler/https x-scheme-handler/http text/html"
+fi
 
 # =================================================================
 # CONDITIONAL SECTIONS (same order as the installer)

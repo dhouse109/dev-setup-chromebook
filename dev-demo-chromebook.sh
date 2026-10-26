@@ -355,6 +355,14 @@ demo_open() {
         xdg-open "$1" > /dev/null 2>&1 &
     fi
 }
+# v96: demo_ddev_https_port: ":PORT" when DDEV's router does not serve https on 443 (setup v96 moves it to 8443 on
+# ChromeOS, which passes no 80/443 to Linux), else nothing. For the https://<site>.ddev.site links demos print.
+demo_ddev_https_port() {
+    local v
+    v=$(sed -n 's/^router_https_port:[[:space:]]*"\{0,1\}\([0-9]*\)"\{0,1\}.*/\1/p' "$HOME/.ddev/global_config.yaml" 2> /dev/null | head -n 1)
+    [ -n "$v" ] && [ "$v" != 443 ] && printf ':%s' "$v"
+    return 0
+}
 # demo_wait_port PORT [SECONDS] [quiet]: wait until something listens on localhost:PORT
 demo_wait_port() {
     local port=$1 secs=${2:-180} i
@@ -554,20 +562,27 @@ note() { NOTES+=("$*"); }
 # =================================================================
 
 demo_base() {
-    begin base voting-app "Docker's 5-container voting app: vote on :8080, live results on :8081" \
+    begin base voting-app "Docker's 5-container voting app: vote on :8090, live results on :8091" \
         "https://github.com/dockersamples/example-voting-app" || return 0
     need docker "the base install" || return 0
     fetch_repo https://github.com/dockersamples/example-voting-app.git || return 0
     write_run << 'EOF'
 docker_ok
+# v96: on 8090 (vote) and 8091 (results) instead of upstream's 8080 and 8081: since setup v96 DDEV's router holds
+# 8080 while any DDEV project runs (ChromeOS passes no 80/443 to Linux, so the router moved to 8080/8443). The ports
+# change in a copy of the compose file, made on every run so it follows upstream: an override file would add
+# ports to the services' lists, not replace them. It sits next to the original for the ./healthchecks volumes.
+sed -e 's/"8080:80"/"8090:80"/' -e 's/"8081:80"/"8091:80"/' docker-compose.images.yml > docker-compose.devdemo.yml || exit 1
+grep -q '"8090:80"' docker-compose.devdemo.yml && grep -q '"8091:80"' docker-compose.devdemo.yml \
+    || { echo "docker-compose.images.yml no longer publishes 8080:80 and 8081:80, so the port change did not apply; see docker-compose.devdemo.yml."; exit 1; }
 # Prebuilt images: nothing to compile. Python vote app, Node results app, .NET worker, Redis, Postgres.
-COMPOSE=(docker compose -f docker-compose.images.yml -p devdemo-voting)
-demo_on_exit "docker compose -f '$DEMO_DIR/docker-compose.images.yml' -p devdemo-voting down"
+COMPOSE=(docker compose -f docker-compose.devdemo.yml -p devdemo-voting)
+demo_on_exit "docker compose -f '$DEMO_DIR/docker-compose.devdemo.yml' -p devdemo-voting down"
 "${COMPOSE[@]}" up -d || exit 1
 # v92: results first, the vote page last, so it opens on top in a freshly laid-out window. The upstream
 # vote page's "Processed by container ID" label can sit over the buttons until the window is resized.
-demo_wait_port 8081 300 && demo_open http://localhost:8081
-demo_wait_port 8080 300 && demo_open http://localhost:8080
+demo_wait_port 8091 300 && demo_open http://localhost:8091
+demo_wait_port 8090 300 && demo_open http://localhost:8090
 demo_note "Vote in one tab and watch the other update. If a vote button won't click, resize the window (upstream CSS). Ctrl-C stops and removes the containers."
 "${COMPOSE[@]}" logs -f --tail 3 worker
 EOF
@@ -817,7 +832,7 @@ EOF
 }
 
 demo_java() {
-    begin java spring-petclinic "Spring PetClinic: the classic Spring Boot app on :8080 (in-memory H2 database)" \
+    begin java spring-petclinic "Spring PetClinic: the classic Spring Boot app on :8092 (in-memory H2 database)" \
         "https://github.com/spring-projects/spring-petclinic" || return 0
     need java install-java || return 0
     fetch_repo https://github.com/spring-projects/spring-petclinic.git || return 0
@@ -825,8 +840,9 @@ demo_java() {
 demo_need java install-java
 export MAVEN_OPTS="-Xmx768m"
 demo_note "First run downloads the Maven dependencies (a few minutes). Ctrl-C stops the app."
-demo_open_when_ready 8080 http://localhost:8080
-./mvnw spring-boot:run
+# v96: on 8092, not Spring Boot's 8080, which DDEV's router holds since setup v96 while a DDEV project runs.
+demo_open_when_ready 8092 http://localhost:8092
+./mvnw spring-boot:run -Dspring-boot.run.arguments=--server.port=8092
 EOF
     done_demo
 }
@@ -5116,7 +5132,7 @@ while demo_menu "Laravel links (the app is in $DEMO_DIR/app)" \
                       --php-version="$(php -r 'echo PHP_MAJOR_VERSION, ".", PHP_MINOR_VERSION;')" \
                       --disable-settings-management > /dev/null; then
                       ddev start && ddev launch
-                      demo_note "Served by DDEV at https://devdemo-laravel.ddev.site from the same files. Stop it: $0 down"
+                      demo_note "Served by DDEV at https://devdemo-laravel.ddev.site$(demo_ddev_https_port) from the same files. Stop it: $0 down"
                   fi ;;
         boost*)   composer require laravel/boost --dev -W && php artisan boost:install
                   demo_note "Boost added its MCP server and guidelines (CLAUDE.md / AGENTS.md) to this app; start 'claude' here to use them." ;;
@@ -5522,7 +5538,7 @@ while demo_menu "Symfony links (the app is in $DEMO_DIR/app)" \
                        --disable-settings-management \
                        --web-environment-add='DATABASE_URL=sqlite:///%kernel.project_dir%/var/data_dev.db' > /dev/null; then
                        ddev start && ddev launch
-                       demo_note "Served by DDEV at https://devdemo-symfony.ddev.site from the same files. Stop it: $0 down"
+                       demo_note "Served by DDEV at https://devdemo-symfony.ddev.site$(demo_ddev_https_port) from the same files. Stop it: $0 down"
                    fi ;;
         security*) symfony check:security ;;
         tls*)      demo_note "This installs the Symfony CLI's own certificate authority into the system and browser trust stores."
@@ -7862,7 +7878,7 @@ rt() {
         if [ -n "$ITEM_GIVEN" ]; then
             RT=local
         else
-            local opts=("local: PHP's built-in server + SQLite, http://127.0.0.1:8889" "ddev: DDEV (nginx, PHP-FPM, MariaDB), http://$DDEV_HOST")
+            local opts=("local: PHP's built-in server + SQLite, http://127.0.0.1:8889" "ddev: DDEV (nginx, PHP-FPM, MariaDB), http://$DDEV_HOST$(ddev_http_port)")
             [ "${1:-}" = all ] && opts+=("all: both")
             demo_menu "Which site?" "${opts[@]}" || return 1
             RT=${DEMO_CHOICE%%:*}
@@ -8078,7 +8094,7 @@ while demo_menu "Drupal Umami over GraphQL: local (:8889) and DDEV ($DDEV_HOST)"
             else
                 site_up || continue
                 demo_note "GraphQL endpoint: $GQL   (the router uses plain http; the browser gets https)"
-                demo_note "Explorer: https://$DDEV_HOST/admin/config/graphql/servers/manage/$(cat ddev/.devdemo-server 2> /dev/null || echo graphql_compose_server)/explorer"
+                demo_note "Explorer: https://$DDEV_HOST$(demo_ddev_https_port)/admin/config/graphql/servers/manage/$(cat ddev/.devdemo-server 2> /dev/null || echo graphql_compose_server)/explorer"
                 demo_note "Admin login: $(login_link)"
                 ( cd ddev && ddev launch )
                 demo_note "The DDEV site keeps running: '$0 stop ddev' stops it (and its router, kitchen and MCP server)."

@@ -424,6 +424,52 @@ brew_after_system
 brew install gcc ddev/ddev/ddev gh mkcert
 mkcert -install
 
+# v96: DDEV's router on 8080/8443 (Oct 26 2026, on dragonair: ChromeOS's browser got ERR_CONNECTION_REFUSED for
+# https://ddev-test.ddev.site on the default 80/443, since ChromeOS passes high ports through to Linux but not 80
+# and 443; after 'ddev config global --router-http-port=8080 --router-https-port=8443' and 'ddev poweroff && ddev
+# start', 'ddev launch' opened https://ddev-test.ddev.site:8443 there). The same ports install-lan-share already
+# uses for DDEV between laptops (LAN 8080/8443, read by ddev_router_port), so a site is :8443 on its own laptop
+# and from the others. Ports you set yourself win. ChromeOS only: elsewhere 80/443 work as DDEV expects.
+# (The plan put this next to install-drupal's 'ddev config global'; DDEV itself is base, so it is here.)
+DDEV_GCFG="$HOME/.ddev/global_config.yaml"
+ddev_gport() { sed -n "s/^router_$1_port:[[:space:]]*\"\{0,1\}\([0-9]*\)\"\{0,1\}.*/\1/p" "$DDEV_GCFG" 2> /dev/null | head -n 1; }
+if [ "$DEV_ON_CHROMEOS" != 1 ]; then
+    echo "NOTICE: not ChromeOS, so DDEV's router stays on its own ports (80/443 unless you set others)."
+elif ! command -v ddev > /dev/null 2>&1; then
+    echo "NOTICE: ddev is not on PATH, so its router ports were not set (rerun setup)."
+else
+    # DDEV writes its defaults into the file on every save (router_http_port: "80", router_https_port: "443";
+    # checked in its source, pkg/globalconfig: no omitempty), so 80/443 count as unset, not as yours.
+    DDEV_HP=$(ddev_gport http); DDEV_SP=$(ddev_gport https)
+    case "$DDEV_HP" in ''|80) DDEV_HP_MINE="" ;; *) DDEV_HP_MINE=$DDEV_HP ;; esac
+    case "$DDEV_SP" in ''|443) DDEV_SP_MINE="" ;; *) DDEV_SP_MINE=$DDEV_SP ;; esac
+    if [ "${DDEV_HP_MINE:-8080}" != 8080 ] || [ "${DDEV_SP_MINE:-8443}" != 8443 ]; then
+        echo "NOTICE: DDEV's router ports are yours (router_http_port ${DDEV_HP:-80}, router_https_port ${DDEV_SP:-443} in $DDEV_GCFG),"
+        echo "        so setup left them: DDEV sites are on http://<site>.ddev.site:${DDEV_HP:-80} and https://<site>.ddev.site:${DDEV_SP:-443}."
+        [ "${DDEV_HP:-80}" = 80 ] || [ "${DDEV_SP:-443}" = 443 ] && echo "        ChromeOS's browser cannot reach 80 or 443 in Linux."
+    elif [ "$DDEV_HP" = 8080 ] && [ "$DDEV_SP" = 8443 ]; then
+        echo "DDEV's router: already on 8080/8443 (sites are https://<site>.ddev.site:8443)."
+    elif timeout 60 ddev config global --router-http-port=8080 --router-https-port=8443 < /dev/null > /dev/null 2>&1 \
+        && [ "$(ddev_gport http)" = 8080 ] && [ "$(ddev_gport https)" = 8443 ]; then
+        echo "DDEV's router moved to 8080/8443 (ChromeOS does not pass 80/443 to Linux): sites are https://<site>.ddev.site:8443."
+        if sudo -n docker ps --format '{{.Names}}' 2> /dev/null | grep -qx ddev-router; then
+            echo "        The DDEV router running now keeps its old ports until 'ddev poweroff' (then 'ddev start' your project)."
+        fi
+    else
+        echo "NOTICE: 'ddev config global --router-http-port=8080 --router-https-port=8443' did not take; run it by hand."
+    fi
+fi
+unset -f ddev_gport
+# v96: mkcert's CA is trusted in Linux only (mkcert -install above); ChromeOS's browser, which opens Linux's links
+# since v96, has its own certificate store, which Linux can't reach. So *.ddev.site shows "Not secure" there until
+# the CA is imported by hand (Oct 26 2026: https://ddev-test.ddev.site:8443 opened with Chrome's warning).
+if [ "$DEV_ON_CHROMEOS" = 1 ] && [ -f "$(mkcert -CAROOT 2> /dev/null)/rootCA.pem" ]; then
+    echo "To open DDEV's https sites in ChromeOS's browser without a warning, import mkcert's CA there once:"
+    echo "  cp \"\$(mkcert -CAROOT)/rootCA.pem\" ~/ddev-rootCA.pem, then in ChromeOS: Settings > Privacy and security >"
+    echo "  Security > Manage certificates > Authorities > Import (from Linux files), tick \"Trust this certificate for"
+    echo "  identifying websites\", then delete ~/ddev-rootCA.pem. (docs/init-checklist.md, DDEV in ChromeOS's browser)"
+fi
+
 # 6. Google Chrome (Unconditional)
 echo "Installing Google Chrome..."
 # v65: downloaded into assets/downloads, not the current directory. Always fetched fresh (-nc would
@@ -432,6 +478,30 @@ rm -f "$ASSETS/downloads/google-chrome-stable_current_amd64.deb"
 wget -P "$ASSETS/downloads" https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
 sudo apt install -y "$ASSETS/downloads/google-chrome-stable_current_amd64.deb"
 rm -f "$ASSETS/downloads/google-chrome-stable_current_amd64.deb"
+
+# v96: links from Linux open in ChromeOS's browser, not in a Linux Google Chrome (Oct 26 2026: Chrome registered
+# itself as Linux's handler for web links, so Devin Desktop's Login opened its sign-in page in a Linux Chrome inside
+# the VM's memory, separate from ChromeOS's browser and its sign-ins, and that Chrome, left running, added to the
+# memory squeeze that froze Devin). 'xdg-settings set default-web-browser' refuses ("$BROWSER is set": ChromeOS sets
+# BROWSER=/usr/bin/garcon-url-handler), and xdg-open checks the MIME registration before $BROWSER anyway; this line
+# worked, tested Oct 26 with https, http://localhost and 127.0.0.1 (ChromeOS passes localhost to Linux), a file in
+# Linux files, and a DDEV site on 8443. Playwright, Selenium, Cypress and Puppeteer start their own browser, so they
+# are unaffected, and Linux Chrome stays installed. Here, after Chrome's install, so this overrides its registration.
+# Back to Linux Chrome: xdg-mime default com.google.Chrome.desktop x-scheme-handler/https x-scheme-handler/http text/html
+if [ -f /usr/share/applications/garcon_host_browser.desktop ] && command -v xdg-mime > /dev/null 2>&1; then
+    LINK_TYPES=(x-scheme-handler/https x-scheme-handler/http text/html)
+    LINK_HAD=()
+    for LINK_T in "${LINK_TYPES[@]}"; do LINK_HAD+=("$(xdg-mime query default "$LINK_T" 2> /dev/null)"); done
+    if [ "${LINK_HAD[*]}" = "garcon_host_browser.desktop garcon_host_browser.desktop garcon_host_browser.desktop" ]; then
+        echo "Links from Linux: already open in ChromeOS's browser (garcon_host_browser.desktop)."
+    elif xdg-mime default garcon_host_browser.desktop "${LINK_TYPES[@]}"; then
+        echo "Links from Linux now open in ChromeOS's browser (was: ${LINK_HAD[0]:-none}; ~/.config/mimeapps.list)."
+    else
+        echo "NOTICE: xdg-mime could not make ChromeOS's browser the handler for web links."
+    fi
+else
+    echo "NOTICE: no garcon_host_browser.desktop (not ChromeOS?), so Linux's handler for web links is unchanged."
+fi
 
 # 7. devmem, a memory report (v96)
 # v96: Oct 26 2026, with Devin Desktop freezing: Linux showed 6.4 GB total, 4.9 GB used, 1.5 GB available and no

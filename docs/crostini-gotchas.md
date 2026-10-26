@@ -45,6 +45,20 @@ to see it in context; the comment above each fix usually tells the story.
 - **Tailscale starts in userspace mode** (`install-lan`). In this VM `tailscaled` picked userspace
   networking by itself, so there was no `tailscale0` interface and Linux tools couldn't reach the 100.x
   addresses. **Fix:** `FLAGS="--tun=tailscale0"` in `/etc/default/tailscaled`.
+- **Links from Linux open in Linux Chrome** (setup base, v96). The base install's Google Chrome registers
+  itself as Linux's handler for web links, so a sign-in page or a dev server's `--open` started a second
+  Chrome inside the VM's memory, without your ChromeOS sign-ins (Devin Desktop's Login did, Oct 26 2026).
+  `xdg-settings set default-web-browser` refuses ("$BROWSER is set": ChromeOS sets
+  `BROWSER=/usr/bin/garcon-url-handler`), and `xdg-open` checks the MIME registration first anyway.
+  **Fix:** `xdg-mime default garcon_host_browser.desktop x-scheme-handler/https x-scheme-handler/http
+  text/html`. `localhost` and `127.0.0.1` still reach Linux from ChromeOS's browser, so dev servers and
+  localhost sign-in callbacks work.
+- **ChromeOS doesn't pass ports 80 and 443 to Linux** (setup base, v96). High ports reach Linux from
+  ChromeOS's browser, 80 and 443 don't: a DDEV site on the default router ports gave
+  `ERR_CONNECTION_REFUSED`, while its direct port and the router on 8080/8443 opened (Oct 26 2026).
+  **Fix:** `ddev config global --router-http-port=8080 --router-https-port=8443`, then `ddev poweroff`;
+  sites are `https://<site>.ddev.site:8443`. mkcert's CA is trusted in Linux only, so ChromeOS's browser
+  warns until the CA is imported there by hand (the init checklist has the steps).
 - **Ollama answers 403 to a plain hostname** (`install-lan`). Ollama refuses a `Host:` it doesn't
   recognise. **Fix:** the address book also writes `NAME.internal` names, which it accepts.
 - **The GitHub API rate-limits anonymous calls** (many flags). It allows 60 calls an hour per IP, then
@@ -71,6 +85,12 @@ to see it in context; the comment above each fix usually tells the story.
   their disk watermarks are off, so a nearly full disk doesn't turn an index read-only.
 - **`/tmp` is RAM-backed.** Large downloads and the test script's scratch space live on disk instead
   (`./assets`, and the test's own work folder).
+- **A full disk can leave DDEV unable to start** (setup base, v96). On Oct 26 2026 two `ddev start`s ran
+  dragonair's disk out of space while pulling `ddev-webserver`, and left `~/.ddev/.state.yaml` and
+  `~/.ddev/.update` at 0 bytes; every later `ddev start` then panicked ("assignment to entry in nil map" in
+  `remoteconfig`). **Fix:** move the two empty files aside (DDEV rewrites them) and free space first: DDEV's
+  images want about 3 GB (`docker builder prune`, `npm cache clean --force` and the uv, Go and Composer
+  caches freed ~5 GB there).
 - **kind works in Crostini's Docker** (`install-k8s`). A cluster takes about 2 GB, so the test unloads
   Ollama's models first.
 

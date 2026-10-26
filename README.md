@@ -245,6 +245,8 @@ A few of the findings:
 - **No more port forwarding.** Newer ChromeOS releases run Linux as a full VM, and Linux port forwarding
   is gone. The laptops reach each other over Tailscale instead, and `tailscaled` must be told to leave
   userspace mode.
+- **Ports 80 and 443.** ChromeOS's browser can't reach them in Linux, so DDEV's router moves to 8080/8443, and
+  links from Linux apps open in ChromeOS's browser instead of a second Chrome inside Linux.
 - **PATH shadowing.** Homebrew's dependencies (python3, sqlite3, openjdk, binutils) shadow Debian's
   unless Homebrew goes last on PATH.
 - **Android Studio.** The window dims while focused under ChromeOS's Wayland. Forcing the X11 toolkit
