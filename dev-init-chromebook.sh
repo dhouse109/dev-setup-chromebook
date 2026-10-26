@@ -1,5 +1,5 @@
 #!/bin/bash
-# dev-init-chromebook - Version 94
+# dev-init-chromebook - Version 95
 # Version history: CHANGELOG.md, next to this script in the bundle
 # (one section per script, newest version first).
 #
@@ -52,7 +52,7 @@ echo "Active Init Flags: $FLAGS"
 
 # 1. The "Install All" Master Switch
 if [[ "$FLAGS" =~ " install-all " ]]; then
-    FLAGS+=" install-editors install-languages install-ecosystems install-db install-db-extra install-lakehouse install-agentic install-cloud install-iac install-web install-tanstack install-k8s install-jev install-drupal install-laravel install-symfony install-graphql install-cache install-search install-vector install-mongodb install-testing install-gitlab install-vue "
+    FLAGS+=" install-editors install-languages install-ecosystems install-db install-db-extra install-lakehouse install-agentic install-cloud install-iac install-web install-tanstack install-k8s install-jev install-drupal install-laravel install-symfony install-graphql install-cache install-search install-vector install-mongodb install-testing install-gitlab install-vue install-herdr "
 fi
 
 # 2. Category Stack Switches
@@ -217,6 +217,11 @@ fi
 # all three need Node. install-bdd and install-selenium need nothing else (install-bdd adds a language's
 # piece only where that language is installed).
 if [[ "$FLAGS" =~ " install-playwright " ]] || [[ "$FLAGS" =~ " install-cypress " ]] || [[ "$FLAGS" =~ " install-robot " ]]; then
+    FLAGS+=" install-node "
+fi
+# v95: install-herdr = herdr, a terminal multiplexer for coding agents (in install-all). It pulls in install-node, so
+# install-herdr alone also brings the agents it tracks (Claude Code, Codex, Gemini CLI); install-node does not pull in herdr.
+if [[ "$FLAGS" =~ " install-herdr " ]]; then
     FLAGS+=" install-node "
 fi
 # v91: gitlab-ci-local is an npm package, and the Vue scaffolders run through npx: both need Node.
@@ -872,6 +877,35 @@ if has install-node; then
         already "aider has a provider key (ANTHROPIC / OPENAI / GEMINI_API_KEY)"
     else
         todo "aider: set one of ANTHROPIC_API_KEY / OPENAI_API_KEY / GEMINI_API_KEY in $SECRETS, or run it locally: aider --model ollama_chat/gemma4:e2b-it-qat"
+    fi
+fi
+
+# v95: herdr's agent integrations (install-herdr) are hooks in each agent's own config, so they are init's: one per
+# supported agent on PATH, installed when 'herdr integration status' does not show the current one. An agent's
+# config folder appears on its first run; before that the integration is a skip, not a todo. No keys, no prompts.
+if has install-herdr; then
+    section "herdr: agent integrations (install-herdr)"
+    if ! command -v herdr > /dev/null 2>&1; then
+        skip "herdr is not installed yet: dev-setup with install-herdr installs it"
+    else
+        HD_STATUS=$(herdr integration status 2> /dev/null || true)
+        # command on PATH : herdr's name for it
+        for HD_PAIR in claude:claude codex:codex hermes:hermes agy:antigravity-cli cursor-agent:cursor; do
+            HD_CMD=${HD_PAIR%%:*}; HD_T=${HD_PAIR#*:}
+            command -v "$HD_CMD" > /dev/null 2>&1 || continue
+            if grep -q "^$HD_T: current" <<< "$HD_STATUS"; then
+                already "herdr's $HD_T integration is current"
+            elif [ "$HD_T" = claude ] && [ ! -d "${CLAUDE_CONFIG_DIR:-$HOME/.claude}" ]; then
+                skip "herdr's Claude Code integration: start claude once (it creates ~/.claude), then rerun init"
+            elif HD_OUT=$(herdr integration install "$HD_T" 2>&1); then
+                ok "herdr's $HD_T integration installed ($(herdr integration status 2> /dev/null | grep -m1 "^$HD_T:" | sed 's/^[^:]*: //; s/ (\/.*//'))"
+            elif grep -qi 'not found' <<< "$HD_OUT"; then
+                skip "herdr's $HD_T integration: start $HD_CMD once (it creates its config folder), then rerun init"
+            else
+                todo "herdr integration install $HD_T failed: $(head -n 1 <<< "$HD_OUT")"
+            fi
+        done
+        already "herdr itself needs no account; 'herdr' starts it, Ctrl+B q detaches (tmux uses Ctrl+B too: docs/init-checklist.md)"
     fi
 fi
 
@@ -1678,10 +1712,20 @@ if has install-lazarus; then
     done
     if ! dpkg-query -W -f='${Status}' lazarus-project 2> /dev/null | grep -q 'ok installed'; then
         skip "Lazarus is not installed yet: dev-setup with install-lazarus installs it and builds the Qt5 IDE"
-    elif [ -z "$LAZ_MISSING" ]; then
-        already "Lazarus configured: Qt5 IDE built docked and floating in ~/.lazarus (light) and ~/.lazarus-dark (dark), 'Lazarus (Dark)' launcher; 'lazmode status' shows the layouts"
-    else
+    elif [ -n "$LAZ_MISSING" ]; then
         todo "Lazarus Qt5 IDE incomplete (missing:$LAZ_MISSING): rerun dev-setup with install-lazarus, or 'lazmode rebuild'"
+    else
+        # v95: configured also means neither layout is stale (built before packages were installed from the IDE)
+        # and the install list follows the active layout: 'lazmode status --check', per profile.
+        LAZ_STALE=""
+        for LAZ_P in light dark; do
+            command -v lazmode > /dev/null 2>&1 && lazmode status --profile "$LAZ_P" --check > /dev/null 2>&1 || LAZ_STALE="$LAZ_STALE $LAZ_P"
+        done
+        if [ -z "$LAZ_STALE" ]; then
+            already "Lazarus configured: Qt5 IDE built docked and floating in ~/.lazarus (light) and ~/.lazarus-dark (dark), both current, 'Lazarus (Dark)' launcher; 'lazmode status' shows the layouts"
+        else
+            todo "Lazarus:$LAZ_STALE not up to date (a layout stale after packages were installed, or the install list not following the layout; 'lazmode status' says which): 'lazmode rebuild --profile <light|dark>', or 'lazmode dock on|off', which rebuilds a stale layout first"
+        fi
     fi
     skip "editor colors per profile (Tools > Options > Editor > Display > Colors) and the dark profile's Object Inspector colors are yours to pick (docs/init-checklist.md)"
 fi
@@ -2477,9 +2521,9 @@ fi
 echo
 echo "================================================================="
 if [ ${#TODO[@]} -eq 0 ]; then
-    echo "Init Version 94 complete: nothing left to do. 🎉"
+    echo "Init Version 95 complete: nothing left to do. 🎉"
 else
-    echo "Init Version 94 complete. Still manual (${#TODO[@]}):"
+    echo "Init Version 95 complete. Still manual (${#TODO[@]}):"
     printf '  - %s\n' "${TODO[@]}"
 fi
 echo

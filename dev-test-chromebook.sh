@@ -1,5 +1,5 @@
 #!/bin/bash
-# dev-test-chromebook - Version 94
+# dev-test-chromebook - Version 95
 # Version history: CHANGELOG.md, next to this script in the bundle
 # (one section per script, newest version first).
 #
@@ -114,7 +114,7 @@ echo "Active Test Flags: $FLAGS"
 
 # 1. The "Install All" Master Switch
 if [[ "$FLAGS" =~ " install-all " ]]; then
-    FLAGS+=" install-editors install-languages install-ecosystems install-db install-db-extra install-lakehouse install-agentic install-cloud install-iac install-web install-tanstack install-k8s install-jev install-drupal install-laravel install-symfony install-graphql install-cache install-search install-vector install-mongodb install-testing install-gitlab install-vue "
+    FLAGS+=" install-editors install-languages install-ecosystems install-db install-db-extra install-lakehouse install-agentic install-cloud install-iac install-web install-tanstack install-k8s install-jev install-drupal install-laravel install-symfony install-graphql install-cache install-search install-vector install-mongodb install-testing install-gitlab install-vue install-herdr "
 fi
 
 # 2. Category Stack Switches
@@ -281,6 +281,11 @@ fi
 if [[ "$FLAGS" =~ " install-playwright " ]] || [[ "$FLAGS" =~ " install-cypress " ]] || [[ "$FLAGS" =~ " install-robot " ]]; then
     FLAGS+=" install-node "
 fi
+# v95: install-herdr = herdr, a terminal multiplexer for coding agents (in install-all). It pulls in install-node, so
+# install-herdr alone also brings the agents it tracks (Claude Code, Codex, Gemini CLI); install-node does not pull in herdr.
+if [[ "$FLAGS" =~ " install-herdr " ]]; then
+    FLAGS+=" install-node "
+fi
 # v91: gitlab-ci-local is an npm package, and the Vue scaffolders run through npx: both need Node.
 if [[ "$FLAGS" =~ " install-gitlab " ]] || [[ "$FLAGS" =~ " install-vue " ]]; then
     FLAGS+=" install-node "
@@ -418,7 +423,7 @@ info()  { printf '  %-62s %s\n' "$1" "${DIM}INFO${RST} $2"; echo "--- $1: INFO $
 # v92: a check that cannot run because an earlier one already failed for the same cause (counted as SKIP).
 skipped() { printf '  %-62s %s\n' "$1" "${DIM}SKIP${RST} $2"; SKIP=$((SKIP + 1)); LAST=skip; echo "--- $1: SKIP $2" >> "$LOG"; }
 
-echo "Testing Chromebook Linux provisioning (Version 94)... log: $LOG"
+echo "Testing Chromebook Linux provisioning (Version 95)... log: $LOG"
 [ "$QUICK" = 1 ] && echo "(quick mode: slow functional tests will be skipped)"
 
 # v68: say so when dev-init has not applied the secrets file yet. Filling in secrets.env logs
@@ -481,7 +486,7 @@ hint  "rerun the installer with the flag that owns that venv (install-antigravit
 check "pipx on PATH"                                       'pipx --version'
 check "uv (installed via pipx)"                            'uv --version'
 # v58: base CLI utilities
-check "jq, shellcheck, direnv, htop, sqlite3, psql on PATH" 'jq --version && shellcheck --version && direnv version && htop --version && sqlite3 --version && psql --version'
+check "jq, shellcheck, direnv, htop, sqlite3, psql, tmux on PATH" 'jq --version && shellcheck --version && direnv version && htop --version && sqlite3 --version && psql --version && tmux -V'
 check "jq evaluates a filter"                              'echo "{\"a\":1}" | jq -e ".a == 1"'
 check "direnv hook line in ~/.bashrc"                      'grep -q "direnv hook bash" ~/.bashrc'
 warn  "shellcheck finds no error-level issues in this script" "shellcheck -S error '$SELF'"
@@ -575,6 +580,18 @@ if has install-node; then
     hint  "run 'claude' once to log in"
     check "Puppeteer env vars in ~/.bashrc"                'grep -q PUPPETEER_EXECUTABLE_PATH ~/.bashrc && grep -q PUPPETEER_SKIP_DOWNLOAD ~/.bashrc'
     slow  "puppeteer installs w/o Chromium and drives system Chrome" 'mkdir pptr && cd pptr && npm init -y > /dev/null && npm install --silent --no-audit --no-fund puppeteer && [ ! -d ~/.cache/puppeteer/chrome ] ; node -e "const p=require(\"puppeteer\");(async()=>{const b=await p.launch({args:[\"--no-sandbox\"]});const pg=await b.newPage();await pg.setContent(\"<title>pptr-ok</title>\");console.log(await pg.title());await b.close();})().catch(e=>{console.error(e);process.exit(1)})" | grep -q pptr-ok' 600
+fi
+
+# v95: herdr, the terminal multiplexer for coding agents (install-herdr); its agent integrations come from dev-init.
+if has install-herdr; then
+    section "herdr (install-herdr)"
+    check "herdr is ~/.local/bin/herdr and runs"                    '[ "$(command -v herdr)" = "$HOME/.local/bin/herdr" ] && herdr --version'
+    hint  "rerun setup with install-herdr (herdr's installer, into ~/.local/bin); a herdr from Homebrew or mise stays where it is"
+    check "herdr --default-config prints a config"                  'herdr --default-config | grep -q "[a-z_]* *="'
+    for HD_T in claude codex; do
+        warn  "herdr's $HD_T integration is installed and current"  "herdr integration status | grep \"^$HD_T:\"; herdr integration status | grep -q \"^$HD_T: current\""
+        hint  "dev-init with install-herdr installs it, or 'herdr integration install $HD_T' (start $HD_T once first, so its config folder exists)"
+    done
 fi
 
 # Web tooling
@@ -1156,6 +1173,34 @@ if has install-lazarus; then
 LAZ_VER=$(dpkg-query -W -f='${Version}' lazarus-project 2> /dev/null); LAZ_VER=${LAZ_VER#*:}; LAZ_VER=${LAZ_VER%%-*}
 LAZ_DIR="/usr/share/lazarus/$LAZ_VER"
 P="$HOME/.lazarus"; [ "${2:-}" = dark ] && P="$HOME/.lazarus-dark"
+# v95: the install list as the IDE reads it (Item1..ItemCount of StaticAutoInstallPackages, empty ones skipped).
+# listpy names: the packages other than the docking ones, sorted, one line (as lazmode records them);
+# listpy docking: exit 0 when a docking package is listed.
+listpy() {
+    python3 - "$1" "$P/miscellaneousoptions.xml" << 'LIST_PY'
+import re, sys
+act, path = sys.argv[1], sys.argv[2]
+dock = re.compile(r'(?:anchordock[^"]*|dockedformeditor)$', re.I)
+try:
+    text = open(path, encoding="utf-8").read()
+except FileNotFoundError:
+    text = ""
+names = []
+m = re.search(r'<StaticAutoInstallPackages(?:\s[^>]*)?(?<!/)>.*?</StaticAutoInstallPackages>', text, re.S)
+if m:
+    c = re.search(r'Count="(\d+)"', m.group(0)[:m.group(0).index(">")])
+    count = int(c.group(1)) if c else 0
+    names = [v for i, v in re.findall(r'<Item(\d+)\s+Value="([^"]*)"', m.group(0)) if 1 <= int(i) <= count and v]
+if act == "names":
+    seen = {}
+    for n in names:
+        if not dock.match(n):
+            seen.setdefault(n.lower(), n)
+    print(" ".join(seen[k] for k in sorted(seen)))
+else:
+    sys.exit(0 if any(dock.match(n) for n in names) else 1)
+LIST_PY
+}
 case "$1" in
     builds)   # all three binaries there and on Qt5
         for b in lazarus-floating lazarus-docked lazarus; do
@@ -1167,11 +1212,20 @@ case "$1" in
         [ -f "$P/bin/lazarus-floating" ] || { echo "missing: $P/bin/lazarus-floating"; exit 1; }
         if grep -qa TAnchorDockMaster "$P/bin/lazarus-floating"; then echo "lazarus-floating contains TAnchorDockMaster: it is docked"; exit 1; fi
         echo "no TAnchorDockMaster in lazarus-floating" ;;
-    list)   # lazbuild --add-package saves to this list, and every later --build-ide builds it in
-        f="$P/miscellaneousoptions.xml"
-        [ -f "$f" ] || { echo "no $f (nothing installed by name)"; exit 0; }
-        if grep -Eio '<Item[0-9]+ +Value="(anchordock[^"]*|dockedformeditor)"' "$f"; then exit 1; fi
-        echo "the install list names no docking package" ;;
+    list)   # v95: the IDE rebuilds itself from this list, so it names the docking packages exactly while docked is active
+        if cmp -s "$P/bin/lazarus" "$P/bin/lazarus-docked"; then a=docked; else a=floating; fi
+        if listpy docking; then l="names the docking packages"; else l="has no docking package"; fi
+        echo "$a is active, the install list $l"
+        if [ "$a" = docked ]; then listpy docking; else ! listpy docking; fi ;;
+    current)   # v95: each layout was built from the install list as it is now (lazmode records it in bin/.lazmode-built)
+        f="$P/bin/.lazmode-built"; now=$(listpy names)
+        [ "$(head -n 1 "$f" 2> /dev/null)" = "$LAZ_VER" ] || { echo "no record for Lazarus $LAZ_VER (built before v95?): $(head -n 1 "$f" 2> /dev/null)"; exit 1; }
+        for lay in docked floating; do
+            had=$(grep -m1 "^$lay=" "$f") || { echo "$lay: no record of the list it was built from"; exit 1; }
+            had=${had#*=}
+            [ "$had" = "$now" ] || { echo "$lay is stale: built from [$had], the list names [$now]"; exit 1; }
+        done
+        echo "both layouts built from the current list [${now:-no extra packages}]" ;;
     active)
         if cmp -s "$P/bin/lazarus" "$P/bin/lazarus-docked"; then echo "docked"
         elif cmp -s "$P/bin/lazarus" "$P/bin/lazarus-floating"; then echo "floating"
@@ -1188,12 +1242,13 @@ case "$1" in
         case "$e" in *QT_QPA_PLATFORMTHEME=qt5ct*) ;; *) exit 1 ;; esac
         case "$e" in *"--pcp=$HOME/.lazarus-dark"*) ;; *) exit 1 ;; esac
         grep -q '^Name=Lazarus (Dark)$' "$f" || { echo "Name= is not 'Lazarus (Dark)'"; exit 1; } ;;
-    qt5ct)
+    qt5ct)   # v95: any palette that keeps the dark launcher dark; prints "STYLE, palette NAME"
         f="$HOME/.config/qt5ct/qt5ct.conf"
         s=$(sed -n 's/^style=//p' "$f" | head -n 1); c=$(sed -n 's/^custom_palette=//p' "$f" | head -n 1)
         p=$(sed -n 's/^color_scheme_path=//p' "$f" | head -n 1)
-        echo "style=$s custom_palette=$c color_scheme_path=$p"
-        [ "$s" = Fusion ] && [ "$c" = true ] && [ "${p##*/}" = darker.conf ] && [ -f "$p" ] ;;
+        [ "$c" = true ] || { echo "custom_palette=${c:-unset}: Lazarus (Dark) shows ${s:-Fusion}'s own light palette"; exit 1; }
+        [ -n "$p" ] && [ -f "$p" ] || { echo "the palette file is missing: ${p:-(no color_scheme_path)}"; exit 1; }
+        echo "${s:-Fusion}, palette $(basename "$p" .conf)" ;;
 esac
 LAZ_EOF
     check "Qt5 packages for the IDE (libqt5pas-dev, qt5ct)"  'dpkg_has libqt5pas-dev && dpkg_has qt5ct'
@@ -1206,8 +1261,10 @@ LAZ_EOF
         hint  "'lazmode rebuild --profile $LAZ_P' (logs in assets/logs/lazarus-build-$LAZ_P-*.log), or rerun setup with install-lazarus"
         check "$LAZ_P profile: the floating build has no AnchorDocking"      "bash lazarus_check.sh floating $LAZ_P"
         hint  "'lazmode rebuild --profile $LAZ_P' takes the docking packages out of the profile's install list and builds it again"
-        check "$LAZ_P profile: its install list names no docking package"   "bash lazarus_check.sh list $LAZ_P"
-        hint  "the next floating build would come out docked: 'lazmode rebuild --profile $LAZ_P' takes them out (a copy of the old miscellaneousoptions.xml goes to assets/logs)"
+        check "$LAZ_P profile: both layouts built from the current install list" "bash lazarus_check.sh current $LAZ_P"
+        hint  "packages were installed since (from the IDE, or a project's prompt): 'lazmode rebuild --profile $LAZ_P', or 'lazmode dock on|off', which rebuilds a stale layout before switching"
+        check "$LAZ_P profile: install list names docking only while docked" "bash lazarus_check.sh list $LAZ_P"
+        hint  "'lazmode dock on' or 'lazmode dock off' (whichever is active) sets the list; otherwise the IDE's own rebuild switches layout"
         check "$LAZ_P profile: bin/lazarus is one of the two builds"         "bash lazarus_check.sh active $LAZ_P"
         hint  "'lazmode dock on' (or off) puts a build back; the IDE's own Tools > Build Lazarus replaces bin/lazarus, possibly with GTK2"
     done
@@ -1215,8 +1272,12 @@ LAZ_EOF
     hint  "rerun setup with install-lazarus (it writes ~/.local/share/applications/lazarus-dark.desktop)"
     check "qt5ct config present (~/.config/qt5ct/qt5ct.conf)"          '[ -f ~/.config/qt5ct/qt5ct.conf ]'
     hint  "rerun setup with install-lazarus, or 'lazmode theme' and Apply"
-    warn  "qt5ct: Fusion style with the darker palette"                'bash lazarus_check.sh qt5ct'
-    hint  "changed in qt5ct ('lazmode theme')? That is your call; setup leaves an existing qt5ct.conf alone"
+    # v95: a palette you picked yourself passes, named in the line (Oct 25 2026: v94 warned about "waves",
+    # chosen in 'lazmode theme', and a WARN meant to be ignored hides real ones). It warns only when the dark
+    # launcher would not look dark: no custom palette, or its file is gone.
+    LAZ_QT=$(bash "$WORK/lazarus_check.sh" qt5ct 2> /dev/null) || LAZ_QT="a custom palette for Lazarus (Dark)"
+    warn  "qt5ct: $LAZ_QT"                                             'bash lazarus_check.sh qt5ct'
+    hint  "'lazmode theme': pick a palette under Palette > Custom (darker, waves, dusk...) and Apply"
     check "lazmode status"                                             'lazmode status'
     hint  "rerun setup with install-lazarus (it writes ~/.local/bin/lazmode)"
     check "lazbuild with the dark profile (--pcp=~/.lazarus-dark)"     'lazbuild --pcp="$HOME/.lazarus-dark" --version'
@@ -5000,6 +5061,7 @@ if ! has nodisk; then
     has install-vscode   && dapt   editors "VS Code"         code
     has install-windsurf && dapt   editors "Windsurf"        windsurf
     has install-cursor   && dpaths editors "Cursor AppImage" "$HOME/.local/bin/cursor"
+    has install-herdr    && dpaths herdr "herdr (binary and config)" "$HOME/.local/bin/herdr" "$HOME/.config/herdr"
     # v94: plus the Qt5 IDE builds and their units in both profiles, the qt5 units folder setup makes in the
     # system tree, and the two Qt5 packages: the debs alone left out most of what Lazarus takes.
     if has install-lazarus; then
@@ -5202,7 +5264,7 @@ fi
 # =================================================================
 echo
 echo "================================================================="
-echo "Test Version 94 complete: ${GRN}PASS $PASS${RST}   ${RED}FAIL $FAIL${RST}   ${YEL}WARN $WARN${RST}   SKIP $SKIP"
+echo "Test Version 95 complete: ${GRN}PASS $PASS${RST}   ${RED}FAIL $FAIL${RST}   ${YEL}WARN $WARN${RST}   SKIP $SKIP"
 if [ ${#FAILED[@]} -gt 0 ]; then
     echo
     echo "Failed (must fix to get started):"

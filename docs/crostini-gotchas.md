@@ -22,11 +22,13 @@ to see it in context; the comment above each fix usually tells the story.
   GTK2 theming (`gnome-themes-extra`, Adwaita-dark gtkrc) doesn't touch the cause.
   **Fix:** setup rebuilds the IDE with `lazbuild --build-ide= --ws=qt5` (needs `libqt5pas-dev`, and a
   user-owned `/usr/share/lazarus/<ver>/units/x86_64-linux/qt5`, or the final make step stops with "mkdir:
-  Permission denied"). Packages go in with `lazmode rebuild --add-package`: the IDE's own rebuild can fall
-  back to GTK2. `lazbuild --add-package` also saves the packages to the profile's install list
-  (`StaticAutoInstallPackages` in `miscellaneousoptions.xml`), and every later `--build-ide` builds them in,
-  so `lazmode` saves and restores that file around the docked build and takes docking entries out of a list
-  that has them. The dark look comes from qt5ct
+  Permission denied"). `lazbuild --add-package` also saves the packages to the profile's install list
+  (`StaticAutoInstallPackages` in `miscellaneousoptions.xml`), and every later `--build-ide` builds them in;
+  the IDE installs packages the same way, rebuilding itself from that list. So the floating build runs with
+  the docking packages out of it, and since v95 the list names them exactly while docked is active, so the
+  IDE's own rebuild (Package → Install/Uninstall Packages, or a project's install prompt) keeps its layout
+  and `lazmode` adopts the result. On Oct 25 2026 that rebuild stayed on Qt5; should one come out GTK2,
+  `lazmode` keeps it aside and puts the Qt5 layout back. The dark look comes from qt5ct
   (`QT_QPA_PLATFORMTHEME=qt5ct`); ChromeOS draws the title bars, so no Linux theme changes them.
   `startlazarus` buffers its output, so `--debug-log` and `tee` logs are cut off when a hung IDE is killed
   and don't help diagnose a hang.

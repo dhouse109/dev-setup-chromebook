@@ -1,5 +1,5 @@
 #!/bin/bash
-# dev-setup-chromebook - Version 94
+# dev-setup-chromebook - Version 95
 # Version history: CHANGELOG.md, next to this script in the bundle
 # (one section per script, newest version first).
 
@@ -66,7 +66,7 @@ echo "Active Installation Flags: $FLAGS"
 
 # 1. The "Install All" Master Switch
 if [[ "$FLAGS" =~ " install-all " ]]; then
-    FLAGS+=" install-editors install-languages install-ecosystems install-db install-db-extra install-lakehouse install-agentic install-cloud install-iac install-web install-tanstack install-k8s install-jev install-drupal install-laravel install-symfony install-graphql install-cache install-search install-vector install-mongodb install-testing install-gitlab install-vue "
+    FLAGS+=" install-editors install-languages install-ecosystems install-db install-db-extra install-lakehouse install-agentic install-cloud install-iac install-web install-tanstack install-k8s install-jev install-drupal install-laravel install-symfony install-graphql install-cache install-search install-vector install-mongodb install-testing install-gitlab install-vue install-herdr "
 fi
 
 # 2. Category Stack Switches
@@ -235,6 +235,11 @@ fi
 if [[ "$FLAGS" =~ " install-playwright " ]] || [[ "$FLAGS" =~ " install-cypress " ]] || [[ "$FLAGS" =~ " install-robot " ]]; then
     FLAGS+=" install-node "
 fi
+# v95: install-herdr = herdr, a terminal multiplexer for coding agents (in install-all). It pulls in install-node, so
+# install-herdr alone also brings the agents it tracks (Claude Code, Codex, Gemini CLI); install-node does not pull in herdr.
+if [[ "$FLAGS" =~ " install-herdr " ]]; then
+    FLAGS+=" install-node "
+fi
 # v91: gitlab-ci-local is an npm package, and the Vue scaffolders run through npx: both need Node.
 if [[ "$FLAGS" =~ " install-gitlab " ]] || [[ "$FLAGS" =~ " install-vue " ]]; then
     FLAGS+=" install-node "
@@ -247,7 +252,7 @@ if [[ "$FLAGS" =~ " install-gemma " ]] || [[ "$FLAGS" =~ " install-models " ]] |
 fi
 # =================================================================
 
-echo "Starting comprehensive Chromebook Linux provisioning (Version 94)..."
+echo "Starting comprehensive Chromebook Linux provisioning (Version 95)..."
 
 # v93: prefer IPv4 when this network's IPv6 does not get out. On Oct 4 2026 a Chromebook's Linux got IPv6
 # addresses for dl.google.com but no IPv6 route out, and wget hung on one address after another (the
@@ -309,7 +314,10 @@ sudo apt install -y \
   libx11-dev libxkbcommon-dev libwayland-dev libdbus-1-dev \
   libxcb-shape0-dev libxcb-xfixes0-dev libgtk-3-dev libwebkit2gtk-4.1-dev \
   librsvg2-dev \
-  jq shellcheck direnv htop sqlite3 postgresql-client
+  jq shellcheck direnv htop sqlite3 postgresql-client tmux
+# v95: tmux, the general terminal multiplexer: detached long jobs, SSH sessions to the other laptops over
+#      Tailscale that survive a dropped connection, scripts. No ~/.tmux.conf and no auto-start (herdr,
+#      install-herdr, is the one for coding agents; both use Ctrl+B).
 # v58: jq (JSON from the shell), shellcheck (these scripts), direnv (per-project env), htop,
 #      and the sqlite3/psql CLIs to go with the ODBC drivers and client libs in install-db*.
 # v52: librsvg2-dev is a Tauri Linux prerequisite ('tauri build' icon/bundle generation);
@@ -1393,14 +1401,18 @@ if [[ "$FLAGS" =~ " install-lazarus " ]]; then
 # lazmode: the Lazarus IDE of dev-setup's install-lazarus (v94): Qt5 builds in two profiles, light (~/.lazarus,
 # the "Lazarus" launcher) and dark (~/.lazarus-dark, "Lazarus (Dark)"), each built docked and floating.
 # Written by dev-setup and rewritten on every run: copy it before editing.
-#   lazmode status [--profile light|dark|both]
-#   lazmode dock on|off [--profile light|dark|both]             docked or floating layout (copies a build)
+#   lazmode status [--profile light|dark|both] [--check]       --check: exit 1 unless both layouts are built
+#                                                              and current and the install list follows the layout
+#   lazmode dock on|off [--profile light|dark|both]             docked or floating layout (copies a build; a
+#                                                              stale layout is rebuilt first)
 #   lazmode rebuild [--profile light|dark|both] [--add-package LPK...]
 #                                                              rebuild both layouts on Qt5, keep the active one
 #   lazmode theme                                              qt5ct (the dark profile's style and palette)
-# --profile defaults to both. Install IDE packages with 'lazmode rebuild --add-package', not with the IDE's
-# Package > Install/Uninstall Packages: the IDE's own rebuild can fall back to GTK2, whose dialogs draw blank
-# and freeze under Crostini. Packages added here are kept in <profile>/lazmode-packages for later rebuilds.
+# --profile defaults to both. v95: install packages from inside the IDE (Package > Install/Uninstall Packages, or
+# when a project asks): the install list names the docking packages exactly while docked is active, so the IDE's
+# own rebuild keeps the layout it was started in, and lazmode adopts that build instead of overwriting it. The
+# other layout is then stale (built from an older list) and is rebuilt when you switch to it. 'lazmode rebuild
+# --add-package' stays for scripted installs; packages added that way are kept in <profile>/lazmode-packages.
 LOGDIR="@LOGDIR@"
 LIGHT="$HOME/.lazarus"
 DARK="$HOME/.lazarus-dark"
@@ -1408,7 +1420,7 @@ DARK_DESKTOP="$HOME/.local/share/applications/lazarus-dark.desktop"
 QT5CT_CONF="$HOME/.config/qt5ct/qt5ct.conf"
 
 die() { echo "lazmode: $*" >&2; exit 1; }
-usage() { sed -n '2,15s/^# \{0,1\}//p' "$0"; }
+usage() { awk 'NR > 1 && !/^#/ { exit } NR > 1 { sub(/^# ?/, ""); print }' "$0"; }
 laz_dir() {   # /usr/share/lazarus/<installed version>
     local v
     v=$(dpkg-query -W -f='${Version}' lazarus-project 2> /dev/null) || return 1
@@ -1416,6 +1428,7 @@ laz_dir() {   # /usr/share/lazarus/<installed version>
     [ -n "$v" ] && [ -d "/usr/share/lazarus/$v" ] && echo "/usr/share/lazarus/$v"
 }
 pdir() { if [ "$1" = dark ]; then echo "$DARK"; else echo "$LIGHT"; fi; }
+pcp_args() { if [ "$1" = dark ]; then echo "--pcp=$DARK"; fi; }
 # Process names, not 'pgrep -f lazarus': that also matches this command's own --add-package paths and
 # dev-setup's command line (install-lazarus).
 running() { pgrep -x 'lazarus|startlazarus|lazarus-ide|lazbuild' > /dev/null 2>&1; }
@@ -1449,6 +1462,7 @@ activate() {   # activate PROFILE_DIR docked|floating: a copy and a rename, so a
 
 PROFILES=(light dark)
 ADD=()
+CHECK=0
 parse_opts() {
     while [ $# -gt 0 ]; do
         case "$1" in
@@ -1466,33 +1480,195 @@ parse_opts() {
                     ADD+=("$(realpath "$1")"); shift
                 done
                 continue ;;
+            --check) CHECK=1 ;;
             *) die "unknown option '$1' (lazmode help)" ;;
         esac
         shift
     done
 }
 
+# v94: lazbuild --add-package does not only build a package in: it saves it to the profile's install list
+# (StaticAutoInstallPackages in miscellaneousoptions.xml), and every later --build-ide builds that list in, so
+# each floating build after the first docked one came out docked (Oct 25 2026: grep -il anchordock ~/.lazarus/*
+# found the docking packages after the Oct 24 hand setup). So the docked build runs between a save and a restore
+# of the files it writes, and the floating build runs with the docking packages out of the list.
+# v95: the list now follows the active layout instead: it names the docking packages exactly while docked is
+# active, because the IDE installs packages by rebuilding itself from this list (Oct 25 2026: with v94 keeping
+# them out, the docked dark IDE's own rebuild came out floating, and 'lazmode dock on' then threw its packages
+# away). The floating build still runs with them out; the docked build adds them itself; afterwards list_follow
+# sets the list for the active layout. That replaces v94's save and restore around the docked build, which
+# would also have undone packages a build adds; restore_lists stays only to put back a save v94 left behind.
+LISTFILES=(miscellaneousoptions.xml packagefiles.xml staticpackages.inc idemake.cfg)
+DOCKING_CLASS=TAnchorDockMaster   # AnchorDocking's main class: its name is in any IDE binary built with it
+ACTIVE=""  # "PROFILE LAYOUT" to put back if a build is interrupted
+restore_lists() {   # restore_lists PROFILE_DIR: put back the list files of a v94 save that a cut-off run left
+    local s="$1/.lazmode-save" f
+    [ -d "$s" ] || return 0
+    for f in "${LISTFILES[@]}"; do
+        if [ -f "$s/$f" ]; then cp -p "$s/$f" "$1/$f"; elif [ -f "$s/$f.absent" ]; then rm -f "$1/$f"; fi
+    done
+    rm -rf "$s"
+}
+settle() {   # settle PROFILE LAYOUT: that layout active, and the install list following it
+    activate "$(pdir "$1")" "$2" && list_follow "$1" "$2"
+}
+# Ctrl-C during a build: the layout that was active stays active, with its list.
+trap '[ -n "$ACTIVE" ] && settle "${ACTIVE% *}" "${ACTIVE##* }"; exit 130' INT TERM
+# listtool names|docking|remove FILE: the install list as the IDE reads it (LoadStringList: Item1..ItemCount,
+# empty or missing items skipped). names: the packages other than the docking ones, sorted, one line; docking:
+# exit 0 when a docking package is listed; remove: delete the docking items (the IDE skips a missing ItemN, so
+# the rest of the list is untouched; its next save writes the list out renumbered).
+listtool() {
+    python3 - "$@" << 'LIST_PY'
+import re, sys
+act, path = sys.argv[1], sys.argv[2]
+dock = re.compile(r'(?:anchordock[^"]*|dockedformeditor)$', re.I)
+try:
+    with open(path, encoding="utf-8") as fh:
+        text = fh.read()
+except FileNotFoundError:
+    text = ""
+block = re.compile(r'<StaticAutoInstallPackages(?:\s[^>]*)?(?<!/)>.*?</StaticAutoInstallPackages>', re.S)
+names = []
+m = block.search(text)
+if m:
+    head = m.group(0)[:m.group(0).index(">")]
+    c = re.search(r'Count="(\d+)"', head)
+    count = int(c.group(1)) if c else 0
+    for i, v in re.findall(r'<Item(\d+)\s+Value="([^"]*)"', m.group(0)):
+        if 1 <= int(i) <= count and v:
+            names.append(v)
+if act == "names":
+    seen = {}
+    for n in names:
+        if not dock.match(n):
+            seen.setdefault(n.lower(), n)
+    print(" ".join(seen[k] for k in sorted(seen)))
+elif act == "docking":
+    sys.exit(0 if any(dock.match(n) for n in names) else 1)
+elif act == "remove":
+    item = re.compile(r'[ \t]*<Item\d+\s+Value="(?:anchordock[^"]*|dockedformeditor)"\s*/>[ \t]*\r?\n?', re.I)
+    new = block.sub(lambda b: item.sub("", b.group(0)), text)
+    if new != text:
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(new)
+LIST_PY
+}
+docking_listed() { listtool docking "$1/miscellaneousoptions.xml"; }   # docking_listed PROFILE_DIR
+list_names() { listtool names "$1/miscellaneousoptions.xml"; }        # list_names PROFILE_DIR
+scrub_docking() {   # scrub_docking PROFILE_DIR NAME [quiet]: take the docking packages out of the install list
+    local f="$1/miscellaneousoptions.xml"
+    docking_listed "$1" || return 0
+    cp -p "$f" "$LOGDIR/miscellaneousoptions-$2-$(date +%Y%m%d-%H%M%S).xml"
+    listtool remove "$f" || return 1
+    if docking_listed "$1"; then echo "$2: could not take the docking packages out of $f"; return 1; fi
+    [ "${3:-}" = quiet ] || echo "$2: docking packages taken out of the install list ($f; the old file is in $LOGDIR)"
+}
+add_docking() {   # add_docking PROFILE NAME: put them in, with lazbuild's own writer (no build: --add-package alone)
+    local d dir log pcp
+    d=$(pdir "$1"); dir=$(laz_dir) || return 1; pcp=$(pcp_args "$1")
+    docking_listed "$d" && return 0
+    [ -f "$d/miscellaneousoptions.xml" ] && cp -p "$d/miscellaneousoptions.xml" "$LOGDIR/miscellaneousoptions-$1-$(date +%Y%m%d-%H%M%S).xml"
+    log="$LOGDIR/lazarus-list-$1.log"
+    { echo "lazbuild $pcp --add-package (docking)  ($(date '+%F %T'))"
+      lazbuild ${pcp:+"$pcp"} --add-package "$dir/components/anchordocking/design/anchordockingdsgn.lpk" \
+          "$dir/components/dockedformeditor/dockedformeditor.lpk"; } > "$log" 2>&1
+    docking_listed "$d" || { echo "$1: could not add the docking packages to the install list (log: $log)"; return 1; }
+}
+list_follow() {   # list_follow PROFILE LAYOUT: the install list names the docking packages exactly while docked is active
+    local d; d=$(pdir "$1")
+    if [ "$2" = docked ]; then add_docking "$1"; else scrub_docking "$d" "$1" quiet; fi
+}
+
+# v95: bin/.lazmode-built records, per layout, the version and the install list each build was made from
+# (package names, docking ones left out): a first line with the version, then "docked=NAMES" and "floating=NAMES".
+# A build whose list differs from the profile's current list is stale: the IDE has installed packages since.
+record_build() {   # record_build PROFILE_DIR LAYOUT
+    local f="$1/bin/.lazmode-built" v
+    v=$(basename "$(laz_dir)")
+    { echo "$v"
+      [ "$(head -n 1 "$f" 2> /dev/null)" = "$v" ] && tail -n +2 "$f" | grep -v "^$2="
+      echo "$2=$(list_names "$1")"; } > "$f.new" && mv -f "$f.new" "$f"
+}
+built_from() {   # built_from PROFILE_DIR LAYOUT: the list a build was made from; fails when not recorded for this version
+    local f="$1/bin/.lazmode-built" line
+    [ "$(head -n 1 "$f" 2> /dev/null)" = "$(basename "$(laz_dir)")" ] || return 1
+    line=$(grep -m1 "^$2=" "$f") || return 1
+    echo "${line#*=}"
+}
+is_current() {   # is_current PROFILE_DIR LAYOUT: built, on Qt5, for this version, from the current list
+    local had
+    [ -x "$1/bin/lazarus-$2" ] && [ "$(widgetset "$1/bin/lazarus-$2")" = qt5 ] || return 1
+    had=$(built_from "$1" "$2") || return 1
+    [ "$had" = "$(list_names "$1")" ]
+}
+
+# v95: adopt the IDE's own build. When bin/lazarus matches neither build and is newer than both, the IDE rebuilt
+# itself (installing packages), and its build is kept as the layout it is (docked when it contains the docking
+# class) instead of being overwritten by the next switch. A build that is not Qt5 (the IDE fell back to GTK2) is
+# kept aside, and the layout the install list names is put back.
+adopt() {   # adopt PROFILE
+    local d b lay ws keep
+    d=$(pdir "$1"); b="$d/bin"
+    [ -f "$b/lazarus" ] || return 0
+    case "$(layout "$d")" in docked|floating) return 0 ;; esac
+    [ "$b/lazarus" -nt "$b/lazarus-docked" ] && [ "$b/lazarus" -nt "$b/lazarus-floating" ] || return 0
+    if running; then echo "$1: bin/lazarus is the IDE's own build, adopted once Lazarus is closed"; return 0; fi
+    ws=$(widgetset "$b/lazarus")
+    if [ "$ws" != qt5 ]; then
+        keep="$b/lazarus.ide-built-$ws"
+        mv -f "$b/lazarus" "$keep"
+        lay=floating; docking_listed "$d" && lay=docked
+        activate "$d" "$lay" || activate "$d" docked || activate "$d" floating
+        echo "$1: the IDE's own rebuild came out $ws, not Qt5: kept aside as $keep, the $lay layout put back."
+        echo "    'lazmode rebuild --profile $1' builds both layouts on Qt5 with the packages you installed."
+        return 0
+    fi
+    lay=floating; grep -qa "$DOCKING_CLASS" "$b/lazarus" && lay=docked
+    [ -f "$b/lazarus-$lay" ] && mv -f "$b/lazarus-$lay" "$b/lazarus-$lay.bak"
+    cp -p "$b/lazarus" "$b/lazarus-$lay"
+    record_build "$d" "$lay"
+    echo "$1: adopted the IDE's own build as the $lay layout (the old one is bin/lazarus-$lay.bak)"
+}
+
 cmd_status() {
-    local p d b f
+    local p d b f had now bad=0 ws
     for p in "${PROFILES[@]}"; do
         d=$(pdir "$p"); b="$d/bin"
+        adopt "$p"
+        now=$(list_names "$d")
         echo "$p profile ($d)"
         echo "  active layout   $(layout "$d")"
+        case "$(layout "$d")" in docked|floating) ;; *) bad=1 ;; esac
         for f in docked floating; do
-            if [ -x "$b/lazarus-$f" ]; then
-                printf '  %-15s %s\n' "$f build" "$(widgetset "$b/lazarus-$f"), built $(date -r "$b/lazarus-$f" '+%F %H:%M')"
+            if [ ! -x "$b/lazarus-$f" ]; then
+                printf '  %-15s %s\n' "$f build" "missing ('lazmode rebuild --profile $p')"; bad=1; continue
+            fi
+            ws=$(widgetset "$b/lazarus-$f")
+            printf '  %-15s %s\n' "$f build" "$ws, built $(date -r "$b/lazarus-$f" '+%F %H:%M')"
+            [ "$ws" = qt5 ] || bad=1
+            if had=$(built_from "$d" "$f"); then
+                if [ "$had" = "$now" ]; then
+                    printf '  %-15s %s\n' "" "current: built from the install list as it is"
+                else
+                    printf '  %-15s %s\n' "" "stale: built from [${had:-no extra packages}], the list now names [${now:-none}]; 'lazmode dock' rebuilds it before switching"; bad=1
+                fi
             else
-                printf '  %-15s %s\n' "$f build" "missing ('lazmode rebuild --profile $p')"
+                printf '  %-15s %s\n' "" "stale: no record of the list it was built from (before v95, or another Lazarus version)"; bad=1
             fi
         done
-        [ -f "$b/lazarus" ] && printf '  %-15s %s\n' "bin/lazarus" "$(widgetset "$b/lazarus") widget set"
-        [ -s "$d/lazmode-packages" ] && printf '  %-15s %s\n' "extra packages" "$(tr '\n' ' ' < "$d/lazmode-packages")"
-        if docking_listed "$d"; then
-            printf '  %-15s %s\n' "install list" "names the docking packages: the next floating build would come out docked ('lazmode rebuild --profile $p' takes them out)"
-        fi
         if [ -f "$b/lazarus-floating" ] && grep -qa "$DOCKING_CLASS" "$b/lazarus-floating"; then
-            printf '  %-15s %s\n' "floating build" "contains $DOCKING_CLASS, so it is docked too ('lazmode rebuild --profile $p')"
+            printf '  %-15s %s\n' "floating build" "contains $DOCKING_CLASS, so it is docked too ('lazmode rebuild --profile $p')"; bad=1
         fi
+        printf '  %-15s %s\n' "install list" "${now:-no packages beyond the base}"
+        if docking_listed "$d"; then
+            printf '  %-15s %s\n' "" "names the docking packages$([ "$(layout "$d")" = docked ] || { echo ", but docked is not active: 'lazmode dock off' takes them out"; })"
+            [ "$(layout "$d")" = docked ] || bad=1
+        else
+            printf '  %-15s %s\n' "" "without the docking packages$([ "$(layout "$d")" != docked ] || { echo ", but docked is active: 'lazmode dock on' puts them back"; })"
+            [ "$(layout "$d")" != docked ] || bad=1
+        fi
+        [ -s "$d/lazmode-packages" ] && printf '  %-15s %s\n' "extra packages" "$(tr '\n' ' ' < "$d/lazmode-packages")"
     done
     if [ -f "$DARK_DESKTOP" ]; then
         echo "dark launcher   $(grep -m1 '^Exec=' "$DARK_DESKTOP")"
@@ -1510,78 +1686,19 @@ cmd_status() {
         echo "qt5ct           no $QT5CT_CONF ('lazmode theme' writes one)"
     fi
     running && echo "Lazarus is running now."
+    [ "$CHECK" = 1 ] && return $bad
     return 0
 }
 
-cmd_dock() {
-    local want p d
-    case "${1:-}" in
-        on) want=docked ;;
-        off) want=floating ;;
-        *) die "dock takes on or off" ;;
-    esac
-    refuse_if_running "dock $1"
-    shift; parse_opts "$@"
-    for p in "${PROFILES[@]}"; do
-        d=$(pdir "$p")
-        [ -x "$d/bin/lazarus-$want" ] || die "$p: no $want build in $d/bin: run 'lazmode rebuild --profile $p'"
-        activate "$d" "$want" || die "$p: could not copy lazarus-$want over bin/lazarus"
-        echo "$p: $want layout active (next IDE start)"
-    done
-}
-
-# v94: lazbuild --add-package does not only build a package in: it saves it to the profile's install list
-# (StaticAutoInstallPackages in miscellaneousoptions.xml), and every later --build-ide builds that list in, so
-# each floating build after the first docked one came out docked (Oct 25 2026: grep -il anchordock ~/.lazarus/*
-# found the docking packages after the Oct 24 hand setup). So the docked build runs between a save and a restore
-# of the files it writes, and the docking packages are taken out of a list that already has them.
-LISTFILES=(miscellaneousoptions.xml packagefiles.xml staticpackages.inc idemake.cfg)
-DOCKING_CLASS=TAnchorDockMaster   # AnchorDocking's main class: its name is in any IDE binary built with it
-SAVED=""   # the profile whose list files are saved, while the docked build runs
-ACTIVE=""  # "PROFILE_DIR LAYOUT" to put back if a rebuild is interrupted
-save_lists() {   # save_lists PROFILE_DIR: copy the list files aside (or note that one is absent)
-    local s="$1/.lazmode-save" f
-    rm -rf "$s" && mkdir -p "$s" || return 1
-    for f in "${LISTFILES[@]}"; do
-        if [ -f "$1/$f" ]; then cp -p "$1/$f" "$s/$f" || return 1; else : > "$s/$f.absent"; fi
-    done
-    SAVED=$1
-}
-restore_lists() {   # restore_lists PROFILE_DIR: put them back exactly, removing any the build created
-    local s="$1/.lazmode-save" f
-    [ -d "$s" ] || return 0
-    for f in "${LISTFILES[@]}"; do
-        if [ -f "$s/$f" ]; then cp -p "$s/$f" "$1/$f"; elif [ -f "$s/$f.absent" ]; then rm -f "$1/$f"; fi
-    done
-    rm -rf "$s"
-    SAVED=""
-}
-# Ctrl-C during the docked build still leaves the list without the docking packages, and the layout that was
-# active stays active.
-trap '[ -n "$SAVED" ] && restore_lists "$SAVED"; [ -n "$ACTIVE" ] && activate "${ACTIVE% *}" "${ACTIVE##* }"; exit 130' INT TERM
-docking_listed() {   # does the profile's install list name a docking package?
-    grep -Eqi '<Item[0-9]+ +Value="(anchordock[^"]*|dockedformeditor)"' "$1/miscellaneousoptions.xml" 2> /dev/null
-}
-scrub_docking() {   # scrub_docking PROFILE_DIR NAME: take the docking packages out of the install list
-    local f="$1/miscellaneousoptions.xml"
-    docking_listed "$1" || return 0
-    # The IDE skips a missing ItemN when it reads the list (LoadStringList), so deleting the items is enough;
-    # the next save writes the list out renumbered. A copy of the file goes to the logs first.
-    cp -p "$f" "$LOGDIR/miscellaneousoptions-$2-$(date +%Y%m%d-%H%M%S).xml"
-    python3 - "$f" << 'SCRUB_PY' || return 1
-import re, sys
-path = sys.argv[1]
-with open(path, encoding="utf-8") as fh:
-    text = fh.read()
-item = re.compile(r'[ \t]*<Item\d+\s+Value="(?:anchordock[^"]*|dockedformeditor)"\s*/>[ \t]*\r?\n?', re.I)
-block = re.compile(r'<StaticAutoInstallPackages(?:\s[^>]*)?(?<!/)>.*?</StaticAutoInstallPackages>', re.S)
-new = block.sub(lambda m: item.sub("", m.group(0)), text)
-if new != text:
-    with open(path, "w", encoding="utf-8") as fh:
-        fh.write(new)
-SCRUB_PY
-    if docking_listed "$1"; then echo "$2: could not take the docking packages out of $f"; return 1; fi
-    echo "$2: docking packages taken out of the install list ($f; the old file is in $LOGDIR)"
+prepare_build() {   # what any build needs; sets DIR
+    DIR=$(laz_dir) || die "lazarus-project is not installed: run dev-setup with install-lazarus"
+    command -v lazbuild > /dev/null || die "lazbuild not found: run dev-setup with install-lazarus"
+    dpkg-query -W -f='${Status}' libqt5pas-dev 2> /dev/null | grep -q 'ok installed' \
+        || die "libqt5pas-dev is not installed: run dev-setup with install-lazarus"
+    # After a Lazarus upgrade the new version's folder needs its qt5 units folder again (see dev-setup).
+    if [ ! -d "$DIR/units/x86_64-linux/qt5" ] || [ ! -O "$DIR/units/x86_64-linux/qt5" ]; then
+        sudo install -d -o "$(id -un)" -g "$(id -gn)" "$DIR/units/x86_64-linux/qt5" || die "could not create $DIR/units/x86_64-linux/qt5"
+    fi
 }
 
 build_one() {   # build_one PROFILE LAYOUT: lazbuild the IDE into <profile>/bin/lazarus, copy it to lazarus-LAYOUT
@@ -1619,20 +1736,52 @@ build_one() {   # build_one PROFILE LAYOUT: lazbuild the IDE into <profile>/bin/
     echo "  built in $(( $(date +%s) - t0 ))s: $d/bin/lazarus-$lay"
 }
 
+build_layout() {   # build_layout PROFILE LAYOUT: one layout, recorded with the list it was built from
+    local p=$1 lay=$2 d
+    d=$(pdir "$p")
+    # The floating build runs with the docking packages out of the list; the docked build adds them itself
+    # (--add-package). The caller then makes the list follow the active layout (settle).
+    if [ "$lay" = floating ]; then scrub_docking "$d" "$p" quiet || return 1; fi
+    build_one "$p" "$lay" && record_build "$d" "$lay"
+}
+
+cmd_dock() {
+    local want p d had
+    case "${1:-}" in
+        on) want=docked ;;
+        off) want=floating ;;
+        *) die "dock takes on or off" ;;
+    esac
+    refuse_if_running "dock $1"
+    shift; parse_opts "$@"
+    for p in "${PROFILES[@]}"; do
+        d=$(pdir "$p")
+        adopt "$p"
+        restore_lists "$d"
+        # v95 (plan item 4, choice A): a layout built from an older list (or not built) is rebuilt first, so a
+        # switch never throws away packages installed from the IDE.
+        if ! is_current "$d" "$want"; then
+            had=$(built_from "$d" "$want") || had="?"
+            echo "$p: the $want layout is not current (built from [${had:-no extra packages}], the list names [$(list_names "$d")]): rebuilding it first"
+            [ -n "${DIR:-}" ] || prepare_build
+            ACTIVE="$p $(layout "$d")"
+            case "${ACTIVE##* }" in docked|floating) ;; *) ACTIVE="" ;; esac
+            if ! build_layout "$p" "$want"; then
+                [ -n "$ACTIVE" ] && settle "$p" "${ACTIVE##* }"
+                die "$p: the $want build failed (log in $LOGDIR); the active layout is unchanged"
+            fi
+            ACTIVE=""
+        fi
+        settle "$p" "$want" || die "$p: could not make $want active with its install list (see above)"
+        echo "$p: $want layout active (next IDE start)"
+    done
+}
+
 cmd_rebuild() {
-    local p d dir was f ok fail=0
+    local p d was f ok fail=0
     parse_opts "$@"
     refuse_if_running rebuild
-    dir=$(laz_dir) || die "lazarus-project is not installed: run dev-setup with install-lazarus"
-    command -v lazbuild > /dev/null || die "lazbuild not found: run dev-setup with install-lazarus"
-    dpkg-query -W -f='${Status}' libqt5pas-dev 2> /dev/null | grep -q 'ok installed' \
-        || die "libqt5pas-dev is not installed: run dev-setup with install-lazarus"
-    # After a Lazarus upgrade the new version's folder needs its qt5 units folder again (see dev-setup).
-    if [ ! -d "$dir/units/x86_64-linux/qt5" ] || [ ! -O "$dir/units/x86_64-linux/qt5" ]; then
-        sudo install -d -o "$(id -un)" -g "$(id -gn)" "$dir/units/x86_64-linux/qt5" || die "could not create $dir/units/x86_64-linux/qt5"
-    fi
-    mkdir -p "$LOGDIR" 2> /dev/null && [ -w "$LOGDIR" ] || LOGDIR="$HOME/.cache/lazmode"
-    mkdir -p "$LOGDIR"
+    prepare_build
     for p in "${PROFILES[@]}"; do
         d=$(pdir "$p")
         # The dark profile starts as a copy of the light one's settings (not its builds, which are rebuilt
@@ -1643,31 +1792,25 @@ cmd_rebuild() {
                 && echo "dark: settings copied from $LIGHT"
         fi
         mkdir -p "$d/bin"
-        # A save left behind by an interrupted docked build is put back first; then a list from before v94
-        # (the Oct 24 hand setup, or the IDE's own Install Packages) loses its docking packages.
+        # A save left behind by an interrupted build is put back first, then the IDE's own build is adopted.
         restore_lists "$d"
-        scrub_docking "$d" "$p" || { echo "$p: rebuild skipped (logs in $LOGDIR)"; fail=1; continue; }
+        adopt "$p"
         if [ ${#ADD[@]} -gt 0 ]; then
             { cat "$d/lazmode-packages" 2> /dev/null; printf '%s\n' "${ADD[@]}"; } | awk 'NF && !seen[$0]++' > "$d/lazmode-packages.new" \
                 && mv -f "$d/lazmode-packages.new" "$d/lazmode-packages"
         fi
         was=$(layout "$d")
         case "$was" in docked|floating) ;; *) was=docked ;; esac
-        ACTIVE="$d $was"
-        # Floating first, then docked, with the list files saved around the docked build and put back after it,
-        # built or not: the docking packages never stay in the profile's install list.
+        ACTIVE="$p $was"
+        # Floating first, then docked; then the active layout is put back with its install list.
         ok=0
-        if build_one "$p" floating && save_lists "$d"; then
-            build_one "$p" docked && ok=1
-            restore_lists "$d"
-        fi
+        build_layout "$p" floating && build_layout "$p" docked && ok=1
         if [ "$ok" = 1 ]; then
-            activate "$d" "$was"
-            printf '%s\n' "$(basename "$dir")" > "$d/bin/.lazmode-built"
+            settle "$p" "$was" || fail=1
             echo "$p: both layouts built on Qt5, $was active"
         else
             # Leave the layout that was active in place, whatever this build left in bin/lazarus.
-            for f in "$was" docked floating; do activate "$d" "$f" && break; done
+            for f in "$was" docked floating; do settle "$p" "$f" && break; done
             echo "$p: rebuild failed (logs in $LOGDIR)"; fail=1
         fi
         ACTIVE=""
@@ -1675,6 +1818,8 @@ cmd_rebuild() {
     return $fail
 }
 
+mkdir -p "$LOGDIR" 2> /dev/null && [ -w "$LOGDIR" ] || LOGDIR="$HOME/.cache/lazmode"
+mkdir -p "$LOGDIR"
 case "${1:-status}" in
     status) shift; parse_opts "$@"; cmd_status ;;
     dock) shift; cmd_dock "$@" ;;
@@ -1719,20 +1864,18 @@ LAZMODE_EOF
     LAZ_TODO=()
     for LAZ_P in light dark; do
         LAZ_PD="$HOME/.lazarus"; [ "$LAZ_P" = dark ] && LAZ_PD="$HOME/.lazarus-dark"
+        # v95: 'lazmode status --check' is the one test of a profile being in order: both layouts built on Qt5 for
+        # this version and from the current install list (not stale after packages installed from the IDE), the
+        # active bin/lazarus one of them, no docking class in the floating build, and the list following the active
+        # layout. It also adopts an IDE-made build first. (v94 tested the binaries, the version and the list here.)
         LAZ_OK=1
-        for LAZ_B in lazarus-floating lazarus-docked lazarus; do
-            ldd "$LAZ_PD/bin/$LAZ_B" 2> /dev/null | grep -q libQt5Pas || LAZ_OK=0
-        done
-        [ "$(cat "$LAZ_PD/bin/.lazmode-built" 2> /dev/null)" = "$LAZ_VER" ] || LAZ_OK=0
-        # A floating build that came out docked, or an install list that names the docking packages (the Oct 24
-        # hand setup; the IDE's own Install Packages), is rebuilt: lazmode takes them out of the list first.
-        if grep -qa TAnchorDockMaster "$LAZ_PD/bin/lazarus-floating" 2> /dev/null \
-            || grep -Eqi '<Item[0-9]+ +Value="(anchordock[^"]*|dockedformeditor)"' "$LAZ_PD/miscellaneousoptions.xml" 2> /dev/null; then
-            LAZ_OK=0
-        fi
+        LAZ_ST=$("$HOME/.local/bin/lazmode" status --profile "$LAZ_P" --check 2>&1) || LAZ_OK=0
+        printf '%s\n' "$LAZ_ST" | grep -E 'adopted|kept aside' || true
+        [ -d "$LAZ_PD/bin" ] || LAZ_OK=0
         if [ "$LAZ_OK" = 1 ]; then
-            echo "Lazarus $LAZ_P profile: Qt5 builds for $LAZ_VER already in place ($("$HOME/.local/bin/lazmode" status --profile "$LAZ_P" | sed -n 's/^  active layout *//p'))."
+            echo "Lazarus $LAZ_P profile: Qt5 builds for $LAZ_VER already in place and current ($(printf '%s\n' "$LAZ_ST" | sed -n 's/^  active layout *//p'))."
         else
+            [ -d "$LAZ_PD/bin" ] && printf '%s\n' "$LAZ_ST" | grep -E 'stale|missing|but docked|contains' | sed "s/^ */Lazarus $LAZ_P profile: /" | sort -u
             LAZ_TODO+=("$LAZ_P")
         fi
     done
@@ -9249,6 +9392,46 @@ else
 fi
 
 # =================================================================
+# =================================================================
+# install-herdr (added in v95): herdr (github.com/herdrdev/herdr, Apache-2.0), a terminal multiplexer for coding
+# agents: tmux-style workspaces and panes, each agent's state (working, blocked, idle) and the layout restored after a
+# server restart. One Rust binary, no Node. Installed with its own installer, the install 'herdr update' knows how to
+# update (Homebrew, mise and Nix installs update through those instead): saved to assets/downloads and run with sh,
+# not piped from curl. It reads https://herdr.dev/latest.json, checks the binary's SHA-256 from that manifest and
+# installs to HERDR_INSTALL_DIR, here ~/.local/bin (already on PATH). An installed herdr is left alone: it updates
+# itself ('herdr update'). No config is written (~/.config/herdr/config.toml stays herdr's defaults until you change
+# it), and its agent integrations are config, so dev-init installs them. tmux (base) is the general multiplexer.
+# =================================================================
+if [[ "$FLAGS" =~ " install-herdr " ]]; then
+    echo "================================================================="
+    echo "Installing herdr..."
+    echo "================================================================="
+    if command -v herdr > /dev/null 2>&1; then
+        echo "herdr is already installed ($(herdr --version 2> /dev/null | head -n 1), $(command -v herdr)): left alone; 'herdr update' updates it."
+    else
+        HERDR_INSTALLER="$ASSETS/downloads/herdr-install.sh"
+        if curl -fsSL --retry 3 -o "$HERDR_INSTALLER" https://herdr.dev/install.sh \
+            && head -n 1 "$HERDR_INSTALLER" | grep -q '^#!'; then
+            # Not fatal under set -e: a failed herdr install should not stop the rest of setup. No terminal for
+            # it to ask on, so a question would fail instead of waiting.
+            if HERDR_INSTALL_DIR="$HOME/.local/bin" sh "$HERDR_INSTALLER" < /dev/null \
+                && "$HOME/.local/bin/herdr" --version > /dev/null 2>&1; then
+                echo "herdr installed: $("$HOME/.local/bin/herdr" --version 2> /dev/null | head -n 1) in ~/.local/bin. Start it with 'herdr'; dev-init installs its agent integrations."
+                rm -f "$HERDR_INSTALLER"
+            else
+                echo "NOTICE: herdr's installer failed (kept as assets/downloads/herdr-install.sh); rerun setup with install-herdr."
+                DL_FAILED+=("herdr (install-herdr)")
+            fi
+        else
+            echo "NOTICE: could not download herdr's installer from https://herdr.dev/install.sh; rerun setup with install-herdr."
+            rm -f "$HERDR_INSTALLER"
+            DL_FAILED+=("herdr (install-herdr)")
+        fi
+    fi
+else
+    echo "Skipping herdr. (Run with 'install-herdr')"
+fi
+
 # install-hermes / install-openclaw : personal agents (added in v86). Both opt-in, in no group,
 # NOT in install-all. A personal agent is a long-running assistant with memory, skills and a gateway
 # you can message from Telegram, Discord, Slack and others; it is not a coding agent (Claude Code,
@@ -9351,7 +9534,7 @@ echo "Cleaning up system packages..."
 sudo apt autoremove -y
 
 echo "================================================================="
-echo "Setup Version 94 complete! 🎉"
+echo "Setup Version 95 complete! 🎉"
 echo "NEXT, in this order:"
 echo "  a. source ~/.bashrc                      (or open a new terminal)"
 echo "  b. ./dev-init-chromebook.sh <flags>  applies ~/.config/dev-init/secrets.env: GitHub, Hugging Face,"

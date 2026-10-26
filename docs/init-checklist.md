@@ -1,6 +1,6 @@
 # Init checklist
 
-*Working notes kept alongside the scripts, copied at the v93 release, updated for v94. The "since vNN" remarks date each behaviour; [CHANGELOG.md](../CHANGELOG.md) has the full story.*
+*Working notes kept alongside the scripts, copied at the v93 release, updated for v95. The "since vNN" remarks date each behaviour; [CHANGELOG.md](../CHANGELOG.md) has the full story.*
 
 ## Run order
 
@@ -33,7 +33,7 @@ The same expansion is used by all three scripts, so a flag set that installs is 
 
 | Flag | Installs |
 | --- | --- |
-| *(none)* | Base: apt packages, pipx and uv, SSH key, Docker, Homebrew with ddev/gh/mkcert, Chrome |
+| *(none)* | Base: apt packages (tmux among them since v95), pipx and uv, SSH key, Docker, Homebrew with ddev/gh/mkcert, Chrome |
 | `install-all` | Every category below |
 | `install-editors` | vscode, windsurf, cursor, lazarus (since v94 the IDE is rebuilt on Qt5, in light and dark profiles with docked and floating layouts) |
 | `install-languages` | rust, node, go, pwsh, ruby, cpp, asm, dotnet, java |
@@ -81,6 +81,7 @@ The same expansion is used by all three scripts, so a flag set that installs is 
 | `install-gitlab` | glab, GitLab's CLI, from Homebrew (like gh; Debian's own glab is years behind) with bash completion, and gitlab-ci-local (npm) to run a project's .gitlab-ci.yml here, jobs with an image in Docker; plus rsync and git. Logins come from init. Pulls in install-node. In install-all (v91) |
 | `install-gitlab-runner` | GitLab Runner from GitLab's apt repository as the gitlab-runner service, its user in the docker group for the Docker executor; left unregistered until init registers it with GITLAB\_RUNNER\_TOKEN\_ONCE. Pulls in install-gitlab. Opt-in, in no group (v91) |
 | `install-vue` | Vue.js scaffolding warmed for offline use: create-vue and create-nuxt in npx's cache and Nuxt's minimal template in \~/.cache/giget. Nothing global: Vue, Pinia, Vue Router and Nuxt stay per project. Pulls in install-node. In install-all (v91) |
+| `install-herdr` | herdr, a terminal multiplexer for coding agents (github.com/herdrdev/herdr, Apache-2.0): workspaces and panes like tmux, each agent's state (working, blocked, idle), and the layout restored after a restart. Its own installer (saved to assets/downloads, run with sh; it checks the binary's SHA-256 from herdr's manifest) puts `herdr` in \~/.local/bin; an installed herdr is left alone (`herdr update` updates it). Pulls in install-node. In install-all (v95) |
 | `install-puppet` | OpenVox, Vox Pupuli's free fork of Puppet: openvox-agent (puppet, facter) and OpenBolt (bolt) from apt.voxpupuli.org, in /opt/puppetlabs/bin at the end of PATH. OpenVox 8; OPENVOX\_MAJOR=9 picks the next line. Masterless: the agent service is disabled. Opt-in, in no group, not in install-all (v91) |
 | `install-chef` | Cinc Workstation, the free build of Chef Workstation (cinc-client, knife, Test Kitchen with Dokken, Cookstyle, ChefSpec, Berkshelf, cinc-auditor), its .deb checked against Cinc's SHA-256, in /opt/cinc-workstation/bin at the end of PATH. No license key. Opt-in, in no group, not in install-all (v91) |
 | `install-config-mgmt` | Group: install-puppet + install-chef. Ansible stays in install-iac. Opt-in, not in install-all (v91) |
@@ -128,21 +129,31 @@ The test script ends with a disk report (v77): the measured size of every instal
 
 Setup installs Lazarus from the SourceForge debs, then rebuilds the IDE on Qt5: the stock GTK2 IDE draws some dialogs blank under Crostini and they never take the keyboard (docs/crostini-gotchas.md). It builds four IDE binaries, so neither the first start nor a switch waits on a build: a light profile (`~/.lazarus`) and a dark one (`~/.lazarus-dark`), each docked and floating. Expect 10–20 minutes more than a plain Lazarus install on a clean machine. On disk, Lazarus with the four Qt5 IDE builds takes about 3.2 GB (dev-test disk report, Oct 25 2026); the test's disk report measures it on each machine. Build logs go to `assets/logs/lazarus-build-<profile>-<layout>.log`. There is no extra flag, no key and no prompt.
 
-- **Two launchers:** **Lazarus** opens the light profile; **Lazarus (Dark)** opens the dark one with qt5ct's Fusion style and darker palette (`env QT_QPA_PLATFORMTHEME=qt5ct startlazarus --pcp=$HOME/.lazarus-dark`). Pick light or dark by the launcher you open; both can run side by side.
+- **Two launchers:** **Lazarus** opens the light profile; **Lazarus (Dark)** opens the dark one through qt5ct (`env QT_QPA_PLATFORMTHEME=qt5ct startlazarus --pcp=$HOME/.lazarus-dark`). Pick light or dark by the launcher you open; both can run side by side.
+- **Any dark palette is fine** (v95). Setup starts qt5ct on Fusion with the **darker** palette, only when there is no `~/.config/qt5ct/qt5ct.conf` yet, and leaves yours alone. To pick another: `lazmode theme`, Appearance → Palette → **Custom**, choose one (darker, waves, dusk…), Apply. dev-test names the style and palette in use and passes for any of them; it warns only when the dark launcher wouldn't look dark (the custom palette is off, or its file is gone).
 - **Docked is the default.** The docked build has the main window docked (AnchorDocking) and the form designer as an editor tab (DockedFormEditor).
-- **`lazmode`** (in `~/.local/bin`) switches between the builds setup made, so a switch is a file copy that takes seconds. It refuses to switch or rebuild while Lazarus is running. `--profile light|dark|both` defaults to both.
+- **`lazmode`** (in `~/.local/bin`) switches between the builds setup made, so a switch is a file copy that takes seconds while both are current. It refuses to switch or rebuild while Lazarus is running. `--profile light|dark|both` defaults to both.
 
 | Command | What it does |
 | --- | --- |
-| `lazmode status` | Per profile: the active layout, both builds and their widget set, the dark launcher's `Exec=` line, and qt5ct's style and palette |
-| `lazmode dock on` / `lazmode dock off` | The docked or the floating build becomes the active one (next IDE start) |
-| `lazmode rebuild [--add-package <lpk>…]` | Rebuilds both layouts on Qt5 and keeps the active one. Packages given here are recorded in `<profile>/lazmode-packages` and included in every later rebuild. The docking packages never stay in the profile's install list (`miscellaneousoptions.xml`, which `lazbuild --add-package` writes to): the file is saved before the docked build and put back after it, and a list that already names them (a profile set up by hand before v94) loses them first, with a copy of the old file in `assets/logs`. Also the way back after a Lazarus upgrade |
+| `lazmode status [--check]` | Per profile: the active layout, both builds with their widget set and whether each is current or stale (built from an older install list), the install list and whether it follows the layout, the dark launcher's `Exec=` line, and qt5ct's style and palette. `--check` exits 1 unless all of that is in order (setup and init use it) |
+| `lazmode dock on` / `lazmode dock off` | The docked or the floating build becomes the active one (next IDE start), and the install list follows it. A stale layout is rebuilt first (minutes, with the build log as in `rebuild`), so a switch never drops packages |
+| `lazmode rebuild [--add-package <lpk>…]` | Rebuilds both layouts on Qt5 and keeps the active one. Packages given here are recorded in `<profile>/lazmode-packages` and included in every later rebuild (for scripted installs; from the IDE is the everyday way, below). The floating build runs with the docking packages out of the profile's install list (`miscellaneousoptions.xml`), and afterwards the list follows the active layout. Also the way back after a Lazarus upgrade |
 | `lazmode theme` | Opens qt5ct for the dark profile's style and palette |
 
-- **Install IDE packages with `lazmode rebuild --add-package`,** not with Package → Install/Uninstall Packages. The IDE's own rebuild can fall back to GTK2, and GTK2 dialogs draw blank and freeze under Crostini. If that has happened, `lazmode dock on` puts the Qt5 build back.
+- **Install packages from inside the IDE** (v95): Package → Install/Uninstall Packages, or yes when a project asks to install the packages it needs. The IDE rebuilds itself from the profile's install list and restarts. That list names the docking packages exactly while docked is active, so the IDE comes back in the layout it was started in, with the new packages. The next `lazmode` command adopts that build as the active layout (the old one is kept as `bin/lazarus-<layout>.bak`). The other layout is then stale: `lazmode status` says so, dev-test fails on it, and `lazmode dock on|off` rebuilds it before switching (or run `lazmode rebuild` when convenient). If the IDE's rebuild ever comes out GTK2 instead of Qt5, `lazmode` keeps it aside as `bin/lazarus.ide-built-gtk2`, puts the Qt5 layout back, and `lazmode rebuild` builds both layouts with your packages. `lazmode rebuild --add-package` stays for scripted installs.
+- **Before v95** (found Oct 25 2026): the install list never named the docking packages, so the IDE's own rebuild came out floating, and `lazmode dock on` then brought back a docked build without the new packages, so a project kept asking for them. Rerunning setup with v95 rebuilds both profiles once (their builds have no record of the list they were made from).
 - **Still manual** (see GUI first-runs): the editor color scheme in each profile (Tools → Options → Editor → Display → Colors; e.g. Twilight for dark, Default for light) and the Object Inspector colors in the dark profile (Tools → Options → Environment → Object Inspector).
 - ChromeOS draws the window title bars, so no Linux theme changes them.
-- Init reports Lazarus as configured once the four builds and the dark launcher are there, and as a skip before setup has installed it.
+- Init reports Lazarus as configured once the four builds and the dark launcher are there and neither layout is stale (since v95), and as a skip before setup has installed it.
+
+### tmux and herdr (v95)
+
+tmux is in the base packages since v95: no `~/.tmux.conf` is written and nothing starts it from `~/.bashrc`. Use it for long jobs you detach from, SSH sessions to the other laptops over Tailscale that should survive a dropped connection, and scripts. herdr (`install-herdr`, in install-all) is the multiplexer for coding agents: start it with `herdr` where the work lives, run agents in its panes, `Ctrl+B q` detaches and `herdr` reattaches. Its server keeps running in the background after the terminal closes.
+
+- **Both use Ctrl+B as their prefix.** herdr inside tmux works: there, Ctrl+B Ctrl+B passes a Ctrl+B through to herdr (tmux's default `send-prefix`). Or change one of the two prefixes.
+- **A shell that starts tmux by itself** makes herdr see `tmux` instead of the agent in a pane. If you add such a rule to `~/.bashrc`, skip it inside herdr, which sets `HERDR_ENV=1` in its panes:
+  `if [[ -z ${TMUX:-} && ${HERDR_ENV:-} != 1 ]]; then tmux new-session -A -s main; fi`
 
 ## The secrets file
 
@@ -398,6 +409,10 @@ Nothing to log in to: Playwright, Selenium, the Gherkin runners, Robot Framework
 
 Optional: glab and gitlab-ci-local work without an account, and a missing token is a skip. With `GITLAB_TOKEN_ONCE`, init logs glab in to gitlab.com (`glab auth login --stdin`, SSH as the git protocol) and uploads `~/.ssh/id_ed25519.pub`; with `DRUPALCODE_TOKEN_ONCE`, it adds git.drupalcode.org as a second host. An existing login is kept; a rejected token is a to-do. `GITLAB_RUNNER_TOKEN_ONCE` registers the runner once (`gitlab-runner register --non-interactive`, Docker executor), after which init reports it as registered. `GITLAB_MCP=1` adds GitLab's MCP server (`https://gitlab.com/api/v4/mcp`) to Claude Code; its OAuth login comes on first use. GitLab itself is not installed: it needs 8 GB of RAM, more than the Linux container gets.
 
+### herdr (install-herdr, v95)
+
+No account and no key. Init installs herdr's integration for each supported agent on PATH (`claude`, `codex`; also `hermes`, Antigravity's `agy` and `cursor-agent` when installed) with `herdr integration install <agent>`, when `herdr integration status` doesn't show it as current. The integration is a hook in the agent's own config: for Claude Code, `~/.claude/hooks/herdr-agent-state.sh` and hook entries in `~/.claude/settings.json`. An agent's config folder appears on its first run, so until you have started it once that integration is a skip ("start claude once, then rerun init"), not a to-do. herdr's own settings stay its defaults (`~/.config/herdr/config.toml` once you change one); `herdr --default-config` prints them. Gemini CLI and aider are not on herdr's integration list: they run in herdr panes, without state tracking or session restore. See tmux and herdr under Running setup for the shared Ctrl+B prefix.
+
 ### Puppet and Chef (install-puppet, install-chef)
 
 Nothing to log in to: both run masterless here (`puppet apply`, Bolt, `cinc-client -z`). Init reports the OpenVox, facter, OpenBolt and Cinc versions; a missing command is a to-do, and so is an enabled `puppet` service. With `KNIFE_CHEF_SERVER_URL`, `KNIFE_NODE_NAME` and `KNIFE_CLIENT_KEY` all set, init writes knife's `[default]` profile to the `credentials` file in Cinc's knife folder (mode 600), never over an existing `[default]`, then tries `knife node list`; for a self-signed server certificate run `knife ssl fetch` first.
@@ -420,7 +435,7 @@ None of these can be scripted; do them once, in any order. Init's still-manual l
 - [ ] Android Studio: launch from the app drawer, accept the wizard defaults, point it at the existing SDK at `~/.android/sdk` if asked, skip the emulator. With ADB debugging enabled, the Chromebook appears as a connected device. Since v70 setup pins it to the X11 toolkit (`-Dawt.toolkit.name=XToolkit` in its VM options): its bundled runtime defaults to native Wayland, which on ChromeOS dims the IDE window whenever it has focus. If the window ever dims again after an Android Studio update, check Help → Edit Custom VM Options for that line.
 - [ ] Antigravity: launch Antigravity IDE (or Antigravity) from the app drawer, or run antigravity-ide, and sign in with your Google account. The CLI is `agy` at `~/.local/bin/agy`; the Python SDK venv is activated with `source ~/.antigravity-env/bin/activate`.
 - [ ] Cursor, Windsurf, VS Code: sign in only if you want their AI features; nothing else depends on it. Since v66 Cursor has its own ChromeOS launcher entry (it ships as a bare AppImage, so it had none); rerun setup with install-cursor on machines set up earlier, and give the app drawer a minute to pick it up.
-- [ ] Lazarus (v94): in each profile pick an editor color scheme (Tools → Options → Editor → Display → Colors; e.g. Twilight in **Lazarus (Dark)**, Default in **Lazarus**), and in the dark profile the Object Inspector colors (Tools → Options → Environment → Object Inspector). Install IDE packages with `lazmode rebuild --add-package <lpk>`, never from the IDE's Package menu (see Lazarus under Running setup).
+- [ ] Lazarus (v94): in each profile pick an editor color scheme (Tools → Options → Editor → Display → Colors; e.g. Twilight in **Lazarus (Dark)**, Default in **Lazarus**), and in the dark profile the Object Inspector colors (Tools → Options → Environment → Object Inspector). Install IDE packages from the IDE itself (Package menu, or when a project asks); since v95 the layout survives it, and `lazmode dock on|off` rebuilds the other layout before switching (see Lazarus under Running setup).
 - [ ] Godot: launch Godot Engine or Godot Engine (.NET) from the app drawer. When creating a project choose the Compatibility renderer; Forward+ and Mobile need Vulkan, which the Linux container does not expose.
 - [ ] drupal.org: add `~/.ssh/id_ed25519.pub` at git.drupalcode.org → user settings → SSH keys. Issue forks and merge requests push over SSH, and there is no API for it, so init can only check. The test script warns until `ssh -T git@git.drupal.org` greets you.
 - [ ] Langfuse: `cp ~/agentic/.env.example ~/agentic/.env` and fill in the same Langfuse keys there for the agentic project (init sets them in the shell; the project reads its own `.env`).
