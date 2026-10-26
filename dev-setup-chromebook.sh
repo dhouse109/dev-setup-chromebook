@@ -1718,6 +1718,13 @@ if [[ "$FLAGS" =~ " install-lazarus " ]]; then
         fi
     fi
 
+    # v96: gdb and GNU Global, for 'lazmode vscode' (building and debugging Lazarus projects in VS Code, Cursor and
+    # Devin). gdb is the debugger Devin and Cursor drive through Native Debug (Oct 26 2026: it was not there without
+    # install-cpp, and Lazarus 4's own debugger is FpDebug); GNU Global (gtags, global) is what the Pascal extension
+    # (alefragnani.pascal) uses for Go to Definition and Find References, which otherwise says 'The "global" command
+    # is not available'.
+    sudo apt install -y gdb global
+
     # v94: the IDE rebuilt on Qt5, in a light and a dark profile, each with a docked and a floating layout
     # (Oct 24 2026: the stock GTK2 IDE drew some modal dialogs blank under Crostini, Run Parameters and New
     # Project among them, and they never took keyboard focus; removing gtk2-engines-pixbuf did not help, Qt5
@@ -1752,7 +1759,10 @@ if [[ "$FLAGS" =~ " install-lazarus " ]]; then
 #   lazmode rebuild [--profile light|dark|both] [--add-package LPK...]
 #                                                              rebuild both layouts on Qt5, keep the active one
 #   lazmode theme                                              qt5ct (the dark profile's style and palette)
-# --profile defaults to both. v95: install packages from inside the IDE (Package > Install/Uninstall Packages, or
+#   lazmode vscode [DIR|PROJECT.lpi] [--profile light|dark] [--force]
+#                                                              v96: build and debug the project in VS Code, Cursor
+#                                                              or Devin: a Debug-gdb build mode and .vscode/ files
+# --profile defaults to both (vscode: dark when ~/.lazarus-dark exists). v95: install packages from inside the IDE (Package > Install/Uninstall Packages, or
 # when a project asks): the install list names the docking packages exactly while docked is active, so the IDE's
 # own rebuild keeps the layout it was started in, and lazmode adopts that build instead of overwriting it. The
 # other layout is then stale (built from an older list) and is rebuilt when you switch to it. 'lazmode rebuild
@@ -2162,6 +2172,320 @@ cmd_rebuild() {
     return $fail
 }
 
+# v96: lazmode vscode: build and debug a Lazarus project in VS Code, Cursor or Devin (Oct 26 2026: by hand in Devin on
+# TDaemon, lazbuild built the Debug mode and gdb through Native Debug stopped at a breakpoint on the worker thread).
+# lazbuild reads the .lpi as the IDE does, with the IDE's own --pcp, so packages installed from the IDE are found.
+# The two debuggers want opposite debug info (plan v96 item 5, choice B): Lazarus's FpDebug (VS Code's CNOC.fpdebug)
+# needs DWARF 3, while gdb reads strings only with "Dwarf 2 with sets" (-gw2 -godwarfsets; on DWARF 3 they showed as
+# <unknown>). So the project gains a second build mode, Debug-gdb, a copy of Debug on Dwarf 2 with sets: VS Code
+# builds Debug and debugs it with FpDebug, Devin and Cursor build Debug-gdb and debug it with gdb. Debug itself is
+# never changed. The .lpi keys are Lazarus 4.8's own (ide/packages/ideconfig/compileroptions.pp and
+# ide/packages/ideproject/project.pp): Linking/Debugging/DebugInfoType (dsDwarf3, dsDwarf2Set; dsAuto when absent),
+# GenerateDebugInfo (on when absent from compiler-options version 11), and the first build mode is the default, its
+# options in the top-level CompilerOptions, the others' in BuildModes/Item(N)/CompilerOptions. Executable paths are
+# asked of lazbuild (--get-expand-text='$(TargetFile)', Lazarus 4.8's ide/lazbuild.lpr; a build's "Linking" line
+# where that option is missing), never read from the .lpi: TDaemon's target is $(TargetCPU)-$(TargetOS)\Debug\...,
+# which a plain read got wrong (the hand-written launch.json pointed at ./TestDaemon).
+cmd_vscode() {
+    local target="" prof="" force=0 lpi pick lpis=()
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --profile) shift
+                case "${1:-}" in light|dark) prof=$1 ;; *) die "vscode: --profile takes light or dark, not '${1:-}'" ;; esac ;;
+            --profile=*) set -- --profile "${1#--profile=}" "${@:2}"; continue ;;
+            --force) force=1 ;;
+            -*) die "vscode: unknown option '$1' (lazmode help)" ;;
+            *) [ -z "$target" ] || die "vscode: one folder or .lpi at a time"; target=$1 ;;
+        esac
+        shift
+    done
+    target=${target:-.}
+    if [ -f "$target" ]; then
+        case "$target" in *.lpi) lpi=$(realpath "$target") ;; *) die "vscode: not a Lazarus project file (.lpi): $target" ;; esac
+    elif [ -d "$target" ]; then
+        mapfile -t lpis < <(find "$(realpath "$target")" -maxdepth 1 -type f -name '*.lpi' ! -name '.*' | sort)
+        case ${#lpis[@]} in
+            0) die "vscode: no .lpi in $(realpath "$target")" ;;
+            1) lpi=${lpis[0]} ;;
+            *) [ -t 0 ] || die "vscode: several projects in $(realpath "$target") (${lpis[*]##*/}): name the .lpi"
+               echo "Several projects in $(realpath "$target"): which one?"
+               select pick in "${lpis[@]##*/}"; do [ -n "$pick" ] && break; done
+               [ -n "$pick" ] || exit 1
+               lpi="$(realpath "$target")/$pick" ;;
+        esac
+    else
+        die "vscode: no such folder or .lpi: $target"
+    fi
+    command -v lazbuild > /dev/null || die "lazbuild not found: run dev-setup with install-lazarus"
+    # The profile you work in: dark when it exists, unless --profile light.
+    if [ -z "$prof" ]; then if [ -d "$DARK" ]; then prof=dark; else prof=light; fi; fi
+    command -v gdb > /dev/null || echo "NOTICE: gdb is not installed (rerun dev-setup with install-lazarus, v96 adds it); the (gdb) configuration needs it."
+    running && echo "NOTICE: Lazarus is running: if it has this project open, close it there first, or the IDE may save its own copy over the new build mode."
+    python3 - "$lpi" "$(pdir "$prof")" "$force" << 'VSCODE_PY'
+import copy, json, os, re, shlex, subprocess, sys
+import xml.etree.ElementTree as ET
+
+lpi, pcp, force = sys.argv[1], sys.argv[2], sys.argv[3] == "1"
+pdir, base = os.path.dirname(lpi), os.path.basename(lpi)
+name = os.path.splitext(base)[0]
+GDB_MODE = "Debug-gdb"
+
+
+def note(msg):
+    print("NOTICE: " + msg)
+
+
+def die(msg):
+    print("lazmode: vscode: " + msg, file=sys.stderr)
+    sys.exit(1)
+
+
+def items(bm):   # the build modes in order: plain <Item> lists, or legacy <Item1>..<ItemN> (with a Count)
+    if bm is None:
+        return []
+    its = [c for c in bm if c.tag == "Item"]
+    legacy = sorted((c for c in bm if re.fullmatch(r"Item\d+", c.tag)), key=lambda c: int(c.tag[4:]))
+    return its or legacy
+
+
+def modes(root):   # [(name, CompilerOptions element)]; the first mode is the default one, at the top level
+    out = []
+    for i, it in enumerate(items(root.find("ProjectOptions/BuildModes"))):
+        out.append((it.get("Name", ""), root.find("CompilerOptions") if i == 0 else it.find("CompilerOptions")))
+    return out or [("default", root.find("CompilerOptions"))]   # no build modes: an old project, one mode
+
+
+def find_mode(ms, want):
+    return next(((n, co) for n, co in ms if n.lower() == want.lower()), None)
+
+
+def dbginfo(co):   # (debug info on?, DebugInfoType) as Lazarus reads them
+    if co is None:
+        return False, "dsAuto"
+    v = co.find("Version")
+    ver = int(v.get("Value", "0")) if v is not None and v.get("Value", "").isdigit() else 0
+    g = co.find("Linking/Debugging/GenerateDebugInfo")
+    on = (g.get("Value", "") == "True") if g is not None else ver >= 11
+    t = co.find("Linking/Debugging/DebugInfoType")
+    return on, (t.get("Value") if t is not None and t.get("Value") else "dsAuto")
+
+
+def sub(parent, tag):
+    e = parent.find(tag)
+    if e is None:
+        e = ET.SubElement(parent, tag)
+    return e
+
+
+def lazbuild(*args):
+    return subprocess.run(["lazbuild", "--pcp=" + pcp, *args], cwd=pdir, capture_output=True, text=True)
+
+
+def target_of(mode, lpifile=lpi):
+    """The mode's executable, asked of lazbuild: --get-expand-text first, a build's Linking line otherwise."""
+    r = lazbuild("--bm=" + mode, "--get-expand-text=$(TargetFile)", lpifile)
+    lines = [l.strip() for l in r.stdout.splitlines() if l.strip()]
+    # A first run in a new profile prints a CopySecondaryConfigFile line before the answer.
+    if r.returncode == 0 and lines and lines[-1].startswith("/"):
+        return lines[-1], "--get-expand-text"
+    r = lazbuild("--bm=" + mode, lpifile)
+    links = re.findall(r"Linking (/\S+)", r.stdout + r.stderr)
+    if r.returncode == 0 and links:
+        return links[-1], "the Linking line of a build"
+    die("lazbuild found no executable for mode %s (build output: %s)" % (mode, (r.stdout + r.stderr).strip()[-600:]))
+
+
+raw = open(lpi, "rb").read()
+text = raw.decode("utf-8")
+try:
+    root = ET.fromstring(raw)
+except ET.ParseError as e:
+    die("%s is not valid XML: %s" % (base, e))
+ms = modes(root)
+default_name = ms[0][0]
+debug = find_mode(ms, "Debug")
+dbg_name = debug[0] if debug else default_name
+src_name, src_co = debug if debug else ms[0]
+
+# --- the Debug-gdb build mode -----------------------------------------------------------------------------------
+if find_mode(ms, GDB_MODE):
+    print("%s: a %s build mode is there already; left as it is." % (base, GDB_MODE))
+else:
+    co = copy.deepcopy(src_co) if src_co is not None else ET.Element("CompilerOptions")
+    if co.find("Version") is None:
+        ET.SubElement(co, "Version").set("Value", "11")
+    dbg = sub(sub(co, "Linking"), "Debugging")
+    on, _ = dbginfo(co)
+    if not on:   # with no Debug mode the copy is of the default one, with debug info turned on
+        sub(dbg, "GenerateDebugInfo").set("Value", "True")
+    sub(dbg, "DebugInfoType").set("Value", "dsDwarf2Set")
+    cust = co.find("Other/CustomOptions")
+    if cust is not None and re.search(r"(^|\s)-g[wsl]?\d?(\s|$)", cust.get("Value", "")):
+        note("%s's custom options (%s) set debug info themselves, and Debug-gdb copies them: check Project Options >"
+             " Custom Options in Debug-gdb." % (src_name, cust.get("Value")))
+    bm = root.find("ProjectOptions/BuildModes")
+    legacy = bm is not None and bm.get("Count") is not None
+    if bm is None:   # an old project with no build modes: the default one has to be listed first
+        po_ver = root.find("ProjectOptions/Version")
+        legacy = po_ver is None or int(po_ver.get("Value", "0") or 0) <= 11
+    item = ET.Element("Item%d" % (len(items(bm)) + 1 if bm is not None else 2) if legacy else "Item")
+    item.set("Name", GDB_MODE)
+    item.append(co)
+
+    def snippet(elem, indent):
+        ET.indent(elem, space="  ")
+        s = ET.tostring(elem, encoding="unicode").replace(" />", "/>")
+        return "".join(indent + l + "\n" for l in s.splitlines())
+
+    m = re.search(r"^([ \t]*)</BuildModes>", text, re.M)
+    if bm is not None and m:
+        new = text[:m.start()] + snippet(item, m.group(1) + "  ") + text[m.start():]
+        if legacy:   # the item count of a legacy list
+            new = re.sub(r'(<BuildModes\b[^>]*\bCount=")(\d+)(")', lambda c: "%s%d%s" % (c.group(1), int(c.group(2)) + 1, c.group(3)), new, count=1)
+    else:
+        m = re.search(r"^([ \t]*)</ProjectOptions>", text, re.M)
+        if bm is not None or not m:
+            die("could not find where to add the build mode in %s; add a copy of %s named %s in Project Options > Build modes"
+                % (base, src_name, GDB_MODE))
+        ind = m.group(1) + "  "
+        if legacy:
+            head = '%s<BuildModes Count="2">\n%s  <Item1 Name="%s" Default="True"/>\n' % (ind, ind, default_name)
+        else:
+            head = '%s<BuildModes>\n%s  <Item Name="%s" Default="True"/>\n' % (ind, ind, default_name)
+        new = text[:m.start()] + head + snippet(item, ind + "  ") + "%s</BuildModes>\n" % ind + text[m.start():]
+    try:
+        ET.fromstring(new.encode("utf-8"))
+    except ET.ParseError as e:
+        die("the edited project did not parse (%s); %s is unchanged" % (e, base))
+    # Checked by lazbuild before it replaces the original: a hidden copy next to it (relative paths stay right),
+    # built without writing it back.
+    tmp = os.path.join(pdir, ".%s.lazmode.lpi" % name)
+    with open(tmp, "w", encoding="utf-8") as fh:
+        fh.write(new)
+    r = lazbuild("--bm=" + GDB_MODE, "--no-write-project", tmp)
+    for leftover in (tmp, os.path.splitext(tmp)[0] + ".lps"):
+        if leftover != tmp and os.path.exists(leftover):
+            os.remove(leftover)
+    if r.returncode != 0:
+        os.remove(tmp)
+        tail = "\n".join((r.stdout + r.stderr).strip().splitlines()[-12:])
+        die("lazbuild --bm=%s failed on the edited copy, so %s is unchanged (does the project build as it is? lazbuild"
+            " --bm=%s %s):\n%s" % (GDB_MODE, base, src_name, base, tail))
+    bak, made_bak = lpi + ".bak", False
+    if not os.path.exists(bak):   # the original, kept the first time only
+        with open(bak, "wb") as fh:
+            fh.write(raw)
+        made_bak = True
+    st = os.stat(lpi)
+    os.replace(tmp, lpi)
+    os.chmod(lpi, st.st_mode & 0o7777)
+    print("%s: added the %s build mode (a copy of %s on Dwarf 2 with sets, -gw2 -godwarfsets), checked with"
+          " lazbuild --bm=%s%s" % (base, GDB_MODE, src_name, GDB_MODE, "; the original is %s.bak" % base if made_bak else ""))
+    root = ET.fromstring(new.encode("utf-8"))
+    ms = modes(root)
+
+# --- what each mode's debug info is -----------------------------------------------------------------------------
+on, t = dbginfo(find_mode(ms, dbg_name)[1])
+if not on:
+    note("%s has no debug info (Project Options > Debugging > Generate info for the debugger): FpDebug and gdb cannot stop"
+         " at breakpoints in it." % dbg_name)
+elif t != "dsDwarf3":
+    note("%s is on %s, but FpDebug (VS Code) needs DWARF 3: Project Options > Debugging > Type of debug info > Dwarf 3"
+         " (-gw3), in the %s mode (not changed here)." % (dbg_name, t, dbg_name))
+on, t = dbginfo(find_mode(ms, GDB_MODE)[1])
+if not on:
+    note("%s has no debug info: gdb cannot stop at breakpoints in it." % GDB_MODE)
+elif t != "dsDwarf2Set":
+    note("%s is on %s: gdb reads strings only with Dwarf 2 with sets (-gw2 -godwarfsets)." % (GDB_MODE, t))
+
+# --- the executables --------------------------------------------------------------------------------------------
+dbg_exe, how = target_of(dbg_name)
+gdb_exe, _ = target_of(GDB_MODE)
+print("Targets (from lazbuild, %s): %s %s, %s %s" % (how, dbg_name, dbg_exe, GDB_MODE, gdb_exe))
+if dbg_exe == gdb_exe:
+    note("%s and %s build the same file (%s): its path does not include $(BuildModeName), so each launch's build step"
+         " rebuilds it for its own debugger." % (dbg_name, GDB_MODE, os.path.relpath(dbg_exe, pdir)))
+
+
+def ws(p):   # a path for the .vscode files: relative to the project folder when inside it
+    rel = os.path.relpath(p, pdir)
+    return p if rel.startswith("..") else "${workspaceFolder}/" + rel
+
+
+# The program's arguments: the project's own run parameters, else -r for a daemon (LazDaemon), which -r runs.
+params = ""
+for f in (lpi, os.path.splitext(lpi)[0] + ".lps"):
+    try:
+        e = ET.parse(f).getroot().find(".//RunParams//CommandLineParams")
+    except (OSError, ET.ParseError):
+        e = None
+    if e is not None and e.get("Value"):
+        params = e.get("Value")
+        break
+if not params and any((p.get("Value") or "").lower() == "lazdaemon" for p in root.iter("PackageName")):
+    params = "-r"
+
+# --- the .vscode files ------------------------------------------------------------------------------------------
+matcher = []
+for sev, words in (("error", "Error|Fatal"), ("warning", "Warning"), ("info", "Note|Hint")):
+    matcher.append({"owner": "fpc", "source": "fpc", "severity": sev, "fileLocation": ["autoDetect", "${workspaceFolder}"],
+                    "pattern": {"regexp": r"^(.+?)\((\d+)(?:,(\d+))?\)\s+(?:%s):\s+(?:\(\d+\)\s+)?(.*)$" % words,
+                                "file": 1, "line": 2, "column": 3, "message": 4}})
+
+
+def task(mode, clean, default=False):
+    t = {"label": "lazbuild (%s)%s" % (mode, ", clean" if clean else ""), "type": "process", "command": "lazbuild",
+         "args": ["--pcp=" + pcp, "--bm=" + mode] + (["-B"] if clean else []) + [base],
+         "options": {"cwd": "${workspaceFolder}"}, "group": {"kind": "build", "isDefault": True} if default else "build",
+         "presentation": {"clear": True}, "problemMatcher": matcher}
+    return t
+
+
+tasks = {"version": "2.0.0", "tasks": [task(dbg_name, False, True), task(GDB_MODE, False),
+                                       task(dbg_name, True), task(GDB_MODE, True)]}
+launch_comment = """// Written by 'lazmode vscode' (dev-setup v96); kept on later runs unless --force.
+// Two debuggers, one configuration for each editor:
+//   (FpDebug), for VS Code: Lazarus's own debugger (extension CNOC.fpdebug, on VS Code's marketplace only). It builds
+//     %(dbg)s (DWARF 3): strings, objects and Self readable in Variables and Watch, watches in Pascal.
+//   (gdb), for Devin and Cursor: gdb through Native Debug (webfreak.debug, on Open VSX). It builds %(gdb)s (Dwarf 2
+//     with sets): breakpoints, stepping, threads and the call stack work; print with 'p NAME' in the Debug Console
+//     (names in capitals; Self is 'this', fields 'this.FIELD'). Expanding a string in Variables fails (Native Debug
+//     builds C expressions) and file variables stay <unknown>: open the project in the Lazarus IDE for those.
+""" % {"dbg": dbg_name, "gdb": GDB_MODE}
+launch = {"version": "0.2.0", "configurations": [
+    {"name": "%s (FpDebug), for VS Code" % name, "type": "fpDebug", "request": "launch", "program": ws(dbg_exe),
+     "workingdirectory": "${workspaceFolder}", "parameters": shlex.split(params), "preLaunchTask": "lazbuild (%s)" % dbg_name},
+    {"name": "%s (gdb), for Devin and Cursor" % name, "type": "gdb", "request": "launch", "target": ws(gdb_exe),
+     "cwd": "${workspaceFolder}", "arguments": params, "valuesFormatting": "parseText",
+     "preLaunchTask": "lazbuild (%s)" % GDB_MODE}]}
+extensions = {"recommendations": ["alefragnani.pascal", "webfreak.debug", "CNOC.fpdebug"]}
+tagfiles = {"**/GTAGS": True, "**/GRTAGS": True, "**/GPATH": True}
+settings = {"pascal.codeNavigation": "workspace", "pascal.tags.autoGenerate": True,
+            "files.exclude": tagfiles, "search.exclude": tagfiles}
+
+vs = os.path.join(pdir, ".vscode")
+os.makedirs(vs, exist_ok=True)
+wrote, kept = [], []
+for fname, doc, head in (("tasks.json", tasks, ""), ("launch.json", launch, launch_comment),
+                         ("extensions.json", extensions, ""), ("settings.json", settings, "")):
+    path = os.path.join(vs, fname)
+    if os.path.exists(path) and not force:
+        kept.append(fname)
+        continue
+    with open(path + ".new", "w", encoding="utf-8") as fh:
+        fh.write(head + json.dumps(doc, indent=2) + "\n")
+    os.replace(path + ".new", path)
+    wrote.append(fname)
+if wrote:
+    print("Wrote .vscode/%s in %s" % (", .vscode/".join(wrote), pdir))
+if kept:
+    note("kept your .vscode/%s ('lazmode vscode --force' rewrites them)." % ", .vscode/".join(kept))
+print("Profile: %s (lazbuild --pcp=%s). Arguments for the program: %s." % (os.path.basename(pcp), pcp, params or "none"))
+print("Open the folder in an editor: code %s | cursor %s | devin-desktop %s" % ((shlex.quote(pdir),) * 3))
+print("  Ctrl+Shift+B builds %s; F5 picks the configuration: '(FpDebug), for VS Code' or '(gdb), for Devin and Cursor'." % dbg_name)
+VSCODE_PY
+}
+
 mkdir -p "$LOGDIR" 2> /dev/null && [ -w "$LOGDIR" ] || LOGDIR="$HOME/.cache/lazmode"
 mkdir -p "$LOGDIR"
 case "${1:-status}" in
@@ -2170,6 +2494,7 @@ case "${1:-status}" in
     rebuild) shift; cmd_rebuild "$@" ;;
     theme) command -v qt5ct > /dev/null || die "qt5ct is not installed: run dev-setup with install-lazarus"
            QT_QPA_PLATFORMTHEME=qt5ct exec qt5ct ;;
+    vscode) shift; cmd_vscode "$@" ;;
     help|-h|--help) usage ;;
     *) usage; exit 1 ;;
 esac
@@ -8100,6 +8425,11 @@ EOF_DBX
 #   delphi N launcher        point Delphi's own launcher entries at 'delphi N'
 #   delphi N ini save        keep the IDE's options (HKCU\Software\Borland in the prefix's registry) in
 #                            ~/.config/dev-retro/delphiN.reg; 'delphi N setup' restores them
+#   delphi N build PROJECT.dpr [OPTION...]
+#                            v96: compile with that version's dcc32.exe, console only, from the project's folder
+#                            (it reads the .cfg the IDE writes); Wine's drive paths in its messages become Linux paths
+#   delphi N vscode [DIR|PROJECT.dpr] [--force]
+#                            v96: .vscode/tasks.json (build, run) for VS Code, Cursor and Devin; no debugging there
 #   Settings per prefix: the Windows version Wine reports (3: win95, 4: win98, 5: win2k, 6: win2k, 7: winxp), black
 #   desktop, TEMP=C:\TEMP, MS Sans Serif -> Tahoma, corefonts + tahoma, fontsmooth=rgb. The integrated
 #   debugger stays on: 'delphi N help' notes what was found with each version.
@@ -9254,6 +9584,106 @@ EOF
         rm -f "$apps/dev-retro-delphi$DN.desktop"
     fi
 }
+# v96: build Delphi 3-7 projects outside the IDE, and from VS Code, Cursor or Devin (plan v96 item 5, asked Oct 26 2026).
+# dcc32.exe runs under Wine and reads the project's .dpr plus the .cfg the IDE writes next to it (search paths,
+# defines), so it builds what the IDE would. Console only, no virtual desktop. No debugging from the editors: Delphi
+# writes Borland's own debug format, which gdb and lldb can't read, and Wine's debugger is minimal.
+dn_dcc32() { find "$DN_PREFIX/drive_c" -maxdepth 6 -type f -ipath '*/delphi*/bin/dcc32.exe' 2> /dev/null | sort | head -n 1; }
+dn_unpath() {   # Wine drive paths at the start of dcc32's messages back to Linux ones (Z: is /, C: the prefix's drive_c)
+    awk -v c="$DN_PREFIX/drive_c" '
+        match($0, /^[A-Za-z]:\\[^(]*\(/) {
+            p = substr($0, 1, RLENGTH - 1); rest = substr($0, RLENGTH); d = tolower(substr(p, 1, 1))
+            p = substr(p, 3); gsub(/\\/, "/", p)
+            if (d == "c") p = c p; else if (d != "z") { print; next }
+            print p rest; next }
+        { print }'
+}
+dn_build() {   # dn_build PROJECT.dpr [DCC32 OPTION...]: dcc32 in the prefix, from the project's folder (so it reads the .cfg)
+    local dpr=${1:-} dcc dir rc
+    [ -n "$dpr" ] || die "usage: delphi $DN build PROJECT.dpr [dcc32 options]"
+    [ -f "$dpr" ] || die "no such file: $dpr"
+    case "$(lc "$dpr")" in *.dpr) ;; *) die "delphi $DN build takes a project file (.dpr), not $dpr" ;; esac
+    command -v wine > /dev/null || die "Wine is missing: rerun dev-setup with install-retro (it pulls in install-com)."
+    dcc=$(dn_dcc32)
+    [ -n "$dcc" ] || die "no dcc32.exe for $DN_TITLE in $DN_PREFIX: 'delphi $DN setup' installs Delphi with its command-line compiler."
+    dir=$(dirname "$(readlink -f "$dpr")")
+    cd "$dir" || exit 1
+    echo "dcc32 ($DN_TITLE): $(basename "$dpr") in $dir"
+    # Output keeps dcc32's own 'FILE(LINE) Error: ...' form; only Wine's drive paths become Linux paths.
+    WINEDEBUG=-all dn_wine wine "$dcc" "${@:2}" "$(basename "$dpr")" 2>&1 < /dev/null | tr -d '\r' | dn_unpath
+    rc=${PIPESTATUS[0]}
+    WINEPREFIX="$DN_PREFIX" timeout 30 wineserver -w 2> /dev/null
+    return "$rc"
+}
+dn_vscode() {   # dn_vscode [DIR|PROJECT.dpr] [--force]: .vscode/tasks.json (build, run) and extensions.json
+    local target="" force=0 dpr pick dprs=()
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --force) force=1 ;;
+            -*) die "delphi $DN vscode: unknown option '$1'" ;;
+            *) [ -z "$target" ] || die "delphi $DN vscode: one folder or .dpr at a time"; target=$1 ;;
+        esac
+        shift
+    done
+    target=${target:-.}
+    if [ -f "$target" ]; then
+        case "$(lc "$target")" in *.dpr) dpr=$(readlink -f "$target") ;; *) die "not a Delphi project file (.dpr): $target" ;; esac
+    elif [ -d "$target" ]; then
+        mapfile -t dprs < <(find "$(readlink -f "$target")" -maxdepth 1 -type f -iname '*.dpr' | sort)
+        case ${#dprs[@]} in
+            0) die "no .dpr in $(readlink -f "$target")" ;;
+            1) dpr=${dprs[0]} ;;
+            *) [ -t 0 ] || die "several projects in $(readlink -f "$target") (${dprs[*]##*/}): name the .dpr"
+               echo "Several projects here: which one?"
+               select pick in "${dprs[@]##*/}"; do [ -n "$pick" ] && break; done
+               [ -n "$pick" ] || exit 1
+               dpr="$(readlink -f "$target")/$pick" ;;
+        esac
+    else
+        die "no such folder or .dpr: $target"
+    fi
+    [ -n "$(dn_dcc32)" ] || echo "NOTE: no dcc32.exe in $DN_PREFIX yet ('delphi $DN setup'): the build task needs it."
+    python3 - "$dpr" "$DN" "$HOME/.local/bin/delphi" "$force" << 'DNVSCODE_PY'
+import json, os, sys
+dpr, n, cmd, force = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4] == "1"
+pdir, base = os.path.dirname(dpr), os.path.basename(dpr)
+exe = os.path.splitext(base)[0] + ".exe"
+matcher = []
+for sev, words in (("error", "Error|Fatal"), ("warning", "Warning"), ("info", "Hint")):
+    matcher.append({"owner": "dcc32", "source": "dcc32", "severity": sev, "fileLocation": ["autoDetect", "${workspaceFolder}"],
+                    "pattern": {"regexp": r"^(.+?)\((\d+)\)\s+(?:%s):\s+(?:[EFWH]\d+\s+)?(.*)$" % words,
+                                "file": 1, "line": 2, "message": 3}})
+tasks = {"version": "2.0.0", "tasks": [
+    {"label": "delphi %s build" % n, "type": "process", "command": cmd, "args": [n, "build", base],
+     "options": {"cwd": "${workspaceFolder}"}, "group": {"kind": "build", "isDefault": True},
+     "presentation": {"clear": True}, "problemMatcher": matcher},
+    {"label": "delphi %s run" % n, "type": "process", "command": cmd, "args": [n, "run", exe],
+     "options": {"cwd": "${workspaceFolder}"}, "problemMatcher": []}]}
+head = """// Written by 'delphi %(n)s vscode' (dev-setup v96); kept on later runs unless --force.
+// Ctrl+Shift+B builds with Delphi %(n)s's dcc32.exe under Wine (it reads %(base)s and the .cfg the IDE writes next to
+// it); the run task starts %(exe)s in the Delphi %(n)s desktop. There is no launch.json on purpose: Delphi writes
+// Borland's own debug format, which gdb and lldb can't read, and Wine's debugger is minimal, so debugging stays in
+// the Delphi IDE ('delphi %(n)s') or a real Windows guest (dev-demo's retro/matrix, STEPS-delphi.md).
+""" % {"n": n, "base": base, "exe": exe}
+vs = os.path.join(pdir, ".vscode")
+os.makedirs(vs, exist_ok=True)
+wrote, kept = [], []
+for fname, doc, h in (("tasks.json", tasks, head), ("extensions.json", {"recommendations": ["alefragnani.pascal"]}, "")):
+    path = os.path.join(vs, fname)
+    if os.path.exists(path) and not force:
+        kept.append(fname)
+        continue
+    with open(path + ".new", "w", encoding="utf-8") as fh:
+        fh.write(h + json.dumps(doc, indent=2) + "\n")
+    os.replace(path + ".new", path)
+    wrote.append(fname)
+if wrote:
+    print("Wrote .vscode/%s in %s" % (", .vscode/".join(wrote), pdir))
+if kept:
+    print("NOTE: kept your .vscode/%s ('delphi %s vscode --force' rewrites them)." % (", .vscode/".join(kept), n))
+print("Ctrl+Shift+B: 'delphi %s build %s'; the 'delphi %s run' task starts %s. No debugging from the editor." % (n, base, n, exe))
+DNVSCODE_PY
+}
 dn_list() {   # 'delphi' alone: every version's state
     local n media
     printf '%-9s %-15s %-14s %s\n' VERSION WINDOWS STATE "MEDIA (~/delphi/install/N)"
@@ -9267,7 +9697,7 @@ dn_list() {   # 'delphi' alone: every version's state
     done
     echo "'delphi N setup' installs one, 'delphi N' starts it; Delphi 1: 'delphi1'. Real Windows guests: STEPS-delphi.md (dev-demo retro/matrix)."
 }
-delphi_n_cmd() {   # delphi [N [setup|run|launcher|ini|where|status|help] ...]
+delphi_n_cmd() {   # delphi [N [setup|run|build|vscode|launcher|ini|where|status|help] ...]
     local a
     case "${1:-}" in
         ""|list) dn_list; return ;;
@@ -9281,6 +9711,8 @@ delphi_n_cmd() {   # delphi [N [setup|run|launcher|ini|where|status|help] ...]
             dn_desktop "$(basename "$(dn_ide)")" ;;
         setup) shift; dn_setup "${1:-}" ;;
         run) shift; [ -f "${1:-}" ] || die "usage: delphi $DN run PROGRAM.EXE"; dn_desktop "$(readlink -f "$1")" "${@:2}" ;;
+        build) shift; dn_build "$@" ;;
+        vscode) shift; dn_vscode "$@" ;;
         launcher) dn_launcher ;;
         where) where_cmd "delphi$DN" ;;
         status) status_cmd "delphi$DN" ;;

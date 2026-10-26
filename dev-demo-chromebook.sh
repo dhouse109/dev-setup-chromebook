@@ -878,30 +878,71 @@ demo_lazarus() {
         FRESH=1
     fi
     write_run << 'EOF'
-IDE=$(command -v startlazarus || command -v lazarus-ide) || { echo "Lazarus IDE not found (install-lazarus)."; exit 1; }
+# v96: two items: ide (a project in the Lazarus IDE, as before) and editor ('lazmode vscode' on it, then VS Code, Cursor
+# or Devin). run-examples.sh [ide|editor] [PROJECT] [light|dark] [code|cursor|devin]; a project first means ide (v94).
+ITEM=ide
+case "${1:-}" in
+    ide|editor) ITEM=$1; shift; DEMO_ARG="${1:-}" ;;
+    "") demo_menu "What to do?" "ide: open a project in the Lazarus IDE (F9 runs it)" \
+            "editor: build and debug a project in VS Code, Cursor or Devin (lazmode vscode)" || exit 0
+        ITEM=${DEMO_CHOICE%%:*} ;;
+esac
+if [ "$ITEM" = ide ]; then
+    IDE=$(command -v startlazarus || command -v lazarus-ide) || { echo "Lazarus IDE not found (install-lazarus)."; exit 1; }
+else
+    command -v lazbuild > /dev/null || { echo "lazbuild not found (install-lazarus)."; exit 1; }
+    grep -q 'cmd_vscode' "$HOME/.local/bin/lazmode" 2> /dev/null || { echo "Needs 'lazmode vscode': rerun dev-setup with install-lazarus (v96)."; exit 1; }
+fi
 mapfile -t LPI < <(find . -maxdepth 3 -name '*.lpi' -printf '%P\n' | sort)
-demo_menu "Open which project in Lazarus? (try opengl*, grid*, chart*, db*; press F9 in the IDE to run)" "${LPI[@]}" || exit 0
+if [ "$ITEM" = ide ]; then
+    demo_menu "Open which project in Lazarus? (try opengl*, grid*, chart*, db*; press F9 in the IDE to run)" "${LPI[@]}" || exit 0
+else
+    demo_menu "Which project, for the editor? (TDaemon is the worked example)" "${LPI[@]}" || exit 0
+fi
 PROJECT=$DEMO_CHOICE
 # v94: setup v94 builds a dark profile too (~/.lazarus-dark, qt5ct's darker palette). A second argument
 # picks it without the menu: run-examples.sh <project> dark
-LOOK=(); PCP=()
+LOOK=(); PCP=(); PROFILE=light
 if [ -x "$HOME/.lazarus-dark/bin/lazarus" ]; then
     DEMO_ARG="${2:-}"
     demo_menu "Light or dark IDE?" "light: the Lazarus launcher's profile (~/.lazarus)" "dark: the Lazarus (Dark) launcher's profile (~/.lazarus-dark)" || exit 0
-    case "$DEMO_CHOICE" in dark:*) LOOK=(env QT_QPA_PLATFORMTHEME=qt5ct); PCP=(--pcp="$HOME/.lazarus-dark") ;; esac
+    case "$DEMO_CHOICE" in dark:*) LOOK=(env QT_QPA_PLATFORMTHEME=qt5ct); PCP=(--pcp="$HOME/.lazarus-dark"); PROFILE=dark ;; esac
 fi
-"${LOOK[@]}" "$IDE" "${PCP[@]}" "$DEMO_DIR/$PROJECT" > /dev/null 2>&1 &
-disown
+if [ "$ITEM" = ide ]; then
+    "${LOOK[@]}" "$IDE" "${PCP[@]}" "$DEMO_DIR/$PROJECT" > /dev/null 2>&1 &
+    disown
+else
+    # The profile decides which packages lazbuild finds (--pcp), as in the IDE.
+    lazmode vscode --profile "$PROFILE" "$DEMO_DIR/$PROJECT" || exit 1
+    EDITORS=()
+    command -v code > /dev/null 2>&1 && EDITORS+=("code: VS Code (F5 with '(FpDebug), for VS Code')")
+    [ -x "$HOME/.local/bin/cursor" ] && EDITORS+=("cursor: Cursor (F5 with '(gdb), for Devin and Cursor')")
+    # Devin through its X11 wrapper (setup v96): ChromeOS's Wayland froze or closed its window.
+    [ -x "$HOME/.local/bin/devin-desktop" ] && EDITORS+=("devin: Devin Desktop on X11 (F5 with '(gdb), for Devin and Cursor')")
+    [ ${#EDITORS[@]} -gt 0 ] || { echo "No editor found: dev-setup with install-vscode, install-cursor or install-windsurf."; exit 1; }
+    DEMO_ARG="${3:-}"
+    demo_menu "Open the project folder in which editor?" "${EDITORS[@]}" || exit 0
+    case "$DEMO_CHOICE" in
+        code:*) ED=(code) ;;
+        cursor:*) ED=("$HOME/.local/bin/cursor") ;;
+        *) ED=("$HOME/.local/bin/devin-desktop") ;;
+    esac
+    "${ED[@]}" "$DEMO_DIR/$(dirname "$PROJECT")" > /dev/null 2>&1 &
+    disown
+    demo_note "When the folder opens, accept the recommended extensions (Pascal, Native Debug, and in VS Code FpDebug). F5 builds"
+    demo_note "and debugs; Ctrl+Shift+B builds. gdb prints with 'p NAME' in the Debug Console; FpDebug shows strings in Variables."
+    case "$PROJECT" in TDaemon/*) demo_note "TDaemon: -r (run in the foreground) is already the argument in launch.json; set a breakpoint in daemonworkerthread.pas." ;; esac
+fi
 # v96: TDaemon is a systemd daemon, so it is run from a terminal, not with F9 (Oct 26 2026: its -r stopped with
 # runtime error 232 until setup v96 put -dUseCThreads in ~/.fpc.cfg; a build from before that needs Clean up and Build).
 case "$PROJECT" in
     TDaemon/*)
-        demo_note "TDaemon: build with Run > Clean up and Build (once, if it was built before setup v96), then from a terminal"
-        demo_note "  in its build folder ($DEMO_DIR/${PROJECT%/*}/x86_64-linux/Debug for the Debug mode): sudo ./TestDaemon -i writes"
-        demo_note "  /lib/systemd/system/TestDaemon.service, which runs"
-        demo_note "  the binary from this build folder (so rebuild before starting it); sudo systemctl daemon-reload, then"
-        demo_note "  sudo systemctl start TestDaemon. Its log is a daily file next to the binary (tail -f \$(date +%Y%m%d).log)."
-        demo_note "  Remove it with sudo systemctl stop TestDaemon, then sudo ./TestDaemon -u. -i and -u need sudo." ;;
+        demo_note "TDaemon: build it (Run > Clean up and Build once if it was built before setup v96), then in a terminal,"
+        demo_note "  in its build folder ($DEMO_DIR/${PROJECT%/*}/x86_64-linux/Debug for the Debug mode):"
+        demo_note "  sudo ./TestDaemon -i writes /lib/systemd/system/TestDaemon.service, which runs the binary from this folder"
+        demo_note "  (so rebuild before starting it); then sudo systemctl daemon-reload and sudo systemctl start TestDaemon."
+        demo_note "  Its log is a daily file next to the binary (tail -f \$(date +%Y%m%d).log). Remove it: sudo systemctl"
+        demo_note "  stop TestDaemon, then sudo ./TestDaemon -u. -i and -u need sudo." ;;
 esac
 EOF
     done_demo

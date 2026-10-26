@@ -1483,6 +1483,94 @@ THR_EOF
     check "lazmode status"                                             'lazmode status'
     hint  "rerun setup with install-lazarus (it writes ~/.local/bin/lazmode)"
     check "lazbuild with the dark profile (--pcp=~/.lazarus-dark)"     'lazbuild --pcp="$HOME/.lazarus-dark" --version'
+    # v96: building and debugging Lazarus projects in VS Code, Cursor and Devin ('lazmode vscode'), on a copy of
+    # Lazarus's own TDaemon (the Oct 26 2026 project: a console daemon whose Debug mode is on DWARF 3). FpDebug itself
+    # isn't run here (it needs VS Code); gdb is.
+    check "gdb (Devin's and Cursor's debugger for Lazarus projects)"   'gdb --version | head -n 1'
+    hint  "rerun setup with install-lazarus (v96 adds gdb)"
+    check "GNU Global: gtags indexes a Lazarus project (GTAGS written)" 'global --version | head -n 1 && d=$(ls -d /usr/share/lazarus/*/examples/TDaemon 2> /dev/null | sort -V | tail -n 1) && cp -r "$d" gtags-test && cd gtags-test && gtags && [ -s GTAGS ]'
+    hint  "rerun setup with install-lazarus (v96 adds GNU Global, which the Pascal extension uses for Go to Definition)"
+    cat > "$WORK/lazvs_check.sh" << 'LAZVS_EOF'
+# lazvs_check.sh setup|mode|json|tasks|dwarf|gdb, in $WORK/lazvs (a copy of TDaemon)
+P="$WORK/lazvs"; L="$P/TestDaemon.lpi"
+jsonc() { python3 -c 'import json, sys; json.loads("".join(l for l in open(sys.argv[1]) if not l.lstrip().startswith("//")))' "$1"; }
+task_cmd() {   # task_cmd LABEL: the task's command and args, one per line, as tasks.json has them
+    python3 - "$P/.vscode/tasks.json" "$1" << 'PY'
+import json, sys
+t = next(t for t in json.load(open(sys.argv[1]))["tasks"] if t["label"] == sys.argv[2])
+print("\n".join([t["command"]] + t["args"]))
+PY
+}
+run_task() { local c=(); mapfile -t c < <(task_cmd "$1"); [ ${#c[@]} -gt 0 ] || { echo "no task '$1'"; return 1; }; (cd "$P" && "${c[@]}") > "$WORK/lazvs-$2.log" 2>&1; }
+cfg() {   # cfg TYPE KEY: a launch configuration's value, ${workspaceFolder} filled in
+    python3 - "$P/.vscode/launch.json" "$1" "$2" "$P" << 'PY'
+import json, sys
+doc = json.loads("".join(l for l in open(sys.argv[1]) if not l.lstrip().startswith("//")))
+c = next(c for c in doc["configurations"] if c["type"] == sys.argv[2])
+print(c[sys.argv[3]].replace("${workspaceFolder}", sys.argv[4]))
+PY
+}
+dwarf() {   # dwarf FILE: the DWARF versions of the project's own units (those whose source is in the project folder)
+    readelf --debug-dump=info "$1" 2> /dev/null | awk -v dir="$P" '
+        /^ +Version: +[0-9]+/ { v = $2; next }
+        /DW_AT_name/ && v != "" { n = $NF; sub(/.*\//, "", n); f = dir "/" n
+            if ((getline x < f) >= 0 && n ~ /\.(lpr|pas|pp)$/) seen[v] = 1; close(f); v = "" }
+        END { for (k in seen) printf "%s ", k }'
+}
+case "$1" in
+    setup)   # a fresh copy, then lazmode vscode on it
+        d=$(ls -d /usr/share/lazarus/*/examples/TDaemon 2> /dev/null | sort -V | tail -n 1)
+        [ -n "$d" ] || { echo "no TDaemon in /usr/share/lazarus/*/examples"; exit 1; }
+        rm -rf "$P"; cp -r "$d" "$P" && cd "$P" && lazmode vscode ;;
+    mode)   # the .lpi parses, has Debug-gdb on Dwarf 2 with sets, and lazbuild builds it
+        python3 - "$L" << 'PY' || exit 1
+import sys, xml.etree.ElementTree as ET
+r = ET.parse(sys.argv[1]).getroot()
+it = [i for i in r.find("ProjectOptions/BuildModes") if i.get("Name") == "Debug-gdb"]
+assert it, "no Debug-gdb build mode"
+t = it[0].find("CompilerOptions/Linking/Debugging/DebugInfoType")
+assert t is not None and t.get("Value") == "dsDwarf2Set", "Debug-gdb is not on dsDwarf2Set"
+print("Debug-gdb: dsDwarf2Set")
+PY
+        lazbuild --get-build-modes "$L" | tail -n 3 | tr '\n' ' '
+        cd "$P" && lazbuild --bm=Debug-gdb "$L" > "$WORK/lazvs-mode.log" 2>&1 || { tail -n 5 "$WORK/lazvs-mode.log"; exit 1; } ;;
+    json)   # tasks, launch and extensions parse (launch.json has // comments, as VS Code allows); one fpDebug and one gdb
+        for f in tasks launch extensions settings; do jsonc "$P/.vscode/$f.json" || { echo "$f.json does not parse"; exit 1; }; done
+        python3 - "$P/.vscode/launch.json" << 'PY'
+import json, sys
+doc = json.loads("".join(l for l in open(sys.argv[1]) if not l.lstrip().startswith("//")))
+types = sorted(c["type"] for c in doc["configurations"])
+print("configurations:", ", ".join(c["name"] for c in doc["configurations"]))
+sys.exit(0 if types == ["fpDebug", "gdb"] else 1)
+PY
+        ;;
+    tasks)   # both build tasks, run as written
+        run_task "lazbuild (Debug)" debug || { echo "lazbuild (Debug) failed"; tail -n 5 "$WORK/lazvs-debug.log"; exit 1; }
+        run_task "lazbuild (Debug-gdb)" gdb || { echo "lazbuild (Debug-gdb) failed"; tail -n 5 "$WORK/lazvs-gdb.log"; exit 1; }
+        echo "both build" ;;
+    dwarf)   # Debug's program (or its .dbg) on DWARF 3, Debug-gdb's on 2; each built just before, since they may share a file
+        run_task "lazbuild (Debug)" debug || exit 1
+        f=$(cfg fpDebug program); [ -f "$f.dbg" ] && f="$f.dbg"
+        a=$(dwarf "$f"); echo "Debug: ${f#"$P"/}, DWARF ${a:-none}"
+        run_task "lazbuild (Debug-gdb)" gdb || exit 1
+        g=$(cfg gdb target); [ -f "$g.dbg" ] && g="$g.dbg"
+        b=$(dwarf "$g"); echo "Debug-gdb: ${g#"$P"/}, DWARF ${b:-none}"
+        [ "$a" = "3 " ] && [ "$b" = "2 " ] ;;
+    gdb)   # gdb runs the Debug-gdb program to its exit (TDaemon without arguments prints its usage)
+        run_task "lazbuild (Debug-gdb)" gdb || exit 1
+        o=$(cd "$P" && timeout 60 gdb -q -batch -ex run "$(cfg gdb target)" < /dev/null 2>&1)
+        printf '%s\n' "$o" | grep -o -m1 '\[Inferior 1 (process [0-9]*) exited[^]]*'
+        printf '%s\n' "$o" | grep -q '\[Inferior 1 (process [0-9]*) exited' ;;
+esac
+LAZVS_EOF
+    check "lazmode vscode on a copy of TDaemon"                        'bash lazvs_check.sh setup' 300
+    hint  "its output above says what failed; 'lazmode vscode' needs lazbuild and python3"
+    check "lazmode vscode: a Debug-gdb build mode, and lazbuild builds it" 'bash lazvs_check.sh mode' 300
+    check "lazmode vscode: .vscode JSON parses, an fpDebug and a gdb launch" 'bash lazvs_check.sh json'
+    check "lazmode vscode: both build tasks, run as written, build"    'bash lazvs_check.sh tasks' 300
+    check "lazmode vscode: Debug on DWARF 3, Debug-gdb on DWARF 2"     'bash lazvs_check.sh dwarf' 300
+    hint  "FpDebug needs DWARF 3 (Debug), gdb reads strings only with Dwarf 2 with sets (Debug-gdb)"
+    check "gdb runs the Debug-gdb build to its exit"                   'bash lazvs_check.sh gdb' 300
 fi
 
 # Flatpak & media tools
@@ -5015,6 +5103,19 @@ DN_EOF
             info  "delphi $DN" "media in ~/delphi/install/$DN, not set up yet: 'delphi $DN setup'"
         fi
     done
+    # v96: 'delphi N build' (dcc32 under Wine, from the project's folder) and 'delphi N vscode', for each Delphi 3-7
+    # whose prefix has dcc32.exe; a one-line console program, built and then run by wine.
+    DN_DCC=0
+    for DN in 3 4 5 6 7; do
+        [ -n "$(find "$HOME/.local/share/wine/delphi$DN/drive_c" -maxdepth 6 -type f -ipath '*/delphi*/bin/dcc32.exe' 2> /dev/null | head -n 1)" ] || continue
+        DN_DCC=1
+        mkdir -p "$WORK/dcc$DN"
+        printf 'program hello;\r\n{$APPTYPE CONSOLE}\r\nbegin Writeln(%s); end.\r\n' "'hello from dcc32'" > "$WORK/dcc$DN/hello.dpr"
+        check "delphi $DN build: dcc32 compiles a console .dpr, wine runs it" "cd dcc$DN && delphi $DN build hello.dpr && WINEPREFIX=\"\$HOME/.local/share/wine/delphi$DN\" WINEARCH=win32 WINEDEBUG=-all wine hello.exe < /dev/null 2> /dev/null | tr -d '\\r' | grep -q 'hello from dcc32'" 300
+        hint  "'delphi $DN build' prints dcc32's own messages; the compiler is part of Delphi's own install ('delphi $DN setup')"
+        check "delphi $DN vscode: .vscode/tasks.json and extensions.json parse" "cd dcc$DN && delphi $DN vscode --force . && for f in tasks extensions; do python3 -c 'import json, sys; json.loads(\"\".join(l for l in open(sys.argv[1]) if not l.lstrip().startswith(\"//\")))' .vscode/\$f.json || exit 1; done"
+    done
+    [ "$DN_DCC" = 1 ] || skipped "delphi N build / vscode (dcc32 under Wine)" "(no Delphi 3-7 prefix with dcc32.exe yet: 'delphi N setup')"
     timeout 60 wineserver -w 2> /dev/null || wineserver -k 2> /dev/null || true
     cd "$WORK" || true
 fi
@@ -5269,14 +5370,16 @@ if ! has nodisk; then
     # system tree, and the two Qt5 packages: the debs alone left out most of what Lazarus takes.
     if has install-lazarus; then
         LAZ_U=$(ls -d /usr/share/lazarus/*/units/x86_64-linux/qt5 2> /dev/null | tr '\n' ' ')
-        LAZ_A=$(_apt_bytes fpc-laz fpc-src lazarus-project libqt5pas-dev qt5ct)
+        # v96: plus GNU Global (and gdb when install-cpp, whose line counts it, is not there)
+        LAZ_PK=(fpc-laz fpc-src lazarus-project libqt5pas-dev qt5ct global); has install-cpp || LAZ_PK+=(gdb)
+        LAZ_A=$(_apt_bytes "${LAZ_PK[@]}")
         # shellcheck disable=SC2086   # LAZ_U: folder names without spaces, one per installed version
         LAZ_D=$(_disk_bytes "$HOME/.lazarus/bin" "$HOME/.lazarus/units" "$HOME/.lazarus/lib" \
             "$HOME/.lazarus-dark/bin" "$HOME/.lazarus-dark/units" "$HOME/.lazarus-dark/lib" $LAZ_U)
         [[ "$LAZ_A" =~ ^[0-9]+$ ]] || LAZ_A=0
         [[ "$LAZ_D" =~ ^[0-9]+$ ]] || LAZ_D=0
         _disk_report editors "Lazarus + Free Pascal (debs, Qt5 IDE builds in ~/.lazarus and ~/.lazarus-dark)" "$((LAZ_A + LAZ_D))" \
-            "apt: fpc-laz fpc-src lazarus-project libqt5pas-dev qt5ct; du: ~/.lazarus{,-dark}/{bin,units,lib} $LAZ_U"
+            "apt: ${LAZ_PK[*]}; du: ~/.lazarus{,-dark}/{bin,units,lib} $LAZ_U"
     fi
     has install-rust     && dpaths rust "rustup toolchains + cargo (incl. wasm and Android targets)" "$HOME/.rustup" "$HOME/.cargo"
     if has install-node; then

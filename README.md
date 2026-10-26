@@ -92,7 +92,7 @@ pull in what they need. For example, `install-web` brings `install-node` with it
 
 | Group | Members |
 |---|---|
-| `install-editors` | `install-vscode` `install-windsurf` (Windsurf, now Devin Desktop) `install-cursor` `install-lazarus` (Lazarus / Free Pascal; the IDE on Qt5 with light and dark profiles, docked or floating, switched with `lazmode`) |
+| `install-editors` | `install-vscode` `install-windsurf` (Windsurf, now Devin Desktop) `install-cursor` `install-lazarus` (Lazarus / Free Pascal; the IDE on Qt5 with light and dark profiles, docked or floating, switched with `lazmode`; `lazmode vscode` builds and debugs a project in VS Code, Cursor or Devin) |
 | `install-languages` | `install-rust` (with WASM) `install-node` (nvm, Node LTS, Claude Code, Codex, Gemini CLI, aider) `install-go` `install-pwsh` `install-ruby` (Jekyll) `install-cpp` `install-asm` `install-dotnet` (C#, VB.NET) `install-java` (JDK, Maven, Gradle) |
 | `install-ecosystems` | `install-antigravity` `install-media` (Flatpak, HandBrake, KDiff3) `install-gemma` (Gemma on Ollama + Gemini) `install-mobile` (Android SDK, Tauri, React Native/Expo, Flutter) `install-android-native` (Android Studio, Kotlin) `install-godot` (standard + .NET editors) |
 | `install-cloud` | `install-aws` `install-azure` `install-gcp` `install-vercel` `install-cloudflare` (wrangler) |
@@ -135,7 +135,7 @@ heavy engines run one at a time, because Linux gets about 6.4 GB of an 8 GB Chro
 | `install-oracle-full` | Oracle's full image instead of Lite |
 | `install-ldap` / `install-ldap-full` | lldap in Docker / OpenLDAP + lldap |
 | `install-lan` / `install-lan-share` | your laptops as one network (Tailscale, an address book, shared services) |
-| `install-retro` | DOS and Windows 3.1 / 95 / NT 4.0 / 2000 guests (DOSBox-X, QEMU), Open Watcom, Delphi 1–7 under Wine; pulls in `install-com` (COM development under Wine) |
+| `install-retro` | DOS and Windows 3.1 / 95 / NT 4.0 / 2000 guests (DOSBox-X, QEMU), Open Watcom, Delphi 1–7 under Wine (`delphi N build` compiles a Delphi 3–7 project with dcc32, `delphi N vscode` sets it up for VS Code, Cursor and Devin); pulls in `install-com` (COM development under Wine) |
 | `install-models` | curated local models for Ollama (several GB) |
 | `install-ollama-containers` | lets Docker containers reach Ollama |
 | `install-hermes` / `install-openclaw` | personal agents |
