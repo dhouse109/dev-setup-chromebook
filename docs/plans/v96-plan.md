@@ -1,6 +1,6 @@
 # dev-setup-chromebook v96 plan
 
-Oct 26, 2026 · item 1 chosen Oct 26 (all choices) · item 2 added Oct 26, back end, flag and rendering chosen Oct 26 · item 3 added and chosen Oct 26, revised Oct 26 (memory; launcher goes through `/usr/bin/devin-desktop`) · item 4 added and chosen Oct 26 · item 5 added and chosen Oct 26
+Oct 26, 2026 · item 1 chosen Oct 26 (all choices) · item 2 added Oct 26, back end, flag and rendering chosen Oct 26 · item 3 added and chosen Oct 26, revised Oct 26 (memory; launcher goes through `/usr/bin/devin-desktop`) · item 4 added and chosen Oct 26, DDEV ports settled Oct 26 · item 5 added and chosen Oct 26
 
 ## Scope
 
@@ -382,7 +382,9 @@ xdg-mime default garcon_host_browser.desktop x-scheme-handler/https x-scheme-han
 | `http://localhost:8765` (a Linux server bound to 127.0.0.1) | Opened, served from Linux: ChromeOS still passes `localhost` to Linux in the full-VM mode. |
 | `http://127.0.0.1:8765` | Opened, served from Linux. |
 | `~/xdg-test.html` | Opened from the Linux files share (`file:///media/fuse/crostini_…`). |
-| A DDEV site (`ddev launch`, `*.ddev.site` → 127.0.0.1, mkcert HTTPS) | **Not yet tested.** Expected to connect; expected certificate warning, since `mkcert -install` trusts its CA in Linux only. |
+| A DDEV site, default router (`https://ddev-test.ddev.site`, ports 80/443) | **Refused** (`ERR_CONNECTION_REFUSED`). ChromeOS passes high ports through to Linux, not 80 and 443. |
+| The same site on its direct port (`http://127.0.0.1:32772`, from `ddev describe`) | Opened ("hello from DDEV"). |
+| The same site with DDEV's router on 8080/8443 (`https://ddev-test.ddev.site:8443`) | Opened, with Chrome's "Not secure" (the mkcert CA is trusted in Linux only). |
 
 So Playwright, Selenium, Cypress and Puppeteer are unaffected (they start their own browser), Linux
 Chrome stays installed and launchable, and command-line sign-ins with a localhost callback (`gh`,
@@ -393,7 +395,19 @@ Chrome stays installed and launchable, and command-line sign-ins with a localhos
 | --- | --- |
 | A | ChromeOS's browser for every link (the `xdg-mime` line above). |
 | B | A small router as the default handler (`~/.local/bin/open-url` plus a `.desktop` entry): `*.ddev.site` and other local HTTPS names stay in Linux Chrome, where the mkcert CA is trusted; everything else goes to ChromeOS's browser. |
-| **A now, B if DDEV fails (chosen)** | Build A. The DDEV check below decides: if `ddev launch` doesn't work in ChromeOS's browser even after the CA import, the build switches to B before release. |
+| A now, B if DDEV fails (chosen first) | Build A; the DDEV check decides. |
+| **A, with DDEV's router on 8080/8443 (chosen Oct 26, after the DDEV check)** | Every link to ChromeOS's browser; DDEV's router moves to high ports, which ChromeOS does pass through. B (the router script) is dropped. |
+
+**The DDEV check, Oct 26** (a throwaway `php` project, `~/ddev-test`, on dragonair's 38 GB disk): the first
+two tries ran the disk out of space while pulling `ddev-webserver`, and the full disk left
+`~/.ddev/.state.yaml` and `~/.ddev/.update` at 0 bytes, after which every `ddev start` panicked
+("assignment to entry in nil map" in `remoteconfig`); moving the two empty files aside fixed it (DDEV
+rewrote them). Freeing ~5 GB of caches (npm 2.3 GB, Docker build cache 2.7 GB, uv, Go, Composer, Linux
+Chrome's cache) let it start. Then the table above. `ddev config global --router-http-port=8080
+--router-https-port=8443` then `ddev poweroff && ddev start` made `ddev launch` open
+`https://ddev-test.ddev.site:8443` in ChromeOS's browser. Ports 8080/8443 match what install-lan-share
+already uses for DDEV between laptops (LAN 8080/8443 → the router, read by `ddev_router_port`), so a site
+is `:8443` on its own laptop and from the others.
 
 **Setup** (base, after the Google Chrome install, so Chrome's own registration comes first and this
 overrides it):
@@ -401,6 +415,18 @@ overrides it):
 - When `/usr/share/applications/garcon_host_browser.desktop` exists (ChromeOS only), run the `xdg-mime
   default` line above; it writes `~/.config/mimeapps.list`. Rerun-safe. Not on ChromeOS: a NOTICE, and
   nothing changes.
+- **DDEV's router on 8080/8443** (base, where setup already runs `ddev config global
+  --instrumentation-opt-in=false`): `ddev config global --router-http-port=8080 --router-https-port=8443`
+  on ChromeOS, unless `router_http_port` / `router_https_port` are already set to something else in
+  `~/.ddev/global_config.yaml` (yours wins; a NOTICE says which ports DDEV sites are on). A router already
+  running keeps its old ports until `ddev poweroff`; setup says so. The LAN share keeps working:
+  `ddev_router_port` reads the new ports, LAN 8080/8443 now pass to local 8080/8443; the build confirms
+  that the relay (it listens on the Linux network address, the router on 127.0.0.1) and `tailscale serve`
+  coexist with the router on the same port numbers.
+- **Two demos move off 8080**, since DDEV's router holds it while any DDEV project runs: the Docker
+  voting app to **8090** (vote) and **8091** (results), through a generated copy of its compose file with
+  those host ports (an override file would add ports, not replace them); Spring PetClinic to **8092**
+  (`--server.port=8092`). Their launchers, notes and `docs/dev-demo.md` follow.
 - **DDEV's certificates:** print once, after the mkcert step, how to trust the mkcert CA in ChromeOS
   (Settings → Privacy and security → Security → Manage certificates → Authorities → Import the
   `rootCA.pem` from `mkcert -CAROOT`, "Trust this certificate for identifying websites"), so `*.ddev.site`
@@ -411,6 +437,10 @@ overrides it):
 
 **Test** (base section):
 
+- DDEV's router ports in `~/.ddev/global_config.yaml` are 8080 and 8443, or values you set (check when
+  absent, warn when changed by you).
+- The two moved demos' ports (8090, 8091, 8092) appear in their generated launchers (dev-demo isn't in
+  the test loop; this is the build's own check).
 - `xdg-mime query default x-scheme-handler/https` (and `http`, `text/html`) is
   `garcon_host_browser.desktop` (warn, since it's your setting to change; hint: Linux Chrome may have
   taken it back if you accepted its "make Chrome your default browser" prompt; rerun setup or the
@@ -423,15 +453,22 @@ overrides it):
 
 - `docs/crostini-gotchas.md`, a new section or Network: "Links from Linux open in Linux Chrome": why,
   the `xdg-mime` fix, why `xdg-settings` refuses, and that localhost passes through.
-- `docs/init-checklist.md`: the ChromeOS CA import for DDEV; how to switch back to Linux Chrome.
+- `docs/init-checklist.md`: DDEV sites are `https://<site>.ddev.site:8443` (and why); the ChromeOS CA
+  import for DDEV, step by step (`cp "$(mkcert -CAROOT)/rootCA.pem" ~/ddev-rootCA.pem`, Settings →
+  Privacy and security → Security → Manage certificates → Authorities → Import, trust for websites,
+  then delete the copy); how to switch back to Linux Chrome.
+- `docs/crostini-gotchas.md`: "ChromeOS doesn't pass ports 80 and 443 to Linux" (DDEV's router moved
+  to 8080/8443); and under Memory and disk, "A full disk can leave DDEV unable to start": 0-byte
+  `~/.ddev/.state.yaml` / `.update` make `ddev start` panic; move them aside; DDEV's images want ~3 GB.
 - README: one line in the gotchas list.
 - CHANGELOG (all four sections).
 
 **To verify on the Chromebook:** on a clean machine after setup, `xdg-open https://example.com` opens in
 ChromeOS's browser; `gh auth login --web` (or init's GitHub step) completes there; a demo's dev server
-opens with `--open`; `ddev launch` on a DDEV site opens in ChromeOS's browser, first with a certificate
-warning and, after the CA import, without one. If `ddev launch` can't be made to work there, switch the
-build to B.
+opens with `--open`; `ddev launch` on a DDEV site opens `https://<site>.ddev.site:8443` in ChromeOS's
+browser, first with a certificate warning and, after the CA import, without one; from another laptop
+over install-lan-share, the same site on `:8443`. The voting app and PetClinic demos open on their new
+ports while a DDEV project is running.
 
 ## 5. Build and debug Lazarus (and build Delphi) projects in VS Code, Cursor and Devin
 
@@ -664,7 +701,8 @@ go into v95 if you keep them there, otherwise here.
       Devin extensions (CodeLLDB and Gemini dropped from setup and test; CodeLLDB's profile fix in the docs)
 - [x] Item 3, launcher (found Oct 26): every `Exec=` runs the wrapper, i.e. `/usr/bin/devin-desktop`, not the
       Electron binary
-- [x] Item 4: ChromeOS's browser for Linux links: A now, B (router) if DDEV fails
+- [x] Item 4: ChromeOS's browser for Linux links: A, with DDEV's router on 8080/8443 (DDEV check passed
+      Oct 26; router script B dropped); voting app to 8090/8091, PetClinic to 8092
 - [x] Item 5: `lazmode vscode` and `delphi N vscode` subcommands (A); extensions recommended per project
       (A); dev-demo `editor` launcher item (A); Delphi build + run included (A)
 - [x] Item 5, two debuggers: B (a Debug-gdb build mode on Dwarf 2 with sets for gdb; Debug on DWARF 3 for
