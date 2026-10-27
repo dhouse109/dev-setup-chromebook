@@ -150,7 +150,7 @@ Through v67, `install-gemma` stopped at an interactive `hf auth login` unless `H
   | `docker image prune -f` | dangling (untagged) images | |
   | `sudo apt clean` | apt's downloaded packages, the partial downloads, and its package caches `/var/cache/apt/*.bin` (apt rebuilds them; since v97 the report counts them too, with `sudo -n`) | 90.4 MB (Oct 27) |
   | `brew cleanup -s` | Homebrew's old versions and downloads | 264 MB |
-  | `uv cache clean` (v97; was `uv cache prune`, which keeps whatever is referenced and freed 0 B of 548 MB) | uv's whole cache; tool environments and Pythons are in `~/.local/share/uv` and stay | 641 MB |
+  | `uv cache clean` (v97; was `uv cache prune`, which keeps whatever is referenced and freed 0 B of 548 MB) | uv's whole cache; tool environments and Pythons are in `~/.local/share/uv` and stay. Since v97 setup upgrades aider in place, so the next setup downloads nothing for a current aider (before, its `--force` install downloaded all of aider again after this) | 641 MB |
   | `go clean -cache` | Go's build cache | 133 MB |
   | `composer clear-cache` | Composer's downloads | 61 MB |
   | `pnpm store prune` (or `rm -rf ~/.cache/pnpm`) | pnpm's unreferenced packages, its metadata cache | 172 MB |

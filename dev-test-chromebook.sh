@@ -119,9 +119,12 @@ if [ -z "${DEV_SCREEN_OUTPUT:-}" ] && [ "${DEV_SCREEN_SAVE:-1}" != 0 ]; then
         export DEV_RUN_STAMP; DEV_RUN_STAMP=$(date +%Y%m%d-%H%M%S)
         export DEV_SCREEN_OUTPUT="$_sd/assets/logs/$_sn-$DEV_RUN_STAMP.output"
         # Plain text: no script(1) header or footer, no CR line ends, the last redraw of a line, no escape codes.
+        # A move to column 1 (ESC[G, ESC[0G, ESC[1G) counts as a carriage return: npm's spinner redraws that way
+        # (Node's cursorTo(0) and clearLine), and left only escapes stripped, its frames came out side by side in one
+        # long line (found in the v97 Chromebook hand checks, Oct 27 2026). wget's and curl's bars use \r.
         _plain() {
             sed -u -e '/^Script started on .*\[COMMAND=/d' -e '/^Script done on .*\[COMMAND_EXIT_CODE=/d' \
-                -e 's/\r$//' -e 's/.*\r//' -e 's/\x1b\[[0-9;?]*[ -\/]*[@-~]//g' \
+                -e 's/\x1b\[[01]\?G/\r/g' -e 's/\r$//' -e 's/.*\r//' -e 's|\x1b\[[0-9;?]*[ -/]*[@-~]||g' \
                 -e 's/\x1b\][^\x07\x1b]*\(\x07\|\x1b\\\)//g' -e 's/\x1b[()][0-9A-Za-z]//g' -e 's/\x1b[=>78]//g' -e 's/\x00//g'
         }
         # Recorders ignore Ctrl-C, so they keep writing until the run itself has stopped. If the file can't be

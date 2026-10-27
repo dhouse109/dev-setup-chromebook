@@ -135,7 +135,9 @@ to see it in context; the comment above each fix usually tells the story.
   **Fix:** `devclean --run` uses `uv cache clean`, which empties the cache; uv's tool environments and Pythons
   live in `~/.local/share/uv`, so nothing installed breaks, and `uvx`'s throwaway environments come back on
   their next run. The report gives the cache's whole size, "up to": blocks an environment shares with it as a
-  clone stay in use.
+  clone stay in use. Setup upgrades aider in place since v97 (`uv tool upgrade`), so a setup run after
+  `devclean --run` no longer downloads all of aider again; before, its `--force` reinstall did, and a dropped
+  connection there stopped setup (Oct 27 2026).
 - **kind works in Crostini's Docker** (`install-k8s`). A cluster takes about 2 GB, so the test unloads
   Ollama's models first.
 

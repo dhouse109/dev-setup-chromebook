@@ -42,9 +42,12 @@ if [ -z "${DEV_SCREEN_OUTPUT:-}" ] && [ "${DEV_SCREEN_SAVE:-1}" != 0 ]; then
         export DEV_RUN_STAMP; DEV_RUN_STAMP=$(date +%Y%m%d-%H%M%S)
         export DEV_SCREEN_OUTPUT="$_sd/assets/logs/$_sn-$DEV_RUN_STAMP.output"
         # Plain text: no script(1) header or footer, no CR line ends, the last redraw of a line, no escape codes.
+        # A move to column 1 (ESC[G, ESC[0G, ESC[1G) counts as a carriage return: npm's spinner redraws that way
+        # (Node's cursorTo(0) and clearLine), and left only escapes stripped, its frames came out side by side in one
+        # long line (found in the v97 Chromebook hand checks, Oct 27 2026). wget's and curl's bars use \r.
         _plain() {
             sed -u -e '/^Script started on .*\[COMMAND=/d' -e '/^Script done on .*\[COMMAND_EXIT_CODE=/d' \
-                -e 's/\r$//' -e 's/.*\r//' -e 's/\x1b\[[0-9;?]*[ -\/]*[@-~]//g' \
+                -e 's/\x1b\[[01]\?G/\r/g' -e 's/\r$//' -e 's/.*\r//' -e 's|\x1b\[[0-9;?]*[ -/]*[@-~]||g' \
                 -e 's/\x1b\][^\x07\x1b]*\(\x07\|\x1b\\\)//g' -e 's/\x1b[()][0-9A-Za-z]//g' -e 's/\x1b[=>78]//g' -e 's/\x00//g'
         }
         # Recorders ignore Ctrl-C, so they keep writing until the run itself has stopped. If the file can't be
@@ -1009,7 +1012,9 @@ size_of() {
         # copy-on-write clone, and counting only files with one link changed nothing). --run now uses 'uv cache
         # clean', which empties the cache: uv's tool environments and Pythons live in ~/.local/share/uv, not here,
         # so nothing installed breaks, and uvx's throwaway environments come back on their next run. The report is
-        # the cache's whole size, "up to": blocks a tool environment shares with it as a clone stay in use.
+        # the cache's whole size, "up to": blocks a tool environment shares with it as a clone stay in use. The next
+        # setup upgrades aider in place, which downloads nothing when it is current; only a fresh install of aider
+        # (missing or broken) downloads all of its packages again (before v97 setup's --force install always did).
         uv) has uv || return; d=$(uv cache dir 2> /dev/null); printf '%s\tdu %s, up to (blocks cloned into environments stay)\n' "$(dub "${d:-$HOME/.cache/uv}")" "${d:-$HOME/.cache/uv}" ;;
         go) has go || return; d=$(go_cache); printf '%s\tdu %s\n' "$(dub "$d")" "$d" ;;
         composer) has composer || return; d=$(COMPOSER_NO_INTERACTION=1 composer config --global cache-dir 2> /dev/null | tail -n 1); printf '%s\tdu %s\n' "$(dub "${d:-$HOME/.cache/composer}")" "${d:-$HOME/.cache/composer}" ;;
@@ -1475,7 +1480,49 @@ if [[ "$FLAGS" =~ " install-node " ]]; then
     # aider itself recommends: uv (installed via pipx in the base section) fetches a managed 3.12 and
     # puts 'aider' in ~/.local/bin, same place pipx would. No '|| true': the test script treats a
     # missing aider as FAIL, so the installer must fail loudly too.
-    uv tool install --force --python 3.12 --with pip aider-chat@latest
+    # v97 (found in the v97 Chromebook hand checks, Oct 27 2026): a setup run right after 'devclean --run' stopped
+    # here. 'uv tool install --force' reinstalled aider on every run, and devclean's 'uv cache clean' had just
+    # emptied uv's cache, so it downloaded all of aider's packages again (109); a dropped connection on one of them
+    # ("error decoding response body ... connection reset", hf-xet 1.2.0) ended the run under set -e. Now an aider
+    # that runs is upgraded in place ('uv tool upgrade' keeps the install's Python 3.12 and --with pip, and when it
+    # is current it asks the index and downloads nothing), and only a missing or broken one is installed fresh
+    # (then, after devclean, everything is downloaded again). A network error is retried once; if it fails again,
+    # setup still stops (v59), saying it was the network and to rerun.
+    AIDER_OUT=$(mktemp)
+    aider_net() { grep -qiE 'connection (reset|refused|closed|aborted)|error (decoding response body|sending request|reading a body)|timed? ?out|dns error|failed to lookup address|tcp connect error|network is unreachable|temporary failure in name resolution|unexpected eof' "$AIDER_OUT"; }
+    aider_step() {   # aider_step CMD...: run it, its output shown; once more after a network error
+        local try rc
+        for try in 1 2; do
+            "$@" 2>&1 | tee "$AIDER_OUT"; rc=${PIPESTATUS[0]}
+            [ "$rc" = 0 ] && return 0
+            aider_net || return "$rc"
+            [ "$try" = 1 ] && { echo "aider: that was a network error; trying once more in 10 s..."; sleep 10; }
+        done
+        return "$rc"
+    }
+    AIDER_RC=0
+    if [ -x "$HOME/.local/bin/aider" ] && "$HOME/.local/bin/aider" --version > /dev/null 2>&1 \
+        && uv tool list 2> /dev/null | grep -q '^aider-chat '; then
+        echo "aider is installed: upgrading it in place (uv tool upgrade aider-chat)..."
+        aider_step uv tool upgrade aider-chat || AIDER_RC=$?
+        if [ "$AIDER_RC" != 0 ] && ! aider_net; then
+            echo "aider: the upgrade failed (not the network); installing it fresh..."
+            AIDER_RC=0; aider_step uv tool install --force --python 3.12 --with pip aider-chat@latest || AIDER_RC=$?
+        fi
+    else
+        echo "aider is missing or does not run: installing it (uv tool install, Python 3.12)..."
+        aider_step uv tool install --force --python 3.12 --with pip aider-chat@latest || AIDER_RC=$?
+    fi
+    if [ "$AIDER_RC" != 0 ]; then
+        if aider_net; then
+            echo "ERROR: aider could not be installed or upgraded: a network error, twice (above). Nothing else is"
+            echo "       wrong: rerun setup with the same flags when the connection is steady."
+        else
+            echo "ERROR: aider could not be installed or upgraded (uv's output above)."
+        fi
+        rm -f "$AIDER_OUT"; exit 1
+    fi
+    rm -f "$AIDER_OUT"
 
     # v51: the npm package for Claude Code is deprecated (and now needs Node 22+). The native
     # installer needs no Node at all and self-updates; it lands in ~/.local/bin (already on PATH).
