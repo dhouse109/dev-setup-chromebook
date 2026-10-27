@@ -2316,7 +2316,7 @@ if [[ "$FLAGS" =~ " install-lazarus " ]]; then
                 fi
             fi
             # v97: the table above must name what the deb installs, or the skip never matches (or matches wrongly)
-            LAZ_DV=$(dpkg-deb -f "$ASSETS/downloads/$deb" Version 2> /dev/null || true)
+            LAZ_DV=$(dpkg-deb 2> /dev/null -f "$ASSETS/downloads/$deb" Version || true)   # 2> first: CI reads "Version <number>" as a version string
             [ "$LAZ_DV" = "$LAZ_V" ] || echo "NOTICE: $deb installs $LAZ_P $LAZ_DV, not $LAZ_V as setup's table says; update LAZ_DEBS."
         done
 
