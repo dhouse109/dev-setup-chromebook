@@ -1,5 +1,5 @@
 #!/bin/bash
-# dev-setup-chromebook - Version 96
+# dev-setup-chromebook - Version 97
 # Version history: CHANGELOG.md, next to this script in the bundle
 # (one section per script, newest version first).
 
@@ -252,7 +252,7 @@ if [[ "$FLAGS" =~ " install-gemma " ]] || [[ "$FLAGS" =~ " install-models " ]] |
 fi
 # =================================================================
 
-echo "Starting comprehensive Chromebook Linux provisioning (Version 96)..."
+echo "Starting comprehensive Chromebook Linux provisioning (Version 97)..."
 
 # v93: prefer IPv4 when this network's IPv6 does not get out. On Oct 4 2026 a Chromebook's Linux got IPv6
 # addresses for dl.google.com but no IPv6 route out, and wget hung on one address after another (the
@@ -688,15 +688,26 @@ echo "Wrote ~/.local/bin/devmem (what is using memory, what ChromeOS has taken b
 # 133 MB, Composer 61 MB, plus apt. devclean reports by default and clears only with --run, only what comes back by
 # itself. Never 'docker system prune': the bundle's services (devsvc-*, devdb-*, devldap-*) are containers created
 # stopped, and it would delete them with their settings.
+# v97 (plan item 1): Oct 26 2026, a 30 GB disk set up from v96 with install-editors install-web: 'devclean --run'
+# freed 1.9 GB (4.6 -> 6.5 GB free), then a look by hand found 3.2 GB it had missed: VS Code's CachedExtensionVSIXs
+# (1.7 GB, a copy of every extension package it downloaded), a Codex extension version left behind by a rollback
+# (1.2 GB) and Linux Chrome's profile caches (most of 1.1 GB). devclean now clears those too, each only while its
+# program is closed, says what each step freed, and 'devclean --where' runs the checks that found them.
 cat > "$HOME/.local/bin/devclean.new" << 'DEVCLEAN_EOF'
 #!/bin/bash
-# devclean: what fills the Linux disk, and the caches that are safe to clear (dev-setup v96).
+# devclean: what fills the Linux disk, and the caches that are safe to clear (dev-setup v97).
 # Written by dev-setup and rewritten on every run: copy it before editing.
 #   devclean                   report only, changes nothing: free space, what each cache would free, the total
-#   devclean --run             clear the safe caches (each step only when its tool is installed), then free space
-#                              before and after; one failing step doesn't stop the rest
+#   devclean --run             clear the safe caches (each step only when its tool is installed), saying what each
+#                              step freed, then free space before and after; one failing step doesn't stop the rest
 #   devclean --run --images    also Docker images no container uses (they download again when needed)
 #   devclean --images          the report, with those images
+#   devclean --where           where the space is: the largest folders in your home folder and in ~/.config, Docker's
+#                              image store, and the biggest parts of the largest editor folders; report only
+# Editors (VS Code, Cursor, Devin, any other with a CachedExtensionVSIXs folder): their cached extension downloads,
+# and in ~/.vscode, ~/.cursor and ~/.devin the extension versions left behind (another version of the same extension
+# is the installed one). Those, and Linux Chrome's caches (Cache, Code Cache, GPUCache, Service Worker in each
+# profile), are cleared only while that program is closed; otherwise the line says "left: VS Code is open".
 # Every run also checks DDEV's state files: a 0-byte ~/.ddev/.state.yaml or ~/.ddev/.update (what a full disk
 # leaves, after which 'ddev start' panics) is moved aside as .bak with --run, so ddev recreates it.
 # Never touched, and why:
@@ -708,17 +719,35 @@ cat > "$HOME/.local/bin/devclean.new" << 'DEVCLEAN_EOF'
 #   Ollama models              pulled models, several GB each: 'ollama rm NAME' removes one on purpose
 #   ~/dev-demo                 the demos and your changes in them (dev-demo's demo-clean removes a flag's demos)
 #   DDEV projects              their code and databases ('ddev delete' is per project, on purpose)
+#   extension versions in use  any version an editor profile's extensions.json names (Devin's profiles all share
+#                              ~/.devin/extensions, so a version any profile uses stays)
+#   editors' User folders      settings, keybindings, profiles, and globalStorage (extensions' sign-ins and state)
+#   browser profiles           Linux Chrome's bookmarks, sign-ins and settings: only its cache folders are cleared
+#   ~/.config/nvm              the Node versions nvm installed
 export LC_ALL=C
 usage() { awk 'NR > 1 && !/^#/ { exit } NR > 1 { sub(/^# ?/, ""); print }' "$0"; }
-RUN=0; IMAGES=0
+RUN=0; IMAGES=0; WHERE=0
 for a in "$@"; do
     case "$a" in
         --run) RUN=1 ;;
         --images) IMAGES=1 ;;
+        --where) WHERE=1 ;;
         help|-h|--help) usage; exit 0 ;;
         *) echo "devclean: unknown option '$a' (devclean --help)" >&2; exit 1 ;;
     esac
 done
+if [ "$WHERE" = 1 ] && { [ "$RUN" = 1 ] || [ "$IMAGES" = 1 ]; }; then
+    echo "devclean: --where is a report on its own; run it without --run or --images" >&2; exit 1
+fi
+# DEVCLEAN_ONLY="PATTERN ...": only the categories matching one of the patterns (vsix:*, oldext:*, chrome-profile,
+# npm, ...). dev-test uses it to run the editors' steps against a scratch home without touching your real caches.
+read -ra ONLY <<< "${DEVCLEAN_ONLY:-}"
+want() {
+    [ ${#ONLY[@]} -gt 0 ] || return 0
+    local p
+    for p in "${ONLY[@]}"; do [[ "$1" == $p ]] && return 0; done   # $p unquoted: it is a pattern
+    return 1
+}
 # The tools as a new terminal has them: nvm's npm, Go, Homebrew last (as ~/.bashrc puts them).
 [ -s "$HOME/.nvm/nvm.sh" ] && ! command -v npm > /dev/null 2>&1 && . "$HOME/.nvm/nvm.sh" > /dev/null 2>&1
 for d in "$HOME/.local/bin" /usr/local/go/bin "$HOME/go/bin"; do
@@ -750,11 +779,50 @@ free_bytes() { df -B1 --output=avail "$HOME" 2> /dev/null | tail -n 1 | tr -d ' 
 disk_line() { df -B1 --output=avail,size,target "$HOME" 2> /dev/null | tail -n 1 | awk '{ printf "%s %s %s\n", $1, $2, $3 }'; }
 
 DOCKER=()
-if has docker; then
+if has docker && { want docker-build || want docker-dangling || [ "$IMAGES" = 1 ] || [ "$WHERE" = 1 ]; }; then
     if timeout 10 docker info > /dev/null 2>&1; then DOCKER=(docker)
     elif timeout 10 sudo -n docker info > /dev/null 2>&1; then DOCKER=(sudo -n docker); fi
 fi
-chrome_running() { pgrep -f '^/opt/google/chrome/' > /dev/null 2>&1; }
+# v97: a program counts as running when a process holds a file open under its folders (Electron editors and Chrome
+# keep their logs and LevelDB locks open while any window is up), or, in your real home only, when its program runs.
+# The second test is left out under another HOME: dev-test runs devclean on a scratch home while your editors may be
+# open.
+LOGIN_HOME=$(getent passwd "$(id -un)" 2> /dev/null | cut -d: -f6)
+running() {   # running PGREP-PATTERN FOLDER...
+    local pat=$1 d; shift
+    [ "$HOME" = "$LOGIN_HOME" ] && [ -n "$pat" ] && pgrep -f "$pat" > /dev/null 2>&1 && return 0
+    for d in "$@"; do
+        [ -d "$d" ] || continue
+        [ -n "$(find /proc/[0-9]*/fd -lname "$d/*" -print -quit 2> /dev/null)" ] && return 0
+    done
+    return 1
+}
+chrome_running() { running '^/opt/google/chrome/' "$HOME/.config/google-chrome" "$HOME/.cache/google-chrome"; }
+# v97: the editors. A config folder under ~/.config (Code, Cursor, Devin, or any other VS Code-based editor's) and, for
+# the three the bundle installs, the extensions folder and how its program shows up in ps.
+editor_name() { case "$1" in Code) echo "VS Code" ;; *) echo "$1" ;; esac; }
+editor_ext() {
+    case "$1" in
+        Code) echo "$HOME/.vscode/extensions" ;;
+        Cursor) echo "$HOME/.cursor/extensions" ;;
+        Devin) echo "$HOME/.devin/extensions" ;;
+    esac
+}
+editor_proc() {
+    case "$1" in
+        Code) echo '^/usr/share/code/' ;;
+        Cursor) echo '/\.mount_[Cc]ursor|/\.local/bin/cursor( |$)' ;;
+        Devin) echo '/(devin-desktop|windsurf)/' ;;
+    esac
+}
+editor_running() { running "$(editor_proc "$1")" "$HOME/.config/$1" "$(editor_ext "$1")"; }
+# busy CATEGORY: why it is left alone right now ("VS Code is open"), or nothing.
+busy() {
+    case "$1" in
+        chrome|chrome-profile) chrome_running && echo "Linux Chrome is running" ;;
+        vsix:*|oldext:*) editor_running "${1#*:}" && echo "$(editor_name "${1#*:}") is open" ;;
+    esac
+}
 pip_cmd() { if python3 -m pip --version > /dev/null 2>&1; then echo "python3 -m pip"; elif has pip3; then echo pip3; fi; }
 # npm's and Go's cache folders as the tools resolve them, read rather than asked: 'npm config get' writes a debug log
 # and 'go env' a telemetry count on every call, and the report changes nothing.
@@ -771,7 +839,17 @@ go_cache() {
 
 # The categories: NAME|what it is. size_of NAME prints "BYTES<TAB>how it was measured" (or nothing when the tool isn't
 # there); clean NAME clears it.
-CATS="npm docker-build docker-dangling apt brew uv go composer pnpm pip chrome"
+CATS=(npm docker-build docker-dangling apt brew uv go composer pnpm pip chrome chrome-profile)
+# v97: per editor, vsix:FOLDER (its cached extension downloads) and oldext:FOLDER (extension versions left behind).
+for d in "$HOME/.config/Code" "$HOME/.config/Cursor" "$HOME/.config/Devin" "$HOME"/.config/*/CachedExtensionVSIXs; do
+    d=${d%/CachedExtensionVSIXs}; e=${d##*/}
+    case " ${CATS[*]} " in *" vsix:$e "*) continue ;; esac
+    [ -d "$d/CachedExtensionVSIXs" ] && CATS+=("vsix:$e")
+    x=$(editor_ext "$e"); [ -n "$x" ] && [ -f "$x/extensions.json" ] && CATS+=("oldext:$e")
+done
+FILTERED=()
+for c in "${CATS[@]}"; do want "$c" && FILTERED+=("$c"); done
+CATS=("${FILTERED[@]}")
 label() {
     case "$1" in
         npm) echo "npm's cache" ;;
@@ -785,7 +863,61 @@ label() {
         pnpm) echo "pnpm's store and cache" ;;
         pip) echo "pip's cache" ;;
         chrome) echo "Linux Chrome's cache" ;;
+        chrome-profile) echo "Linux Chrome's profile caches" ;;
+        vsix:*) echo "$(editor_name "${1#*:}")'s cached extension downloads" ;;
+        oldext:*) echo "$(editor_name "${1#*:}")'s old extension versions" ;;
     esac
+}
+chrome_caches() {   # the cache folders in each Linux Chrome profile, NUL-separated (never the profile itself)
+    [ -d "$HOME/.config/google-chrome" ] || return 0
+    find "$HOME/.config/google-chrome" -mindepth 2 -maxdepth 2 -type d \
+        \( -name Cache -o -name 'Code Cache' -o -name GPUCache -o -name 'Service Worker' \) -print0 2> /dev/null
+}
+# v97: old_versions FOLDER prints NAME<TAB>ID<TAB>VERSION<TAB>INSTALLED-VERSION for each folder in that editor's
+# extensions folder that no extensions.json uses (the folder's own, which the built-in Default profile reads, and
+# every profile's under User/profiles) while another version of the same extension is the installed one (named in
+# one, and not on the editor's .obsolete list). Nothing at all when a list can't be read: then what is installed
+# isn't known, and everything stays. Oct 26 2026: rolling Codex back to 26.1007.21434 left 26.1021.22027 (1.2 GB).
+old_versions() {
+    local x; x=$(editor_ext "$1")
+    [ -n "$x" ] && [ -f "$x/extensions.json" ] && has python3 || return 0
+    python3 - "$x" "$HOME/.config/$1" << 'OLDEXT_PY'
+import glob, json, os, sys
+ext, cfg = sys.argv[1], sys.argv[2]
+def load(p):
+    with open(p, encoding="utf-8") as f:
+        return json.load(f)
+used, installed = set(), {}
+try:
+    obsolete = load(os.path.join(ext, ".obsolete")) if os.path.exists(os.path.join(ext, ".obsolete")) else {}
+    lists = [os.path.join(ext, "extensions.json")] + glob.glob(os.path.join(cfg, "User", "profiles", "*", "extensions.json"))
+    for p in lists:
+        entries = load(p)
+        if not isinstance(entries, list):
+            sys.exit(0)
+        for e in entries:
+            loc = e.get("location") or {}
+            path = loc if isinstance(loc, str) else (loc.get("fsPath") or loc.get("path") or "")
+            name = e.get("relativeLocation") or os.path.basename(path.rstrip("/"))
+            if not name:
+                continue
+            used.add(name)
+            if name not in obsolete:
+                installed.setdefault(e["identifier"]["id"].lower(), set()).add(str(e.get("version", "")))
+except (OSError, ValueError, KeyError, TypeError, AttributeError):
+    sys.exit(0)
+for name in sorted(os.listdir(ext)):
+    d = os.path.join(ext, name)
+    if name.startswith(".") or name in used or not os.path.isdir(d) or os.path.islink(d):
+        continue
+    try:
+        pkg = load(os.path.join(d, "package.json"))
+        xid, ver = ("%s.%s" % (pkg["publisher"], pkg["name"])).lower(), str(pkg["version"])
+    except (OSError, ValueError, KeyError, TypeError):
+        continue
+    if xid in installed and ver not in installed[xid]:
+        print("%s\t%s\t%s\t%s" % (name, xid, ver, ", ".join(sorted(installed[xid]))))
+OLDEXT_PY
 }
 size_of() {
     local b d out
@@ -796,7 +928,9 @@ size_of() {
             # The build cache's whole size: 'docker system df' calls only part of it reclaimable (16 kB on Oct 26,
             # when 'docker builder prune -af' then freed 2.7 GB).
             b=$("${DOCKER[@]}" system df --format '{{.Type}}|{{.Size}}' 2> /dev/null | awk -F'|' '$1 == "Build Cache" { print $2 }')
-            printf '%s\tdocker system df (its whole size)\n' "$(to_bytes "${b:-0}")" ;;
+            # v97: "up to": on Oct 26 'docker builder prune -af' emptied a 2.7 GB build cache but freed less, since the
+            # cache shared layers with the DDEV images just built, and those layers stay with the images.
+            printf '%s\tdocker system df, its whole size; up to: layers shared with images stay\n' "$(to_bytes "${b:-0}")" ;;
         docker-dangling)
             [ ${#DOCKER[@]} -gt 0 ] || return
             mapfile -t ids < <("${DOCKER[@]}" image ls -q -f dangling=true 2> /dev/null | sort -u)
@@ -818,7 +952,26 @@ size_of() {
             printf '%s\tdu %s, ~/.cache/pnpm, up to\n' "$(dub "$d" "$HOME/.cache/pnpm")" "${d/#$HOME/\~}" ;;
         pip) [ -n "$(pip_cmd)" ] || return; d=$($(pip_cmd) cache dir 2> /dev/null); printf '%s\tdu %s\n' "$(dub "${d:-$HOME/.cache/pip}")" "${d:-$HOME/.cache/pip}" ;;
         chrome) [ -d "$HOME/.cache/google-chrome" ] || return
-            printf '%s\tdu ~/.cache/google-chrome%s\n' "$(dub "$HOME/.cache/google-chrome")" "$(chrome_running && echo ', skipped while Linux Chrome runs')" ;;
+            printf '%s\tdu ~/.cache/google-chrome\n' "$(dub "$HOME/.cache/google-chrome")" ;;
+        chrome-profile)
+            mapfile -d '' -t dirs < <(chrome_caches)
+            [ ${#dirs[@]} -gt 0 ] || return
+            printf '%s\tdu Cache, Code Cache, GPUCache, Service Worker in %d profile(s) in ~/.config/google-chrome\n' "$(dub "${dirs[@]}")" "$(printf '%s\n' "${dirs[@]%/*}" | sort -u | wc -l)" ;;
+        vsix:*) d="$HOME/.config/${1#*:}/CachedExtensionVSIXs"
+            printf '%s\tdu %s\n' "$(dub "$d")" "$d" ;;
+        oldext:*)
+            out=$(old_versions "${1#*:}"); x=$(editor_ext "${1#*:}"); b=0
+            [ -n "$out" ] && b=$(cut -f1 <<< "$out" | sed "s|^|$x/|" | tr '\n' '\0' | du -sbc --files0-from=- 2> /dev/null | tail -n 1 | cut -f1)
+            printf '%s\t%d folder(s) in %s with another version installed\n' "${b:-0}" "$(grep -c . <<< "$out")" "$x" ;;
+    esac
+}
+details() {   # the lines under a category in the report: each old extension version, and the one installed
+    local n inst x
+    case "$1" in
+        oldext:*) x=$(editor_ext "${1#*:}")
+            while IFS=$'\t' read -r n _ _ inst; do
+                [ -n "$n" ] && printf '      %-58s %8s   (%s installed)\n' "$n" "$(human "$(dub "$x/$n")")" "$inst"
+            done <<< "$(old_versions "${1#*:}")" ;;
     esac
 }
 clean() {
@@ -834,8 +987,19 @@ clean() {
         pnpm) if has pnpm && [ -d "$HOME/.local/share/pnpm/store" ]; then timeout 300 pnpm store prune || return 1; fi
               rm -rf "$HOME/.cache/pnpm" ;;
         pip) $(pip_cmd) cache purge ;;
-        chrome) chrome_running && return 3   # left while Linux Chrome runs
+        chrome) [ -n "$(busy chrome)" ] && return 3   # left while Linux Chrome runs
                 rm -rf "$HOME/.cache/google-chrome" ;;
+        chrome-profile) [ -n "$(busy chrome-profile)" ] && return 3
+            chrome_caches | xargs -0 -r rm -rf ;;
+        vsix:*) [ -n "$(busy "$1")" ] && return 3   # left while that editor is open
+            find "$HOME/.config/${1#*:}/CachedExtensionVSIXs" -mindepth 1 -maxdepth 1 -exec rm -rf {} + ;;
+        oldext:*) [ -n "$(busy "$1")" ] && return 3
+            local x n rc=0; x=$(editor_ext "${1#*:}")
+            while IFS=$'\t' read -r n _; do
+                [ -n "$n" ] || continue
+                rm -rf "${x:?}/$n" && echo "removed ${x/#$HOME/\~}/$n" || rc=1
+            done <<< "$(old_versions "${1#*:}")"
+            return $rc ;;
     esac
 }
 unused_images() {   # IMAGE-ID<TAB>BYTES<TAB>NAME for images no container (running or stopped) uses
@@ -858,21 +1022,74 @@ ddev_repair() {   # move each 0-byte state file aside; DDEV writes a new one on 
     done
 }
 
+# v97: devclean --where, the checks that found what v96 missed (Oct 26 2026), built in. Report only.
+top() {   # top N PATH...: the N largest of the paths, largest first, as "  PATH  SIZE"
+    local n=$1; shift
+    du -xsb "$@" 2> /dev/null | sort -n | tail -n "$n" | sort -rn | while IFS=$'\t' read -r b p; do
+        printf '  %-58s %10s\n' "${p/#$HOME/\~}" "$(human "$b")"
+    done
+}
+where() {
+    local d b x e
+    echo
+    echo "Largest in your home folder (du -xsh ~/.[!.]* ~/*):"
+    top 10 "$HOME"/.[!.]* "$HOME"/*
+    if [ -d "$HOME/.config" ]; then
+        echo
+        echo "Largest in ~/.config:"
+        top 6 "$HOME"/.config/*
+    fi
+    # Docker 29 keeps its images in containerd's store: on Oct 26 /var/lib/containerd held 3.3 GB (mostly DDEV's six
+    # images) while /var/lib/docker showed 952 KB. Both are root's, so they are read with sudo -n when allowed.
+    echo
+    echo "Docker's image store:"
+    for d in /var/lib/containerd /var/lib/docker; do
+        [ -d "$d" ] || { printf '  %-58s %10s\n' "$d" "(none)"; continue; }
+        if b=$(sudo -n du -xsb "$d" 2> /dev/null | cut -f1) && [ -n "$b" ]; then printf '  %-58s %10s\n' "$d" "$(human "$b")"
+        else printf '  %-58s %10s\n' "$d" "(needs sudo: sudo du -xsh $d)"; fi
+    done
+    if [ ${#DOCKER[@]} -gt 0 ]; then
+        echo "  docker system df:"
+        "${DOCKER[@]}" system df 2> /dev/null | sed 's/^/    /'
+    fi
+    # The largest editor folders (each editor's config folder and extensions folder), and their biggest parts.
+    local folders=()
+    for e in Code Cursor Devin; do
+        [ -d "$HOME/.config/$e" ] && folders+=("$HOME/.config/$e")
+        x=$(editor_ext "$e"); [ -d "$x" ] && folders+=("$x")
+    done
+    echo
+    echo "The largest editor folders, and their biggest parts:"
+    if [ ${#folders[@]} -eq 0 ]; then echo "  none (no VS Code, Cursor or Devin folders)"; return 0; fi
+    du -xsb "${folders[@]}" 2> /dev/null | sort -rn | head -n 3 | while IFS=$'\t' read -r b d; do
+        printf '  %-58s %10s\n' "${d/#$HOME/\~}" "$(human "$b")"
+        top 5 "$d"/* "$d"/.[!.]* | sed 's/^/  /'
+    done
+}
+
 read -r AVAIL SIZE MNT <<< "$(disk_line)"
 echo "Free space: $(human "$AVAIL") of $(human "$SIZE") (on $MNT)"
+if [ "$WHERE" = 1 ]; then
+    where
+    echo
+    echo "Nothing was changed. 'devclean' reports what is safe to clear; 'devclean --help' lists what it never touches."
+    exit 0
+fi
 if [ "$RUN" = 0 ]; then
     echo
     echo "Would free (devclean --run):"
     TOTAL=0
-    for c in $CATS; do
+    for c in "${CATS[@]}"; do
         line=$(size_of "$c") || true
         [ -n "$line" ] || continue
         b=${line%%$'\t'*}; how=${line#*$'\t'}
         [[ "$b" =~ ^[0-9]+$ ]] || b=0
-        [ "$c" = chrome ] && chrome_running || TOTAL=$((TOTAL + b))
+        why=$(busy "$c")
+        if [ -n "$why" ]; then how="$how; left: $why"; else TOTAL=$((TOTAL + b)); fi
         printf '  %-40s %10s   (%s)\n' "$(label "$c")" "$(human "$b")" "${how//$HOME/\~}"
+        details "$c"
     done
-    [ ${#DOCKER[@]} -gt 0 ] || { has docker && echo "  (Docker isn't reachable: open a new terminal for the docker group, or start Docker)"; }
+    [ ${#DOCKER[@]} -gt 0 ] || { has docker && want docker-build && echo "  (Docker isn't reachable: open a new terminal for the docker group, or start Docker)"; }
     echo "  Total, about $(human "$TOTAL")"
     if [ "$IMAGES" = 1 ]; then
         imgs=$(unused_images)
@@ -894,14 +1111,20 @@ fi
 
 BEFORE=$AVAIL
 ddev_repair
-for c in $CATS; do
+# v97: each step says what it freed (free space before and after it) next to what the report measured, so a gap
+# between the two shows (v96 printed only the total).
+for c in "${CATS[@]}"; do
     line=$(size_of "$c") || true
     [ -n "$line" ] || continue
+    b=${line%%$'\t'*}; [[ "$b" =~ ^[0-9]+$ ]] || b=0
     printf '%s ... ' "$(label "$c")"
+    f0=$(free_bytes)
     out=$(clean "$c" 2>&1); rc=$?
+    f1=$(free_bytes)
     case $rc in
-        0) echo "done" ;;
-        3) echo "left: Linux Chrome is running (close it, then devclean --run again)" ;;
+        0) echo "done, freed $(human $(( f1 > f0 ? f1 - f0 : 0 ))) (measured $(human "$b"))"
+           grep '^removed ' <<< "$out" | sed 's/^/    /' ;;
+        3) echo "left: $(busy "$c") (close it, then devclean --run again)" ;;
         *) echo "failed (devclean goes on):"; printf '%s\n' "$out" | tail -n 3 | sed 's/^/    /' ;;
     esac
 done
@@ -913,7 +1136,9 @@ if [ "$IMAGES" = 1 ]; then
             while IFS=$'\t' read -r _ b n; do printf '  %-50s %10s\n' "$n" "$(human "$b")"; done <<< "$imgs"
         fi
         printf 'docker image prune -a ... '
-        if out=$("${DOCKER[@]}" image prune -af 2>&1); then echo "done"; else echo "failed:"; printf '%s\n' "$out" | tail -n 3 | sed 's/^/    /'; fi
+        f0=$(free_bytes)
+        if out=$("${DOCKER[@]}" image prune -af 2>&1); then f1=$(free_bytes); echo "done, freed $(human $(( f1 > f0 ? f1 - f0 : 0 )))"
+        else echo "failed:"; printf '%s\n' "$out" | tail -n 3 | sed 's/^/    /'; fi
     else
         echo "--images: Docker isn't reachable, so no images were removed."
     fi
@@ -10842,7 +11067,7 @@ echo "Cleaning up system packages..."
 sudo apt autoremove -y
 
 echo "================================================================="
-echo "Setup Version 96 complete! 🎉"
+echo "Setup Version 97 complete! 🎉"
 echo "NEXT, in this order:"
 echo "  a. source ~/.bashrc                      (or open a new terminal)"
 echo "  b. ./dev-init-chromebook.sh <flags>  applies ~/.config/dev-init/secrets.env: GitHub, Hugging Face,"

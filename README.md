@@ -27,7 +27,7 @@ the whole lab, as it is.
 
 All four take the same flags, so `install-web install-node` means the same thing to each of them.
 
-> **Current version: v96.** [CHANGELOG.md](CHANGELOG.md) has the full history.
+> **Current version: v97.** [CHANGELOG.md](CHANGELOG.md) has the full history.
 
 ## What it is, and what it isn't
 
@@ -201,7 +201,7 @@ Read [what they change](#what-they-change-on-your-system) before you run them.
   - its password removed (`passwd -d`), on ChromeOS only, where sudo needs none
 - **Your home:**
   - marked blocks in `~/.bashrc`, rewritten in place on each run
-  - commands in `~/.local/bin` (`devsvc`, `mssql`, `oracle`, `ldap`, `lan`, `lazmode`, `herdr`, `devmem` (a memory report), `devclean` (a disk cleanup), the retro guests…)
+  - commands in `~/.local/bin` (`devsvc`, `mssql`, `oracle`, `ldap`, `lan`, `lazmode`, `herdr`, `devmem` (a memory report), `devclean` (a disk cleanup; `devclean --where` shows where the space is), the retro guests…)
   - settings in `~/.config/dev-*`, `devsvc`, `devldap` and `devdb`
   - downloads and logs in `./assets` next to the scripts
 - **Docker:** containers and named volumes called `devdb-*`, `devsvc-*` and `devldap-*`.

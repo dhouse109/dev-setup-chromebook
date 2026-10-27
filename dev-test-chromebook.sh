@@ -1,5 +1,5 @@
 #!/bin/bash
-# dev-test-chromebook - Version 96
+# dev-test-chromebook - Version 97
 # Version history: CHANGELOG.md, next to this script in the bundle
 # (one section per script, newest version first).
 #
@@ -423,7 +423,7 @@ info()  { printf '  %-62s %s\n' "$1" "${DIM}INFO${RST} $2"; echo "--- $1: INFO $
 # v92: a check that cannot run because an earlier one already failed for the same cause (counted as SKIP).
 skipped() { printf '  %-62s %s\n' "$1" "${DIM}SKIP${RST} $2"; SKIP=$((SKIP + 1)); LAST=skip; echo "--- $1: SKIP $2" >> "$LOG"; }
 
-echo "Testing Chromebook Linux provisioning (Version 96)... log: $LOG"
+echo "Testing Chromebook Linux provisioning (Version 97)... log: $LOG"
 [ "$QUICK" = 1 ] && echo "(quick mode: slow functional tests will be skipped)"
 
 # v68: say so when dev-init has not applied the secrets file yet. Filling in secrets.env logs
@@ -629,7 +629,30 @@ check "devmem: 'taken back by ChromeOS' is between 0 and the total" 'bash devmem
 # v96 (plan item 8): devclean, the disk cleanup. Its report must change nothing: the caches it would clear and DDEV's
 # state files are listed (names, sizes, times) before and after a plain 'devclean'. --run isn't run here (it clears
 # your caches); its hand check is in the v96 plan.
+# v97 (plan item 1): the editors' steps and Linux Chrome's profile caches run, --run included, against a scratch home
+# in $WORK (DEVCLEAN_ONLY keeps every other step out, so your real caches and Docker are never touched): the report
+# changes nothing; --run removes the cached download, the old extension version and the Cache folder, and keeps the
+# installed version, a version only a profile uses, an extension with no other version, the User folder and the
+# profile's own files. devclean --where runs on the scratch home, names its largest folder and changes nothing.
 cat > "$WORK/devclean_check.sh" << 'DEVCLEAN_EOF'
+scratch() {   # a scratch home: VS Code with a cached VSIX and an old Pub.ext, a Chrome profile with a Cache folder
+    S="$WORK/devclean-home"; rm -rf "$S"
+    local x="$S/.vscode/extensions" v
+    mkdir -p "$S/.config/Code/CachedExtensionVSIXs" "$S/.config/Code/User/globalStorage" "$S/.config/Code/User/profiles/p1" \
+        "$S/.config/google-chrome/Default/Cache" "$x/other.solo-1.0.0"
+    head -c 2097152 /dev/zero > "$S/.config/Code/CachedExtensionVSIXs/pub.ext-2.0.0"
+    echo '{}' > "$S/.config/Code/User/settings.json"; echo state > "$S/.config/Code/User/globalStorage/state.vscdb"
+    for v in 1.0.0 1.5.0 2.0.0; do
+        mkdir -p "$x/pub.ext-$v"; head -c 1048576 /dev/zero > "$x/pub.ext-$v/blob"
+        printf '{"publisher": "Pub", "name": "ext", "version": "%s"}\n' "$v" > "$x/pub.ext-$v/package.json"
+    done
+    echo '{"publisher": "other", "name": "solo", "version": "1.0.0"}' > "$x/other.solo-1.0.0/package.json"
+    echo '[{"identifier": {"id": "pub.ext"}, "version": "2.0.0", "relativeLocation": "pub.ext-2.0.0"}]' > "$x/extensions.json"
+    echo '[{"identifier": {"id": "pub.ext"}, "version": "1.5.0", "relativeLocation": "pub.ext-1.5.0"}]' > "$S/.config/Code/User/profiles/p1/extensions.json"
+    head -c 1048576 /dev/zero > "$S/.config/google-chrome/Default/Cache/data_0"
+    echo '{}' > "$S/.config/google-chrome/Default/Bookmarks"
+}
+tree() { find "$S/.config" "$S/.vscode" -printf '%P %s %T@\n' 2> /dev/null | sort; }
 snap() {   # the first cache folder there, and DDEV's state files
     local d
     for d in "$HOME/.npm/_cacache" "${XDG_CACHE_HOME:-$HOME/.cache}/go-build" "$HOME/.cache/pip" "$HOME/.cache/composer" "$HOME/.cache/uv"; do
@@ -649,15 +672,48 @@ case "$1" in
         echo "unchanged: ${f/#$HOME/\~}" ;;
     help)   # the never-touch list, with each entry
         h=$(devclean --help) || exit 1
-        for w in 'docker system prune' 'Docker volumes' 'ms-playwright' 'Hugging Face' 'Ollama models' '~/dev-demo' 'DDEV projects'; do
+        for w in 'docker system prune' 'Docker volumes' 'ms-playwright' 'Hugging Face' 'Ollama models' '~/dev-demo' 'DDEV projects' \
+            'extension versions in use' 'globalStorage' 'browser profiles' '~/.config/nvm'; do
             grep -qF "$w" <<< "$h" || { echo "--help does not name: $w"; exit 1; }
         done
-        echo "all seven named" ;;
+        echo "all eleven named" ;;
+    editors)   # the report on a scratch home changes nothing; --run clears what it named and keeps the rest
+        scratch; a=$(tree)
+        o=$(HOME=$S DEVCLEAN_ONLY='vsix:* oldext:* chrome-profile' devclean) || { echo "devclean exited $?"; exit 1; }
+        [ "$a" = "$(tree)" ] || { echo "the report changed the scratch home"; exit 1; }
+        for w in "VS Code's cached extension downloads" "VS Code's old extension versions" 'pub.ext-1.0.0' "Linux Chrome's profile caches"; do
+            grep -qF "$w" <<< "$o" || { echo "the report does not name: $w"; printf '%s\n' "$o"; exit 1; }
+        done
+        grep -q 'pub.ext-1.5.0' <<< "$o" && { echo "the report lists pub.ext-1.5.0, which a profile uses"; exit 1; }
+        o=$(HOME=$S DEVCLEAN_ONLY='vsix:* oldext:* chrome-profile' devclean --run) || { echo "devclean --run exited $?"; exit 1; }
+        grep -q 'left: ' <<< "$o" && { printf '%s\n' "$o" | grep 'left: '; exit 1; }
+        for p in .config/Code/CachedExtensionVSIXs/pub.ext-2.0.0 .vscode/extensions/pub.ext-1.0.0 .config/google-chrome/Default/Cache; do
+            [ -e "$S/$p" ] && { echo "--run left $p"; exit 1; }
+        done
+        for p in .config/Code/CachedExtensionVSIXs .vscode/extensions/pub.ext-2.0.0 .vscode/extensions/pub.ext-1.5.0 \
+            .vscode/extensions/other.solo-1.0.0 .vscode/extensions/extensions.json .config/Code/User/settings.json \
+            .config/Code/User/globalStorage/state.vscdb .config/google-chrome/Default/Bookmarks; do
+            [ -e "$S/$p" ] || { echo "--run removed $p"; exit 1; }
+        done
+        grep -c '^.* \.\.\. done, freed ' <<< "$o" | sed 's/$/ steps done, each with what it freed/'
+        rm -rf "$S" ;;
+    where)   # devclean --where names the scratch home's largest folder and changes nothing
+        scratch; a=$(tree)
+        o=$(HOME=$S devclean --where) || { echo "devclean --where exited $?"; exit 1; }
+        [ "$a" = "$(tree)" ] || { echo "--where changed the scratch home"; exit 1; }
+        for w in 'Largest in your home folder' '~/.vscode ' "Docker's image store" '~/.vscode/extensions/pub.ext-'; do
+            grep -qF -- "$w" <<< "$o" || { echo "--where does not show: $w"; printf '%s\n' "$o"; exit 1; }
+        done
+        sed -n '/^Largest in your home folder/{n;p;}' <<< "$o"
+        rm -rf "$S" ;;
 esac
 DEVCLEAN_EOF
 check "devclean: the report runs and changes nothing"             'bash devclean_check.sh report' 300
 hint  "rerun setup (any flags): v96 writes ~/.local/bin/devclean"
 check "devclean --help names what it never touches"                'bash devclean_check.sh help'
+check "devclean: editors' downloads, old versions, Chrome caches (scratch home)" 'bash devclean_check.sh editors' 120
+hint  "rerun setup (any flags): v97 adds the editors' steps to ~/.local/bin/devclean"
+check "devclean --where names the largest folders, changes nothing"  'bash devclean_check.sh where' 120
 # v96: DDEV's router on 8080/8443, since ChromeOS passes high ports to Linux but not 80 and 443 (Oct 26 2026:
 # ERR_CONNECTION_REFUSED on https://ddev-test.ddev.site, fine on :8443). Setup sets them unless you set others:
 # missing (or DDEV's own 80/443, which it writes into the file on every save) is a FAIL, ports of your own a WARN.
@@ -5658,7 +5714,7 @@ fi
 # =================================================================
 echo
 echo "================================================================="
-echo "Test Version 96 complete: ${GRN}PASS $PASS${RST}   ${RED}FAIL $FAIL${RST}   ${YEL}WARN $WARN${RST}   SKIP $SKIP"
+echo "Test Version 97 complete: ${GRN}PASS $PASS${RST}   ${RED}FAIL $FAIL${RST}   ${YEL}WARN $WARN${RST}   SKIP $SKIP"
 if [ ${#FAILED[@]} -gt 0 ]; then
     echo
     echo "Failed (must fix to get started):"

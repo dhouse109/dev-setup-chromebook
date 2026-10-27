@@ -112,6 +112,18 @@ to see it in context; the comment above each fix usually tells the story.
   changes nothing; `devclean --run` clears them and moves 0-byte DDEV state files aside; `--images` also removes
   Docker images no container uses. Never `docker system prune`: the bundle's services are containers created
   stopped, and it deletes them.
+- **Editors keep what they no longer need** (setup base, v97). On Oct 26 2026 a 30 GB disk set up the same morning
+  went from 16.6 GB free to 4.6 GB in three hours. VS Code keeps a copy of every extension package it downloads in
+  `~/.config/Code/CachedExtensionVSIXs` (1.7 GB; Cursor and Devin do the same), and rolling an extension back
+  leaves the newer version's folder in `~/.vscode/extensions` (Codex 26.1021.22027, 1.2 GB). Linux Chrome's
+  profile kept most of 1.1 GB in caches. **Fix:** `devclean` reports them and `devclean --run` clears them, each
+  only while that program is closed; the installed extension versions, the editors' `User` folders and the
+  Chrome profile itself stay.
+- **Docker 29 keeps images under `/var/lib/containerd`** (v97). `/var/lib/docker` showed 952 KB while
+  `/var/lib/containerd` held 3.3 GB (mostly DDEV's six images), so `du` on the Docker folder alone misses them.
+  And Docker's build cache can't be freed in full while images built from it share its layers: a 2.7 GB cache,
+  emptied, freed less. **Fix:** `devclean --where` reads both folders (with `sudo -n` when allowed) and shows
+  `docker system df`; `devclean`'s build-cache line says "up to".
 - **kind works in Crostini's Docker** (`install-k8s`). A cluster takes about 2 GB, so the test unloads
   Ollama's models first.
 
