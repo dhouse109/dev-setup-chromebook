@@ -1,6 +1,6 @@
 # dev-setup-chromebook v97 plan
 
-Oct 27, 2026 · started Oct 26 (item 1, from the v96 hand checks) · item 1's choices made Oct 27 · **draft: anything else for v97 open**
+Oct 27, 2026 · started Oct 26 (item 1, from the v96 hand checks) · all choices made Oct 27 · **final**
 
 ## Scope
 
@@ -12,9 +12,12 @@ including FpDebug in VS Code and gdb in Devin on TDaemon).
    Oct 26 (editors' cached extension downloads, extension versions left behind, Linux Chrome's caches),
    says what each step actually freed, and gains a "where is the space" view of the checks that were run
    by hand.
+2. **Debugging Lazarus projects in Devin: three notes for the checklist** (docs only), from debugging
+   TDaemon on Oct 27: Native Debug after a profile import, its "Could not expand" lines, and viewing a
+   `Text` file variable.
 
-Each item lists the choices offered; the decision is marked when made (all of item 1's, Oct 27). The
-build starts once "anything else for v97" is settled.
+Each item lists the choices offered; the decision is marked when made. All are made (Oct 27), and nothing
+else joins v97, so the plan is final.
 
 ## 1. More ways to free and find disk space (setup base, `devclean`)
 
@@ -121,6 +124,36 @@ lists each editor's cached downloads and any old extension versions with sizes; 
 and sign-ins; Linux Chrome still opens with its profile; DDEV's images and the bundle's service containers
 are still there.
 
+## 2. Debugging Lazarus projects in Devin: notes for the checklist (docs only)
+
+**Found Oct 27 2026**, debugging TDaemon with the files `lazmode vscode` wrote: FpDebug in VS Code and gdb
+(Native Debug) in Devin both stopped at a breakpoint in `LogToFile` and showed its variables. Three things
+along the way belong next to the `lazmode vscode` notes in `docs/init-checklist.md` (owner's choice Oct 27):
+
+- **Native Debug after a profile import:** importing a VS Code profile into Devin (an export of 63
+  extensions) left out Native Debug (`webfreak.debug`), which the `(gdb)` launch needs, so F5 did nothing.
+  The `.vscode/extensions.json` that `lazmode vscode` writes recommends it, so Devin offered it ("Do you want
+  to install the recommended 'Native Debug' extension…?") and Install fixed it. Devin installs from Open VSX,
+  so VS Code-only extensions in such a profile don't come across either (Pylance, C# Dev Kit, Dev Containers,
+  WSL, Codespaces, VS Code Speech, and FpDebug, which Devin doesn't need).
+- **"Could not expand variable: A syntax error in expression":** Native Debug with gdb shows some nested
+  Pascal fields in Variables that way (it builds C-style expressions to expand them); the Watch panel reads
+  the same values (on Oct 27 `fView` with its fields, and `LogFilePath` as text). FpDebug in VS Code shows
+  them all. Not a build problem.
+- **Viewing a `Text` (or `File`) variable:** the RTL's file types carry no debug info, so `f` shows as an
+  unknown type in both debuggers. Declaring `fView: TextRec absolute f;` next to it (same memory, no code;
+  `TextRec` is in the System unit) shows the record: `Name` (the path), `Mode` (`fmClosed`, `fmInput`,
+  `fmOutput`; gdb shows the number, 55218 = `$D7B2` = `fmOutput`), `Handle`, `BufPos` and `BufEnd`.
+  Remove it when done, or leave it; it costs nothing.
+
+**Setup, test, init, demo:** version bump only.
+
+**Docs:** `docs/init-checklist.md`, the Lazarus projects in VS Code, Cursor and Devin notes (after the
+`lazmode vscode` bullets): the three notes above, short. CHANGELOG (all four sections).
+
+**To verify on the Chromebook:** read only; the checklist renders on GitHub with the notes under the
+`lazmode vscode` section.
+
 ## Carried forward
 
 **From v96:** its hand checks all passed (Oct 27). Four fixes found during them went into v96 itself, so
@@ -128,21 +161,6 @@ nothing here: DDEV's usage-statistics opt-out in the base install; a new light p
 read as stale; the IDE's own rebuilds target Qt5 (they came out GTK2); docking in the IDE's own options
 follows the docked layout (Lazarus 4's first-start single/multi window question). `devclean --run`'s
 per-step figures were not built in v96; item 1 covers them.
-
-**Found Oct 27 debugging TDaemon, noted (docs at most):**
-
-- Importing a VS Code profile into Devin (the profile export, 63 extensions) left out Native Debug
-  (`webfreak.debug`), which the `(gdb)` launch needs; F5 did nothing until it was installed. The
-  `.vscode/extensions.json` that `lazmode vscode` writes recommends it, so Devin offered it ("Do you want to
-  install the recommended 'Native Debug' extension…?") and Install fixed it. Devin installs from Open VSX, so
-  VS Code-only extensions in such a profile (Pylance, C# Dev Kit, Dev Containers, WSL, Codespaces, Speech,
-  FpDebug) don't come across either.
-- Native Debug with gdb shows some nested Pascal fields in Variables as "Could not expand variable: A syntax
-  error in expression" (it builds C-style expressions for them); the Watch panel reads the same values
-  (`fView`, `LogFilePath` as text). FpDebug in VS Code shows them all.
-- Candidate for `docs/init-checklist.md` (the `lazmode vscode` notes) if wanted: both lines above, and the
-  `TextRec absolute` trick for viewing a `Text` file variable (`fView: TextRec absolute f;`), since the RTL's
-  file types carry no debug info in either debugger.
 
 **Not bundle work, noted:** Codex's VS Code extension 26.1021.22027 (Oct 23) never loaded its panel on the
 Chromebook ("Webview renderer did not become ready", 30 s timeout, twice, after a reload too); rolling back to
@@ -153,5 +171,5 @@ Chromebook ("Webview renderer did not become ready", 30 s timeout, twice, after 
 - [x] Item 1: when editors' items are cleaned: **A**, only with the editor closed (Oct 27)
 - [x] Item 1: extension versions left behind: **A**, removed by `--run` (Oct 27)
 - [x] Item 1: the "where is the space" view: **A**, `devclean --where` (Oct 27)
-- [ ] The Oct 27 debugging notes: into `docs/init-checklist.md`, or leave them here
-- [ ] Anything else for v97
+- [x] The Oct 27 debugging notes: into `docs/init-checklist.md`, as item 2 (Oct 27)
+- [x] Anything else for v97: nothing (Oct 27)
