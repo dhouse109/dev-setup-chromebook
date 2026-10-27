@@ -1460,6 +1460,12 @@ print("; ".join(bad) if bad else f"qt5 in all {len(got)} build profiles")
 sys.exit(1 if any(w == "gtk2" for n, w in got) else 2 if bad else 0)
 TARGET_PY
         ;;
+    dockopt)   # v96: the docked build docks only when the IDE's own options say so (EnableAnchorDock in anchordockingoptions.xml)
+        f="$P/anchordockingoptions.xml"
+        cmp -s "$P/bin/lazarus" "$P/bin/lazarus-docked" || { echo "floating is active: the docking option isn't used"; exit 0; }
+        [ -f "$f" ] || { echo "docked is active, but $f is missing: the IDE asks single or multi window at its next start"; exit 1; }
+        if grep -qiE '<EnableAnchorDock[[:space:]]+Value="true"' "$f"; then echo "docked is active, docking on (EnableAnchorDock True)"
+        else echo "docked is active, but docking is off in $f (multi window): the docked build opens undocked"; exit 1; fi ;;
     unitsdir)
         d="$LAZ_DIR/units/x86_64-linux/qt5"
         [ -d "$d" ] || { echo "missing: $d"; exit 1; }
@@ -1528,6 +1534,10 @@ THR_EOF
         hint  "'lazmode dock on' or 'lazmode dock off' (whichever is active) sets the list; otherwise the IDE's own rebuild switches layout"
         check "$LAZ_P profile: bin/lazarus is one of the two builds"         "bash lazarus_check.sh active $LAZ_P"
         hint  "'lazmode dock on' (or off) puts a build back; the IDE's own Tools > Build Lazarus replaces bin/lazarus, possibly with GTK2"
+        # v96: with docked active, docking must be on in the IDE's own options, or the docked build opens undocked
+        # (Oct 27 2026: multi window picked at the light profile's first start; lazmode said docked, the test passed).
+        check "$LAZ_P profile: docking on in the IDE's options while docked is active" "bash lazarus_check.sh dockopt $LAZ_P"
+        hint  "'lazmode dock on --profile $LAZ_P' turns it on (Lazarus closed), or 'lazmode dock off --profile $LAZ_P' to keep multi window with the floating build"
         # v96: lazbuild saves the IDE's build profiles with gtk2 (its default; --ws doesn't reach the file), so the
         # IDE's first rebuild of its own, installing a package, came out GTK2 (Oct 27 2026, the dark profile with
         # lazdaemon). Setup's 'lazmode status' sets them to Qt5: gtk2 is a FAIL, a widgetset you chose a WARN.

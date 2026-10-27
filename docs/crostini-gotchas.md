@@ -169,6 +169,15 @@ to see it in context; the comment above each fix usually tells the story.
   unit loaded, and Lazarus's templates and examples load it only behind `{$IFDEF UseCThreads}`.
   **Fix:** `-dUseCThreads` in `~/.fpc.cfg`, which must `#INCLUDE` the system `fpc.cfg` (fpc reads only the
   first config it finds); rebuild an older project once with Run → Clean up and Build.
+- **The docked build opened undocked** (`install-lazarus`, v96). Not Crostini-specific: Lazarus 4's
+  AnchorDockingDsgn docks the IDE only when `<profile>/anchordockingoptions.xml` says
+  `EnableAnchorDock=True`. Until `DoneAskUserEnableAnchorDock` is True, the first start asks single
+  window or multi window and saves the answer there; both default to False. On Oct 27 2026 multi window was
+  picked at the light profile's first start, so its docked build opened undocked while `lazmode status`
+  said docked and dev-test passed.
+  **Fix:** `lazmode` writes the file with both True when it's missing (setup, both profiles), and
+  `lazmode dock on` turns docking on. Status, init and dev-test report docked-but-off, and
+  `lazmode dock off` keeps multi window with the floating build.
 
 ## Retro
 

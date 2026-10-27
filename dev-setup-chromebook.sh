@@ -2081,7 +2081,9 @@ if [[ "$FLAGS" =~ " install-lazarus " ]]; then
 # the "Lazarus" launcher) and dark (~/.lazarus-dark, "Lazarus (Dark)"), each built docked and floating.
 # Written by dev-setup and rewritten on every run: copy it before editing.
 #   lazmode status [--profile light|dark|both] [--check]       --check: exit 1 unless both layouts are built
-#                                                              and current and the install list follows the layout
+#                                                              and current and the install list follows the layout;
+#                                                              v96: exit 2 when only the IDE's docking option is off
+#                                                              while docked is active
 #   lazmode dock on|off [--profile light|dark|both]             docked or floating layout (copies a build; a
 #                                                              stale layout is rebuilt first)
 #   lazmode rebuild [--profile light|dark|both] [--add-package LPK...]
@@ -2194,6 +2196,7 @@ restore_lists() {   # restore_lists PROFILE_DIR: put back the list files of a v9
 settle() {   # settle PROFILE LAYOUT: that layout active, the install list following it, the IDE's rebuilds on Qt5
     activate "$(pdir "$1")" "$2" && list_follow "$1" "$2" || return 1
     ide_target "$1" || true   # reported; never fails a switch
+    dock_options "$1" init || true
 }
 # Ctrl-C during a build: the layout that was active stays active, with its list.
 trap '[ -n "$ACTIVE" ] && settle "${ACTIVE% *}" "${ACTIVE##* }"; exit 130' INT TERM
@@ -2320,6 +2323,65 @@ ide_target() {   # ide_target PROFILE: gtk2 in the IDE's build profiles becomes 
     if listtool targets "$f" | cut -f2 | grep -qx gtk2; then echo "$1: could not set the IDE's build profiles to Qt5 in $f"; return 1; fi
     echo "$1: the IDE's own rebuilds now target Qt5 ($n of its build profiles said gtk2, lazbuild's default; the old file is in $LOGDIR)"
 }
+# v96: the docked build's AnchorDockingDsgn docks the IDE only when <profile>/anchordockingoptions.xml says
+# EnableAnchorDock=True, and while DoneAskUserEnableAnchorDock isn't True the IDE's first start asks "single
+# window (docked) or multi window" and saves the answer there; both default to False (anchordesktopoptions.pas,
+# registeranchordocking.pas Register, anchordockdsgninitialsetupframe.pas RequireSetup/ApplySelection, Lazarus
+# 4.8). So a docked build opened undocked after multi window was picked at a first start, while 'lazmode status'
+# said docked (Oct 27 2026, the light profile). init: a missing file is written with both True (docked, and no
+# question), byte for byte what the IDE's TXMLConfig writes; an answer already saved is kept. on: 'lazmode dock
+# on' sets both True, since asking for docked means wanting docking on. 'dock off' leaves the file alone (the
+# floating build has no AnchorDocking). Not while Lazarus runs, as for ide_target.
+DOCKOPT=anchordockingoptions.xml
+dockopt() {   # dockopt get|init|on FILE. get: on, off, or unset (the IDE would ask)
+    python3 - "$@" << 'DOCKOPT_PY'
+import re, sys
+act, path = sys.argv[1], sys.argv[2]
+canon = ('<?xml version="1.0" encoding="UTF-8"?>\n<CONFIG>\n  <EnableAnchorDock Value="True"/>\n'
+         '  <DoneAskUserEnableAnchorDock Value="True"/>\n</CONFIG>\n')
+try:
+    text = open(path, encoding="utf-8").read()
+except FileNotFoundError:
+    text = None
+def val(key):
+    m = re.search(r'<%s\s+Value="([^"]*)"' % key, text or "")
+    return bool(m) and m.group(1).lower() == "true"
+if act == "get":
+    print("unset" if text is None else "on" if val("EnableAnchorDock")
+          else "off" if val("DoneAskUserEnableAnchorDock") else "unset")
+    sys.exit(0)
+if act == "init" and text is not None:
+    sys.exit(0)
+if text is None or "</CONFIG>" not in text:
+    new = canon
+else:
+    new = text
+    for key in ("EnableAnchorDock", "DoneAskUserEnableAnchorDock"):
+        el = '<%s Value="True"/>' % key
+        new, k = re.subn(r'<%s\s+Value="[^"]*"\s*/>' % key, el, new)
+        if not k:
+            new = new.replace("</CONFIG>", "  %s\n</CONFIG>" % el, 1)
+with open(path, "w", encoding="utf-8") as fh:
+    fh.write(new)
+DOCKOPT_PY
+}
+dock_options() {   # dock_options PROFILE init|on: docking on in the IDE's options (init: only when not saved yet)
+    local d f
+    d=$(pdir "$1"); f="$d/$DOCKOPT"
+    if [ "$2" = init ]; then [ -d "$d" ] && [ ! -e "$f" ] || return 0
+    elif [ "$(dockopt get "$f")" = on ]; then return 0; fi
+    if running; then
+        echo "$1: docking in the IDE's options ($DOCKOPT) is set once Lazarus is closed ('lazmode status', or 'lazmode dock on')"
+        return 0
+    fi
+    [ -f "$f" ] && cp -p "$f" "$LOGDIR/anchordockingoptions-$1-$(date +%Y%m%d-%H%M%S).xml"
+    dockopt "$2" "$f" && [ "$(dockopt get "$f")" = on ] || { echo "$1: could not turn docking on in $f"; return 1; }
+    if [ "$2" = init ]; then
+        echo "$1: docking turned on in the IDE's options ($f), so the docked build docks and doesn't ask single or multi window"
+    else
+        echo "$1: docking turned on in the IDE's options (it was off: multi window; the old file is in $LOGDIR)"
+    fi
+}
 list_follow() {   # list_follow PROFILE LAYOUT: the install list names the docking packages exactly while docked is active
     local d; d=$(pdir "$1")
     if [ "$2" = docked ]; then add_docking "$1"; else scrub_docking "$d" "$1" quiet; fi
@@ -2377,11 +2439,12 @@ adopt() {   # adopt PROFILE
 }
 
 cmd_status() {
-    local p d b f had now bad=0 ws tg
+    local p d b f had now bad=0 dbad=0 ws tg
     for p in "${PROFILES[@]}"; do
         d=$(pdir "$p"); b="$d/bin"
         adopt "$p"
         ide_target "$p"
+        dock_options "$p" init
         now=$(list_names "$d")
         echo "$p profile ($d)"
         echo "  active layout   $(layout "$d")"
@@ -2428,6 +2491,14 @@ cmd_status() {
             done
             printf '%s\n' "$tg" | cut -f2 | grep -qx gtk2 && bad=1
         fi
+        # v96: docking in the IDE's own options (see dock_options): the docked build docks only when it is on
+        case "$(dockopt get "$d/$DOCKOPT"):$(layout "$d")" in
+            on:*) printf '  %-15s %s\n' "IDE docking" "on (single window, $DOCKOPT)" ;;
+            off:docked) printf '  %-15s %s\n' "IDE docking" "off (multi window), so the docked build opens undocked: 'lazmode dock on --profile $p' turns it on, or 'lazmode dock off --profile $p' for the floating layout"; dbad=1 ;;
+            unset:docked) printf '  %-15s %s\n' "IDE docking" "not set: the docked build asks single or multi window at its next start ('lazmode dock on --profile $p' sets single)"; dbad=1 ;;
+            off:*) printf '  %-15s %s\n' "IDE docking" "off (multi window; the floating layout doesn't use it)" ;;
+            *) printf '  %-15s %s\n' "IDE docking" "not set yet (the floating layout doesn't use it)" ;;
+        esac
     done
     if [ -f "$DARK_DESKTOP" ]; then
         echo "dark launcher   $(grep -m1 '^Exec=' "$DARK_DESKTOP")"
@@ -2445,7 +2516,10 @@ cmd_status() {
         echo "qt5ct           no $QT5CT_CONF ('lazmode theme' writes one)"
     fi
     running && echo "Lazarus is running now."
-    [ "$CHECK" = 1 ] && return $bad
+    if [ "$CHECK" = 1 ]; then
+        [ "$bad" = 1 ] && return 1
+        [ "$dbad" = 1 ] && return 2   # v96: builds in order, only the IDE's docking option disagrees (no rebuild fixes it)
+    fi
     return 0
 }
 
@@ -2533,6 +2607,7 @@ cmd_dock() {
             ACTIVE=""
         fi
         settle "$p" "$want" || die "$p: could not make $want active with its install list (see above)"
+        [ "$want" = docked ] && { dock_options "$p" on || true; }
         echo "$p: $want layout active (next IDE start)"
     done
 }
@@ -2990,9 +3065,13 @@ LAZMODE_EOF
         # layout. It also adopts an IDE-made build first. (v94 tested the binaries, the version and the list here.)
         # v96: and it sets the IDE's own build profiles to Qt5 (lazmode's ide_target), so a profile whose builds are
         # already current is brought into line too, without a rebuild.
-        LAZ_OK=1
-        LAZ_ST=$("$HOME/.local/bin/lazmode" status --profile "$LAZ_P" --check 2>&1) || LAZ_OK=0
-        printf '%s\n' "$LAZ_ST" | grep -E 'adopted|kept aside|now target Qt5|rebuilds target gtk2' || true   # v96: and ide_target
+        # v96: exit 2 means the builds are in order and only the IDE's docking option is off while docked is active
+        # (multi window picked at a first start): no rebuild fixes that, and the answer is yours, so a NOTICE.
+        LAZ_OK=1; LAZ_RC=0
+        LAZ_ST=$("$HOME/.local/bin/lazmode" status --profile "$LAZ_P" --check 2>&1) || LAZ_RC=$?
+        [ "$LAZ_RC" = 0 ] || [ "$LAZ_RC" = 2 ] || LAZ_OK=0
+        printf '%s\n' "$LAZ_ST" | grep -E 'adopted|kept aside|now target Qt5|rebuilds target gtk2|docking turned on|docking in the IDE' || true   # v96: and ide_target, dock_options
+        printf '%s\n' "$LAZ_ST" | sed -n "s/^  IDE docking  *\(off (multi window), so.*\|not set: .*\)/NOTICE: Lazarus $LAZ_P profile: docking in the IDE's options is \1/p"
         [ -d "$LAZ_PD/bin" ] || LAZ_OK=0
         if [ "$LAZ_OK" = 1 ]; then
             echo "Lazarus $LAZ_P profile: Qt5 builds for $LAZ_VER already in place and current ($(printf '%s\n' "$LAZ_ST" | sed -n 's/^  active layout *//p'))."
