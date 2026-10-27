@@ -27,7 +27,7 @@ the whole lab, as it is.
 
 All four take the same flags, so `install-web install-node` means the same thing to each of them.
 
-> **Current version: v95.** [CHANGELOG.md](CHANGELOG.md) has the full history.
+> **Current version: v96.** [CHANGELOG.md](CHANGELOG.md) has the full history.
 
 ## What it is, and what it isn't
 
@@ -92,7 +92,7 @@ pull in what they need. For example, `install-web` brings `install-node` with it
 
 | Group | Members |
 |---|---|
-| `install-editors` | `install-vscode` `install-windsurf` `install-cursor` `install-lazarus` (Lazarus / Free Pascal; the IDE on Qt5 with light and dark profiles, docked or floating, switched with `lazmode`) |
+| `install-editors` | `install-vscode` `install-windsurf` (Windsurf, now Devin Desktop) `install-cursor` `install-lazarus` (Lazarus / Free Pascal; the IDE on Qt5 with light and dark profiles, docked or floating, switched with `lazmode`; `lazmode vscode` builds and debugs a project in VS Code, Cursor or Devin) |
 | `install-languages` | `install-rust` (with WASM) `install-node` (nvm, Node LTS, Claude Code, Codex, Gemini CLI, aider) `install-go` `install-pwsh` `install-ruby` (Jekyll) `install-cpp` `install-asm` `install-dotnet` (C#, VB.NET) `install-java` (JDK, Maven, Gradle) |
 | `install-ecosystems` | `install-antigravity` `install-media` (Flatpak, HandBrake, KDiff3) `install-gemma` (Gemma on Ollama + Gemini) `install-mobile` (Android SDK, Tauri, React Native/Expo, Flutter) `install-android-native` (Android Studio, Kotlin) `install-godot` (standard + .NET editors) |
 | `install-cloud` | `install-aws` `install-azure` `install-gcp` `install-vercel` `install-cloudflare` (wrangler) |
@@ -108,7 +108,7 @@ pull in what they need. For example, `install-web` brings `install-node` with it
 |---|---|
 | `install-web` | Angular CLI, corepack, Composer, PHP extensions |
 | `install-tanstack` | TanStack CLI |
-| `install-drupal` | Terminus, Acquia CLI, Upsun CLI, DDEV settings |
+| `install-drupal` | Terminus, Acquia CLI, Upsun CLI, DDEV platform tokens |
 | `install-laravel` | Laravel tooling |
 | `install-symfony` | Symfony tooling |
 | `install-graphql` | Apollo Rover, Router and MCP Server |
@@ -135,7 +135,7 @@ heavy engines run one at a time, because Linux gets about 6.4 GB of an 8 GB Chro
 | `install-oracle-full` | Oracle's full image instead of Lite |
 | `install-ldap` / `install-ldap-full` | lldap in Docker / OpenLDAP + lldap |
 | `install-lan` / `install-lan-share` | your laptops as one network (Tailscale, an address book, shared services) |
-| `install-retro` | DOS and Windows 3.1 / 95 / NT 4.0 / 2000 guests (DOSBox-X, QEMU), Open Watcom, Delphi 1–7 under Wine; pulls in `install-com` (COM development under Wine) |
+| `install-retro` | DOS and Windows 3.1 / 95 / NT 4.0 / 2000 guests (DOSBox-X, QEMU), Open Watcom, Delphi 1–7 under Wine (`delphi N build` compiles a Delphi 3–7 project with dcc32, `delphi N vscode` sets it up for VS Code, Cursor and Devin); pulls in `install-com` (COM development under Wine) |
 | `install-models` | curated local models for Ollama (several GB) |
 | `install-ollama-containers` | lets Docker containers reach Ollama |
 | `install-hermes` / `install-openclaw` | personal agents |
@@ -201,7 +201,7 @@ Read [what they change](#what-they-change-on-your-system) before you run them.
   - its password removed (`passwd -d`), on ChromeOS only, where sudo needs none
 - **Your home:**
   - marked blocks in `~/.bashrc`, rewritten in place on each run
-  - commands in `~/.local/bin` (`devsvc`, `mssql`, `oracle`, `ldap`, `lan`, `lazmode`, `herdr`, the retro guests…)
+  - commands in `~/.local/bin` (`devsvc`, `mssql`, `oracle`, `ldap`, `lan`, `lazmode`, `herdr`, `devmem` (a memory report), `devclean` (a disk cleanup), the retro guests…)
   - settings in `~/.config/dev-*`, `devsvc`, `devldap` and `devdb`
   - downloads and logs in `./assets` next to the scripts
 - **Docker:** containers and named volumes called `devdb-*`, `devsvc-*` and `devldap-*`.
@@ -245,10 +245,16 @@ A few of the findings:
 - **No more port forwarding.** Newer ChromeOS releases run Linux as a full VM, and Linux port forwarding
   is gone. The laptops reach each other over Tailscale instead, and `tailscaled` must be told to leave
   userspace mode.
+- **Ports 80 and 443.** ChromeOS's browser can't reach them in Linux, so DDEV's router moves to 8080/8443, and
+  links from Linux apps open in ChromeOS's browser instead of a second Chrome inside Linux.
 - **PATH shadowing.** Homebrew's dependencies (python3, sqlite3, openjdk, binutils) shadow Debian's
   unless Homebrew goes last on PATH.
 - **Android Studio.** The window dims while focused under ChromeOS's Wayland. Forcing the X11 toolkit
   fixes it.
+- **Devin Desktop (Windsurf).** It froze or closed under Wayland; it runs on X11 from its own "Devin (X11)"
+  launcher entry, since the launcher ignored an edited copy of the stock one.
+- **Memory.** ChromeOS takes memory back from the Linux VM, which has no swap, so a large app freezes
+  instead of slowing down. `devmem` shows how much was taken and what to close.
 
 The full list, with the fix for each, is in [docs/crostini-gotchas.md](docs/crostini-gotchas.md).
 
