@@ -122,6 +122,24 @@ Through v67, `install-gemma` stopped at an interactive `hf auth login` unless `H
 - Shut Linux down once (right-click the Terminal icon, Shut down Linux) and reopen it, so the docker, video and render groups take effect; without the render group every graphical app renders in software. Then run init with the same flags to apply secrets.env, then the test script. Tested before init, every login shows as a WARN and the test says init is pending.
 
 - **`devmem`** (v96, in `~/.local/bin`) is the memory report: total, used and available (and that there is no swap), where "used" is (Linux's processes by PSS, the kernel, shared memory, and the rest as "taken back by ChromeOS (estimate)"), the top ten programs, the bundle's running containers (devsvc, devdb, devldap, DDEV) and Ollama's loaded models, then a verdict: ChromeOS has taken back more than 1.5 GB, less than 1 GB available, Linux's Google Chrome running, a heavy engine or database server running (with its stop command), no swap. Reach for it when a Linux app freezes or the machine is slow, and before starting a heavy engine. `devmem --watch [seconds]` refreshes it in place until Ctrl-C; `devmem --brief` prints the memory line and the verdict only.
+- **`devclean`** (v96, in `~/.local/bin`) is the disk cleanup. Reach for it when the disk is nearly full, before pulling large Docker images (DDEV's want about 3 GB free), or when `ddev start` panics with "assignment to entry in nil map" (a full disk left DDEV's state files empty). `devclean` alone only reports: free space, what each cache would free (measured by the tool where it can say, `du` otherwise) and the total, and it changes nothing. `devclean --run` clears them, each step only when its tool is installed, one failing step not stopping the rest, and shows free space before and after; `devclean --run --images` also removes Docker images no container uses, naming them first (they download again when a demo or `devsvc` needs them). Every `--run` also moves a 0-byte `~/.ddev/.state.yaml` or `~/.ddev/.update` aside as `.bak`, so `ddev start` writes a new one. By hand, what each step is and what it freed on dragonair (Oct 26 2026):
+
+  | Command | What it frees | Oct 26 |
+  | --- | --- | --- |
+  | `npm cache clean --force` | npm's download cache (`~/.npm/_cacache`) | 2.3 GB |
+  | `docker builder prune -af` | Docker's build cache (`docker system df` undercounts it) | 2.7 GB |
+  | `docker image prune -f` | dangling (untagged) images | |
+  | `sudo apt clean` | apt's downloaded packages | |
+  | `brew cleanup -s` | Homebrew's old versions and downloads | 264 MB |
+  | `uv cache prune` | uv's cached packages nothing uses | 641 MB |
+  | `go clean -cache` | Go's build cache | 133 MB |
+  | `composer clear-cache` | Composer's downloads | 61 MB |
+  | `pnpm store prune` (or `rm -rf ~/.cache/pnpm`) | pnpm's unreferenced packages, its metadata cache | 172 MB |
+  | `pip cache purge` | pip's downloads | |
+  | `rm -rf ~/.cache/google-chrome` (Linux Chrome closed) | Linux Chrome's cache | 189 MB |
+  | `docker image prune -a` (`--images`) | images no container uses; they download again | |
+
+  **Never delete** (`devclean --help` says the same): `docker system prune` (it deletes stopped containers, and the bundle's services, `devsvc-*`, `devdb-*`, `devldap-*`, are containers created stopped), Docker volumes (the databases' and services' data), `~/.cache/ms-playwright` (Playwright's browsers, ~1 GB to fetch again), Hugging Face caches (downloaded models), Ollama models (`ollama rm NAME` removes one on purpose), `~/dev-demo` (the demos and your changes; `demo-clean` removes a flag's demos), DDEV projects (`ddev delete` is per project).
 
 Since v93 setup checks the network first: if IPv6 doesn't get out (the Oct 4 hang on Chrome's download), it makes Linux prefer IPv4 with the same two lines that fixed it by hand (`/etc/gai.conf` and `/etc/apt/apt.conf.d/99force-ipv4`; `DEV_PREFER_IPV4=0` skips the check). Every download gets a 20-second connection timeout, and a bad Go or PowerShell download now skips just that tool; the summary at the end names it and the flag to rerun.
 

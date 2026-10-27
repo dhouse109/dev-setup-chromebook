@@ -655,6 +655,254 @@ chmod +x "$HOME/.local/bin/devmem.new"
 mv -f "$HOME/.local/bin/devmem.new" "$HOME/.local/bin/devmem"
 echo "Wrote ~/.local/bin/devmem (what is using memory, what ChromeOS has taken back, what to close)."
 
+# 8. devclean, a disk cleanup (v96)
+# v96 (plan item 8): Oct 26 2026, dragonair's 38 GB Linux disk: DDEV's image pull ran it out of space twice, and the
+# full disk left ~/.ddev/.state.yaml and ~/.ddev/.update at 0 bytes, after which every 'ddev start' panicked
+# ("assignment to entry in nil map"); moving the two files aside fixed it. Clearing caches by hand freed ~5 GB: npm
+# 2.3 GB, Docker's build cache 2.7 GB ('docker system df' called only 16 kB of it reclaimable; it took
+# 'docker builder prune -af'), uv 641 MB, Homebrew 264 MB, Linux Chrome's cache 189 MB, pnpm 172 MB, Go's build cache
+# 133 MB, Composer 61 MB, plus apt. devclean reports by default and clears only with --run, only what comes back by
+# itself. Never 'docker system prune': the bundle's services (devsvc-*, devdb-*, devldap-*) are containers created
+# stopped, and it would delete them with their settings.
+cat > "$HOME/.local/bin/devclean.new" << 'DEVCLEAN_EOF'
+#!/bin/bash
+# devclean: what fills the Linux disk, and the caches that are safe to clear (dev-setup v96).
+# Written by dev-setup and rewritten on every run: copy it before editing.
+#   devclean                   report only, changes nothing: free space, what each cache would free, the total
+#   devclean --run             clear the safe caches (each step only when its tool is installed), then free space
+#                              before and after; one failing step doesn't stop the rest
+#   devclean --run --images    also Docker images no container uses (they download again when needed)
+#   devclean --images          the report, with those images
+# Every run also checks DDEV's state files: a 0-byte ~/.ddev/.state.yaml or ~/.ddev/.update (what a full disk
+# leaves, after which 'ddev start' panics) is moved aside as .bak with --run, so ddev recreates it.
+# Never touched, and why:
+#   docker system prune        deletes stopped containers, and the bundle's services (devsvc-*, devdb-*, devldap-*)
+#                              are containers created stopped, with their settings
+#   Docker volumes             the data of the databases and services (SQL Server, Oracle, MongoDB, DDEV's databases)
+#   ~/.cache/ms-playwright     the browsers Playwright tests run in (install-playwright; ~1 GB to download again)
+#   Hugging Face caches        downloaded models and datasets (~/.cache/huggingface), slow to fetch again
+#   Ollama models              pulled models, several GB each: 'ollama rm NAME' removes one on purpose
+#   ~/dev-demo                 the demos and your changes in them (dev-demo's demo-clean removes a flag's demos)
+#   DDEV projects              their code and databases ('ddev delete' is per project, on purpose)
+export LC_ALL=C
+usage() { awk 'NR > 1 && !/^#/ { exit } NR > 1 { sub(/^# ?/, ""); print }' "$0"; }
+RUN=0; IMAGES=0
+for a in "$@"; do
+    case "$a" in
+        --run) RUN=1 ;;
+        --images) IMAGES=1 ;;
+        help|-h|--help) usage; exit 0 ;;
+        *) echo "devclean: unknown option '$a' (devclean --help)" >&2; exit 1 ;;
+    esac
+done
+# The tools as a new terminal has them: nvm's npm, Go, Homebrew last (as ~/.bashrc puts them).
+[ -s "$HOME/.nvm/nvm.sh" ] && ! command -v npm > /dev/null 2>&1 && . "$HOME/.nvm/nvm.sh" > /dev/null 2>&1
+for d in "$HOME/.local/bin" /usr/local/go/bin "$HOME/go/bin"; do
+    [ -d "$d" ] && case ":$PATH:" in *":$d:"*) ;; *) PATH="$PATH:$d" ;; esac
+done
+[ -x /home/linuxbrew/.linuxbrew/bin/brew ] && case ":$PATH:" in *":/home/linuxbrew/.linuxbrew/bin:"*) ;; *) PATH="$PATH:/home/linuxbrew/.linuxbrew/bin" ;; esac
+export COREPACK_ENABLE_DOWNLOAD_PROMPT=0 HOMEBREW_NO_ENV_HINTS=1 HOMEBREW_NO_AUTO_UPDATE=1
+
+has() { command -v "$1" > /dev/null 2>&1; }
+human() {   # human BYTES: "2.3 GB", "641 MB", "16 KB", "0 B" (powers of 1024)
+    awk -v b="${1:-0}" 'BEGIN { split("B KB MB GB TB", u, " "); i = 1
+        while (b >= 1024 && i < 5) { b /= 1024; i++ }
+        if (i <= 2 || b >= 100) printf "%d %s\n", b + 0.5, u[i]; else printf "%.1f %s\n", b, u[i] }'
+}
+dub() {   # dub PATH...: bytes under the paths that exist
+    local p have=()
+    for p in "$@"; do [ -e "$p" ] && have+=("$p"); done
+    [ ${#have[@]} -gt 0 ] || { echo 0; return; }
+    du -sbc "${have[@]}" 2> /dev/null | tail -n 1 | cut -f1
+}
+to_bytes() {   # to_bytes "2.7GB" / "16.38kB" / "264.1MB" / "1.2GiB": a size as tools print it, in bytes
+    awk -v s="$1" 'BEGIN { if (!match(s, /^[0-9.]+/)) { print 0; exit }
+        n = substr(s, 1, RLENGTH); u = toupper(substr(s, RLENGTH + 1)); gsub(/[ B]/, "", u)
+        k = (u ~ /I$/) ? 1024 : 1000; sub(/I$/, "", u)
+        m = (u == "K") ? k : (u == "M") ? k ^ 2 : (u == "G") ? k ^ 3 : (u == "T") ? k ^ 4 : 1
+        printf "%.0f\n", n * m }'
+}
+free_bytes() { df -B1 --output=avail "$HOME" 2> /dev/null | tail -n 1 | tr -d ' '; }
+disk_line() { df -B1 --output=avail,size,target "$HOME" 2> /dev/null | tail -n 1 | awk '{ printf "%s %s %s\n", $1, $2, $3 }'; }
+
+DOCKER=()
+if has docker; then
+    if timeout 10 docker info > /dev/null 2>&1; then DOCKER=(docker)
+    elif timeout 10 sudo -n docker info > /dev/null 2>&1; then DOCKER=(sudo -n docker); fi
+fi
+chrome_running() { pgrep -f '^/opt/google/chrome/' > /dev/null 2>&1; }
+pip_cmd() { if python3 -m pip --version > /dev/null 2>&1; then echo "python3 -m pip"; elif has pip3; then echo pip3; fi; }
+# npm's and Go's cache folders as the tools resolve them, read rather than asked: 'npm config get' writes a debug log
+# and 'go env' a telemetry count on every call, and the report changes nothing.
+npm_cache() {
+    local c=${npm_config_cache:-}
+    [ -n "$c" ] || c=$(sed -n 's/^[[:space:]]*cache[[:space:]]*=[[:space:]]*//p' "$HOME/.npmrc" 2> /dev/null | tail -n 1)
+    c=${c/#\~/$HOME}; echo "${c:-$HOME/.npm}"
+}
+go_cache() {
+    local c=${GOCACHE:-}
+    [ -n "$c" ] || c=$(sed -n 's/^GOCACHE=//p' "${XDG_CONFIG_HOME:-$HOME/.config}/go/env" 2> /dev/null | tail -n 1)
+    echo "${c:-${XDG_CACHE_HOME:-$HOME/.cache}/go-build}"
+}
+
+# The categories: NAME|what it is. size_of NAME prints "BYTES<TAB>how it was measured" (or nothing when the tool isn't
+# there); clean NAME clears it.
+CATS="npm docker-build docker-dangling apt brew uv go composer pnpm pip chrome"
+label() {
+    case "$1" in
+        npm) echo "npm's cache" ;;
+        docker-build) echo "Docker's build cache" ;;
+        docker-dangling) echo "Docker's dangling images" ;;
+        apt) echo "apt's downloaded packages" ;;
+        brew) echo "Homebrew's old versions and downloads" ;;
+        uv) echo "uv's cache" ;;
+        go) echo "Go's build cache" ;;
+        composer) echo "Composer's cache" ;;
+        pnpm) echo "pnpm's store and cache" ;;
+        pip) echo "pip's cache" ;;
+        chrome) echo "Linux Chrome's cache" ;;
+    esac
+}
+size_of() {
+    local b d out
+    case "$1" in
+        npm) has npm || return; d=$(npm_cache); printf '%s\tdu %s\n' "$(dub "$d/_cacache")" "$d/_cacache" ;;
+        docker-build)
+            [ ${#DOCKER[@]} -gt 0 ] || return
+            # The build cache's whole size: 'docker system df' calls only part of it reclaimable (16 kB on Oct 26,
+            # when 'docker builder prune -af' then freed 2.7 GB).
+            b=$("${DOCKER[@]}" system df --format '{{.Type}}|{{.Size}}' 2> /dev/null | awk -F'|' '$1 == "Build Cache" { print $2 }')
+            printf '%s\tdocker system df (its whole size)\n' "$(to_bytes "${b:-0}")" ;;
+        docker-dangling)
+            [ ${#DOCKER[@]} -gt 0 ] || return
+            mapfile -t ids < <("${DOCKER[@]}" image ls -q -f dangling=true 2> /dev/null | sort -u)
+            b=0; [ ${#ids[@]} -gt 0 ] && b=$("${DOCKER[@]}" image inspect -f '{{.Size}}' "${ids[@]}" 2> /dev/null | awk '{ s += $1 } END { printf "%.0f", s }')
+            printf '%s\t%d image(s), up to (layers can be shared)\n' "${b:-0}" "${#ids[@]}" ;;
+        apt) has apt-get || return; printf '%s\tdu /var/cache/apt/archives\n' "$(dub /var/cache/apt/archives/*.deb /var/cache/apt/archives/partial)" ;;
+        brew)
+            has brew || return
+            out=$(timeout 120 brew cleanup -s --dry-run 2>&1 | grep -o 'would free approximately [0-9.]*[KMGT]*B' | grep -o '[0-9.]*[KMGT]*B$')
+            if [ -n "$out" ]; then printf '%s\tbrew cleanup -s --dry-run\n' "$(to_bytes "$out")"
+            else printf '0\tbrew cleanup -s --dry-run (nothing to remove)\n'; fi ;;
+        uv) has uv || return; d=$(uv cache dir 2> /dev/null); printf '%s\tdu %s, up to (prune keeps what is in use)\n' "$(dub "${d:-$HOME/.cache/uv}")" "${d:-$HOME/.cache/uv}" ;;
+        go) has go || return; d=$(go_cache); printf '%s\tdu %s\n' "$(dub "$d")" "$d" ;;
+        composer) has composer || return; d=$(COMPOSER_NO_INTERACTION=1 composer config --global cache-dir 2> /dev/null | tail -n 1); printf '%s\tdu %s\n' "$(dub "${d:-$HOME/.cache/composer}")" "${d:-$HOME/.cache/composer}" ;;
+        pnpm)
+            # The content store (pnpm store prune keeps what a project still links) and the metadata cache.
+            d="$HOME/.local/share/pnpm/store"
+            [ -d "$d" ] || [ -d "$HOME/.cache/pnpm" ] || return
+            printf '%s\tdu %s, ~/.cache/pnpm, up to\n' "$(dub "$d" "$HOME/.cache/pnpm")" "${d/#$HOME/\~}" ;;
+        pip) [ -n "$(pip_cmd)" ] || return; d=$($(pip_cmd) cache dir 2> /dev/null); printf '%s\tdu %s\n' "$(dub "${d:-$HOME/.cache/pip}")" "${d:-$HOME/.cache/pip}" ;;
+        chrome) [ -d "$HOME/.cache/google-chrome" ] || return
+            printf '%s\tdu ~/.cache/google-chrome%s\n' "$(dub "$HOME/.cache/google-chrome")" "$(chrome_running && echo ', skipped while Linux Chrome runs')" ;;
+    esac
+}
+clean() {
+    case "$1" in
+        npm) npm cache clean --force ;;
+        docker-build) "${DOCKER[@]}" builder prune -af ;;
+        docker-dangling) "${DOCKER[@]}" image prune -f ;;
+        apt) sudo -n apt-get clean ;;
+        brew) brew cleanup -s ;;
+        uv) uv cache prune ;;
+        go) go clean -cache ;;
+        composer) COMPOSER_NO_INTERACTION=1 composer clear-cache ;;
+        pnpm) if has pnpm && [ -d "$HOME/.local/share/pnpm/store" ]; then timeout 300 pnpm store prune || return 1; fi
+              rm -rf "$HOME/.cache/pnpm" ;;
+        pip) $(pip_cmd) cache purge ;;
+        chrome) chrome_running && return 3   # left while Linux Chrome runs
+                rm -rf "$HOME/.cache/google-chrome" ;;
+    esac
+}
+unused_images() {   # IMAGE-ID<TAB>BYTES<TAB>NAME for images no container (running or stopped) uses
+    [ ${#DOCKER[@]} -gt 0 ] || return 0
+    local used
+    used=$("${DOCKER[@]}" ps -aq 2> /dev/null | xargs -r "${DOCKER[@]}" inspect -f '{{.Image}}' 2> /dev/null | sort -u)
+    "${DOCKER[@]}" image ls -q --no-trunc 2> /dev/null | sort -u | while read -r id; do
+        grep -qx "$id" <<< "$used" && continue
+        "${DOCKER[@]}" image inspect -f '{{.Id}}	{{.Size}}	{{if .RepoTags}}{{index .RepoTags 0}}{{else}}<none>{{end}}' "$id" 2> /dev/null
+    done
+}
+DDEV_BAD=()
+for f in "$HOME/.ddev/.state.yaml" "$HOME/.ddev/.update"; do [ -f "$f" ] && [ ! -s "$f" ] && DDEV_BAD+=("$f"); done
+ddev_repair() {   # move each 0-byte state file aside; DDEV writes a new one on its next start
+    local f to
+    for f in "${DDEV_BAD[@]}"; do
+        to="$f.bak"; [ -e "$to" ] && to="$f.bak.$(date +%Y%m%d-%H%M%S)"
+        if mv "$f" "$to"; then echo "DDEV: moved the empty ${f/#$HOME/\~} aside (${to/#$HOME/\~}); 'ddev start' writes a new one."
+        else echo "DDEV: could not move ${f/#$HOME/\~} aside"; fi
+    done
+}
+
+read -r AVAIL SIZE MNT <<< "$(disk_line)"
+echo "Free space: $(human "$AVAIL") of $(human "$SIZE") (on $MNT)"
+if [ "$RUN" = 0 ]; then
+    echo
+    echo "Would free (devclean --run):"
+    TOTAL=0
+    for c in $CATS; do
+        line=$(size_of "$c") || true
+        [ -n "$line" ] || continue
+        b=${line%%$'\t'*}; how=${line#*$'\t'}
+        [[ "$b" =~ ^[0-9]+$ ]] || b=0
+        [ "$c" = chrome ] && chrome_running || TOTAL=$((TOTAL + b))
+        printf '  %-40s %10s   (%s)\n' "$(label "$c")" "$(human "$b")" "${how//$HOME/\~}"
+    done
+    [ ${#DOCKER[@]} -gt 0 ] || { has docker && echo "  (Docker isn't reachable: open a new terminal for the docker group, or start Docker)"; }
+    echo "  Total, about $(human "$TOTAL")"
+    if [ "$IMAGES" = 1 ]; then
+        imgs=$(unused_images)
+        echo
+        echo "With --images, Docker images no container uses (they download again the next time a demo or devsvc needs them):"
+        if [ -n "$imgs" ]; then
+            while IFS=$'\t' read -r _ b n; do printf '  %-50s %10s\n' "$n" "$(human "$b")"; done <<< "$imgs"
+            echo "  up to $(human "$(awk -F'\t' '{ s += $2 } END { printf "%.0f", s }' <<< "$imgs")") (layers can be shared)"
+        else
+            echo "  none"
+        fi
+    fi
+    [ ${#DDEV_BAD[@]} -gt 0 ] && echo
+    for f in "${DDEV_BAD[@]}"; do echo "DDEV: ${f/#$HOME/\~} is 0 bytes (a full disk does that; 'ddev start' then panics): devclean --run moves it aside."; done
+    echo
+    echo "Nothing was changed. 'devclean --run' clears these; 'devclean --help' lists what it never touches."
+    exit 0
+fi
+
+BEFORE=$AVAIL
+ddev_repair
+for c in $CATS; do
+    line=$(size_of "$c") || true
+    [ -n "$line" ] || continue
+    printf '%s ... ' "$(label "$c")"
+    out=$(clean "$c" 2>&1); rc=$?
+    case $rc in
+        0) echo "done" ;;
+        3) echo "left: Linux Chrome is running (close it, then devclean --run again)" ;;
+        *) echo "failed (devclean goes on):"; printf '%s\n' "$out" | tail -n 3 | sed 's/^/    /' ;;
+    esac
+done
+if [ "$IMAGES" = 1 ]; then
+    if [ ${#DOCKER[@]} -gt 0 ]; then
+        imgs=$(unused_images)
+        if [ -n "$imgs" ]; then
+            echo "Docker images no container uses, removed now (they download again when a demo or devsvc needs them):"
+            while IFS=$'\t' read -r _ b n; do printf '  %-50s %10s\n' "$n" "$(human "$b")"; done <<< "$imgs"
+        fi
+        printf 'docker image prune -a ... '
+        if out=$("${DOCKER[@]}" image prune -af 2>&1); then echo "done"; else echo "failed:"; printf '%s\n' "$out" | tail -n 3 | sed 's/^/    /'; fi
+    else
+        echo "--images: Docker isn't reachable, so no images were removed."
+    fi
+fi
+AFTER=$(free_bytes)
+echo
+echo "Free space: $(human "$BEFORE") before, $(human "$AFTER") after (freed $(human $(( AFTER > BEFORE ? AFTER - BEFORE : 0 ))))."
+exit 0
+DEVCLEAN_EOF
+chmod +x "$HOME/.local/bin/devclean.new"
+mv -f "$HOME/.local/bin/devclean.new" "$HOME/.local/bin/devclean"
+echo "Wrote ~/.local/bin/devclean (what fills the disk; 'devclean --run' clears the safe caches)."
+
 # =================================================================
 # SHARED HELPERS
 # =================================================================

@@ -626,6 +626,35 @@ check "devmem: Memory, Where, Top programs and Verdict"     'bash devmem_check.s
 hint  "rerun setup (any flags): v96 writes ~/.local/bin/devmem"
 check "devmem --brief prints a few lines"                  'bash devmem_check.sh brief'
 check "devmem: 'taken back by ChromeOS' is between 0 and the total" 'bash devmem_check.sh taken'
+# v96 (plan item 8): devclean, the disk cleanup. Its report must change nothing: the caches it would clear and DDEV's
+# state files are listed (names, sizes, times) before and after a plain 'devclean'. --run isn't run here (it clears
+# your caches); its hand check is in the v96 plan.
+cat > "$WORK/devclean_check.sh" << 'DEVCLEAN_EOF'
+snap() {   # the first cache folder there, and DDEV's state files
+    local d
+    for d in "$HOME/.npm/_cacache" "${XDG_CACHE_HOME:-$HOME/.cache}/go-build" "$HOME/.cache/pip" "$HOME/.cache/composer" "$HOME/.cache/uv"; do
+        [ -d "$d" ] && { echo "$d"; find "$d" -printf '%P %s %T@\n' 2> /dev/null | sort; break; }
+    done
+    for d in "$HOME/.ddev/.state.yaml" "$HOME/.ddev/.update"; do [ -e "$d" ] && stat -c '%n %s %Y' "$d"; done
+}
+case "$1" in
+    report)   # runs, exits 0, and changes nothing
+        a=$(snap); o=$(devclean) || { echo "devclean exited $?"; exit 1; }
+        b=$(snap)
+        printf '%s\n' "$o" | grep -E '^(Free space|  Total)'
+        [ "$a" = "$b" ] || { echo "the report changed $(printf '%s\n' "$a" | head -n 1)"; exit 1; }
+        echo "unchanged: $(printf '%s\n' "$a" | head -n 1 | sed "s|^$HOME|~|")" ;;
+    help)   # the never-touch list, with each entry
+        h=$(devclean --help) || exit 1
+        for w in 'docker system prune' 'Docker volumes' 'ms-playwright' 'Hugging Face' 'Ollama models' '~/dev-demo' 'DDEV projects'; do
+            grep -qF "$w" <<< "$h" || { echo "--help does not name: $w"; exit 1; }
+        done
+        echo "all seven named" ;;
+esac
+DEVCLEAN_EOF
+check "devclean: the report runs and changes nothing"             'bash devclean_check.sh report' 300
+hint  "rerun setup (any flags): v96 writes ~/.local/bin/devclean"
+check "devclean --help names what it never touches"                'bash devclean_check.sh help'
 # v96: DDEV's router on 8080/8443, since ChromeOS passes high ports to Linux but not 80 and 443 (Oct 26 2026:
 # ERR_CONNECTION_REFUSED on https://ddev-test.ddev.site, fine on :8443). Setup sets them unless you set others:
 # missing (or DDEV's own 80/443, which it writes into the file on every save) is a FAIL, ports of your own a WARN.

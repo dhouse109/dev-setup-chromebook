@@ -94,12 +94,16 @@ to see it in context; the comment above each fix usually tells the story.
   their disk watermarks are off, so a nearly full disk doesn't turn an index read-only.
 - **`/tmp` is RAM-backed.** Large downloads and the test script's scratch space live on disk instead
   (`./assets`, and the test's own work folder).
-- **A full disk can leave DDEV unable to start** (setup base, v96). On Oct 26 2026 two `ddev start`s ran
-  dragonair's disk out of space while pulling `ddev-webserver`, and left `~/.ddev/.state.yaml` and
-  `~/.ddev/.update` at 0 bytes; every later `ddev start` then panicked ("assignment to entry in nil map" in
-  `remoteconfig`). **Fix:** move the two empty files aside (DDEV rewrites them) and free space first: DDEV's
-  images want about 3 GB (`docker builder prune`, `npm cache clean --force` and the uv, Go and Composer
-  caches freed ~5 GB there).
+- **Disk: caches fill it, and a full disk breaks DDEV** (setup base, v96). On Oct 26 2026 DDEV's image pull ran
+  dragonair's 38 GB disk out of space twice. The full disk left `~/.ddev/.state.yaml` and `~/.ddev/.update` at
+  0 bytes, and every later `ddev start` panicked ("assignment to entry in nil map" in `remoteconfig`) until the two
+  files were moved aside (DDEV rewrites them). What had filled the disk was mostly caches: npm 2.3 GB, Docker's
+  build cache 2.7 GB (which `docker system df` called only 16 kB reclaimable; `docker builder prune -af` freed
+  it), uv 641 MB, Homebrew 264 MB, Linux Chrome's cache 189 MB, pnpm 172 MB, Go's build cache 133 MB, Composer
+  61 MB, plus apt. DDEV's images want about 3 GB free. **Fix:** `devclean` reports what each cache would free and
+  changes nothing; `devclean --run` clears them and moves 0-byte DDEV state files aside; `--images` also removes
+  Docker images no container uses. Never `docker system prune`: the bundle's services are containers created
+  stopped, and it deletes them.
 - **kind works in Crostini's Docker** (`install-k8s`). A cluster takes about 2 GB, so the test unloads
   Ollama's models first.
 
