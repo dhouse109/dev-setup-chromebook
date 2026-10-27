@@ -45,10 +45,15 @@ if [ -z "${DEV_SCREEN_OUTPUT:-}" ] && [ "${DEV_SCREEN_SAVE:-1}" != 0 ]; then
         # A move to column 1 (ESC[G, ESC[0G, ESC[1G) counts as a carriage return: npm's spinner redraws that way
         # (Node's cursorTo(0) and clearLine), and left only escapes stripped, its frames came out side by side in one
         # long line (found in the v97 Chromebook hand checks, Oct 27 2026). wget's and curl's bars use \r.
+        # v97 (found in the v97 Chromebook run 4, Oct 27 2026): escape sequences take ECMA-48's full ranges (parameter
+        # bytes 0-?, intermediates space-/, final @-~), since Claude Code's installer left "[>4m[<u" behind; and a run
+        # of blank lines becomes one (its redraws left 12 in a row). The hold space remembers whether the last line
+        # written was blank, so nothing waits for the next line.
         _plain() {
             sed -u -e '/^Script started on .*\[COMMAND=/d' -e '/^Script done on .*\[COMMAND_EXIT_CODE=/d' \
-                -e 's/\x1b\[[01]\?G/\r/g' -e 's/\r$//' -e 's/.*\r//' -e 's|\x1b\[[0-9;?]*[ -/]*[@-~]||g' \
-                -e 's/\x1b\][^\x07\x1b]*\(\x07\|\x1b\\\)//g' -e 's/\x1b[()][0-9A-Za-z]//g' -e 's/\x1b[=>78]//g' -e 's/\x00//g'
+                -e 's/\x1b\[[01]\?G/\r/g' -e 's/\r$//' -e 's/.*\r//' -e 's|\x1b\[[0-?]*[ -/]*[@-~]||g' \
+                -e 's/\x1b\][^\x07\x1b]*\(\x07\|\x1b\\\)//g' -e 's/\x1b[()][0-9A-Za-z]//g' -e 's/\x1b[=>78]//g' -e 's/\x00//g' \
+                -e '/^$/{x;/^B$/{x;d;};s/^.*$/B/;x;b;}' -e 'x;s/^.*$//;x'
         }
         # Recorders ignore Ctrl-C, so they keep writing until the run itself has stopped. If the file can't be
         # written (a full disk), the copy just drains its input: the run never stops because of it.
@@ -543,12 +548,22 @@ fi
 
 # 6. Google Chrome (Unconditional)
 echo "Installing Google Chrome..."
-# v65: downloaded into assets/downloads, not the current directory. Always fetched fresh (-nc would
-# reinstall a stale .deb left by an interrupted run).
-rm -f "$ASSETS/downloads/google-chrome-stable_current_amd64.deb"
-wget -P "$ASSETS/downloads" https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
-sudo apt install -y "$ASSETS/downloads/google-chrome-stable_current_amd64.deb"
-rm -f "$ASSETS/downloads/google-chrome-stable_current_amd64.deb"
+# v97 (found in the v97 Chromebook run 4, Oct 27 2026): every run downloaded the 138 MB .deb, then apt said "already
+# the newest version". Once Google's apt source is in place (the .deb adds it), apt knows the current Chrome, so it
+# installs or upgrades from there and nothing is downloaded when Chrome is current. The source counts when apt has
+# google-chrome-stable from dl.google.com/linux/chrome (present, enabled, and read by this run's apt update).
+if apt-cache policy google-chrome-stable 2> /dev/null | grep -q 'dl\.google\.com/linux/chrome'; then
+    echo "Google Chrome: from Google's apt source (no .deb download)."
+    sudo apt-get install -y google-chrome-stable
+else
+    # A first install: the .deb, which also adds Google's apt source.
+    # v65: downloaded into assets/downloads, not the current directory. Always fetched fresh (-nc would
+    # reinstall a stale .deb left by an interrupted run).
+    rm -f "$ASSETS/downloads/google-chrome-stable_current_amd64.deb"
+    wget -P "$ASSETS/downloads" https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
+    sudo apt install -y "$ASSETS/downloads/google-chrome-stable_current_amd64.deb"
+    rm -f "$ASSETS/downloads/google-chrome-stable_current_amd64.deb"
+fi
 
 # v96: links from Linux open in ChromeOS's browser, not in a Linux Google Chrome (Oct 26 2026: Chrome registered
 # itself as Linux's handler for web links, so Devin Desktop's Login opened its sign-in page in a Linux Chrome inside
@@ -2265,32 +2280,51 @@ fi
 
 # Lazarus 4.8
 if [[ "$FLAGS" =~ " install-lazarus " ]]; then
-    echo "Downloading and installing Lazarus 4.8..."
-    # v65: downloads go to assets/downloads instead of the current directory. 'wget -c' resumes a
-    # partial file from an interrupted run (the old "already exists, skipping" test would have
-    # handed apt a truncated .deb) and returns at once when the file is already complete.
-    LAZ_URL="https://sourceforge.net/projects/lazarus/files/Lazarus%20Linux%20amd64%20DEB/Lazarus%204.8"
-    for deb in fpc-laz_3.2.2-210709_amd64.deb fpc-src_3.2.2-210709_amd64.deb lazarus-project_4.8.0-0_amd64.deb; do
-        wget -c -O "$ASSETS/downloads/$deb" "$LAZ_URL/$deb" || true
-        # SourceForge publishes no checksum next to these, so ask dpkg whether the archive is whole.
-        # A mirror that ignores the resume request appends a second copy; 'wget -c' would then
-        # call that oversized file complete on every later run.
-        if ! dpkg-deb --info "$ASSETS/downloads/$deb" > /dev/null 2>&1; then
-            echo "$deb is incomplete or damaged; downloading it again from scratch..."
-            rm -f "$ASSETS/downloads/$deb"
-            wget -O "$ASSETS/downloads/$deb" "$LAZ_URL/$deb"
-            if ! dpkg-deb --info "$ASSETS/downloads/$deb" > /dev/null 2>&1; then
-                echo "ERROR: $deb is still not a valid .deb after a fresh download. Aborting."
-                rm -f "$ASSETS/downloads/$deb"
-                exit 1
-            fi
-        fi
+    # v97 (found in the v97 Chromebook run 4, Oct 27 2026): every run downloaded the three debs (215 MB) and apt then
+    # said "already the newest version". Each deb with the package version it installs (the file names carry the
+    # build too: fpc-laz_3.2.2-210709 installs fpc-laz 3.2.2); when dpkg-query has all three at those versions, the
+    # download and the install are skipped. Any missing or different: downloaded and installed as before.
+    LAZ_DEBS=("fpc-laz_3.2.2-210709_amd64.deb fpc-laz 3.2.2" "fpc-src_3.2.2-210709_amd64.deb fpc-src 3.2.2"
+        "lazarus-project_4.8.0-0_amd64.deb lazarus-project 4.8.0")
+    LAZ_HAVE=1
+    for LAZ_D in "${LAZ_DEBS[@]}"; do
+        read -r _ LAZ_P LAZ_V <<< "$LAZ_D"
+        [ "$(dpkg-query -W -f='${Status} ${Version}' "$LAZ_P" 2> /dev/null)" = "install ok installed $LAZ_V" ] || LAZ_HAVE=0
     done
+    if [ "$LAZ_HAVE" = 1 ]; then
+        echo "Lazarus 4.8 debs already installed (fpc-laz 3.2.2, fpc-src 3.2.2, lazarus-project 4.8.0); nothing to download."
+    else
+        echo "Downloading and installing Lazarus 4.8..."
+        # v65: downloads go to assets/downloads instead of the current directory. 'wget -c' resumes a
+        # partial file from an interrupted run (the old "already exists, skipping" test would have
+        # handed apt a truncated .deb) and returns at once when the file is already complete.
+        LAZ_URL="https://sourceforge.net/projects/lazarus/files/Lazarus%20Linux%20amd64%20DEB/Lazarus%204.8"
+        for LAZ_D in "${LAZ_DEBS[@]}"; do
+            read -r deb LAZ_P LAZ_V <<< "$LAZ_D"
+            wget -c -O "$ASSETS/downloads/$deb" "$LAZ_URL/$deb" || true
+            # SourceForge publishes no checksum next to these, so ask dpkg whether the archive is whole.
+            # A mirror that ignores the resume request appends a second copy; 'wget -c' would then
+            # call that oversized file complete on every later run.
+            if ! dpkg-deb --info "$ASSETS/downloads/$deb" > /dev/null 2>&1; then
+                echo "$deb is incomplete or damaged; downloading it again from scratch..."
+                rm -f "$ASSETS/downloads/$deb"
+                wget -O "$ASSETS/downloads/$deb" "$LAZ_URL/$deb"
+                if ! dpkg-deb --info "$ASSETS/downloads/$deb" > /dev/null 2>&1; then
+                    echo "ERROR: $deb is still not a valid .deb after a fresh download. Aborting."
+                    rm -f "$ASSETS/downloads/$deb"
+                    exit 1
+                fi
+            fi
+            # v97: the table above must name what the deb installs, or the skip never matches (or matches wrongly)
+            LAZ_DV=$(dpkg-deb -f "$ASSETS/downloads/$deb" Version 2> /dev/null || true)
+            [ "$LAZ_DV" = "$LAZ_V" ] || echo "NOTICE: $deb installs $LAZ_P $LAZ_DV, not $LAZ_V as setup's table says; update LAZ_DEBS."
+        done
 
-    echo "Installing Lazarus packages in strict order..."
-    sudo apt install -y "$ASSETS"/downloads/fpc-laz_*.deb
-    sudo apt install -y "$ASSETS"/downloads/fpc-src_*.deb
-    sudo apt install -y "$ASSETS"/downloads/lazarus-project_*.deb
+        echo "Installing Lazarus packages in strict order..."
+        sudo apt install -y "$ASSETS"/downloads/fpc-laz_*.deb
+        sudo apt install -y "$ASSETS"/downloads/fpc-src_*.deb
+        sudo apt install -y "$ASSETS"/downloads/lazarus-project_*.deb
+    fi
 
     echo "Cleaning up Lazarus installers..."
     rm -f "$ASSETS"/downloads/fpc-laz_*.deb "$ASSETS"/downloads/fpc-src_*.deb "$ASSETS"/downloads/lazarus-project_*.deb

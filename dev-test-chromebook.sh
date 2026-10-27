@@ -122,10 +122,15 @@ if [ -z "${DEV_SCREEN_OUTPUT:-}" ] && [ "${DEV_SCREEN_SAVE:-1}" != 0 ]; then
         # A move to column 1 (ESC[G, ESC[0G, ESC[1G) counts as a carriage return: npm's spinner redraws that way
         # (Node's cursorTo(0) and clearLine), and left only escapes stripped, its frames came out side by side in one
         # long line (found in the v97 Chromebook hand checks, Oct 27 2026). wget's and curl's bars use \r.
+        # v97 (found in the v97 Chromebook run 4, Oct 27 2026): escape sequences take ECMA-48's full ranges (parameter
+        # bytes 0-?, intermediates space-/, final @-~), since Claude Code's installer left "[>4m[<u" behind; and a run
+        # of blank lines becomes one (its redraws left 12 in a row). The hold space remembers whether the last line
+        # written was blank, so nothing waits for the next line.
         _plain() {
             sed -u -e '/^Script started on .*\[COMMAND=/d' -e '/^Script done on .*\[COMMAND_EXIT_CODE=/d' \
-                -e 's/\x1b\[[01]\?G/\r/g' -e 's/\r$//' -e 's/.*\r//' -e 's|\x1b\[[0-9;?]*[ -/]*[@-~]||g' \
-                -e 's/\x1b\][^\x07\x1b]*\(\x07\|\x1b\\\)//g' -e 's/\x1b[()][0-9A-Za-z]//g' -e 's/\x1b[=>78]//g' -e 's/\x00//g'
+                -e 's/\x1b\[[01]\?G/\r/g' -e 's/\r$//' -e 's/.*\r//' -e 's|\x1b\[[0-?]*[ -/]*[@-~]||g' \
+                -e 's/\x1b\][^\x07\x1b]*\(\x07\|\x1b\\\)//g' -e 's/\x1b[()][0-9A-Za-z]//g' -e 's/\x1b[=>78]//g' -e 's/\x00//g' \
+                -e '/^$/{x;/^B$/{x;d;};s/^.*$/B/;x;b;}' -e 'x;s/^.*$//;x'
         }
         # Recorders ignore Ctrl-C, so they keep writing until the run itself has stopped. If the file can't be
         # written (a full disk), the copy just drains its input: the run never stops because of it.
