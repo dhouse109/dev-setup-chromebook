@@ -1,20 +1,20 @@
 # dev-setup-chromebook v97 plan
 
-Oct 26, 2026 · started Oct 26 (item 1, from the v96 hand checks) · **draft: choices open**
+Oct 27, 2026 · started Oct 26 (item 1, from the v96 hand checks) · item 1's choices made Oct 27 · **draft: anything else for v97 open**
 
 ## Scope
 
-v97 follows v96. Base: v96 (`release/v96`, PR #6), confirmed on a Chromebook Oct 26 (dev-test PASS 114,
-FAIL 0) and being released now. Anything the v96 hand checks turn up that doesn't go into v96 itself can
-join this plan.
+v97 follows v96. Base: v96 (tag `v96`, PR #6 merged Oct 27 2026 as befcef3), confirmed on a Chromebook
+Oct 27 (dev-test PASS 120, FAIL 0, WARN 0 with `install-editors install-web`; every hand check passed,
+including FpDebug in VS Code and gdb in Devin on TDaemon).
 
 1. **More ways to free and find disk space:** `devclean` learns the three biggest things it missed on
    Oct 26 (editors' cached extension downloads, extension versions left behind, Linux Chrome's caches),
    says what each step actually freed, and gains a "where is the space" view of the checks that were run
    by hand.
 
-Each item lists the choices offered; the decision is marked when made. The build starts once "anything
-else for v97" is settled.
+Each item lists the choices offered; the decision is marked when made (all of item 1's, Oct 27). The
+build starts once "anything else for v97" is settled.
 
 ## 1. More ways to free and find disk space (setup base, `devclean`)
 
@@ -71,7 +71,8 @@ Nothing in use broke: VS Code, its extensions and sign-ins, DDEV's images (all s
   `~/.config/google-chrome`, only when Linux Chrome isn't running (as v96 already does for
   `~/.cache/google-chrome`). The profile itself (bookmarks, sign-ins, settings) is never touched.
 - **What each step freed:** `--run` prints the free space gained per step (df before and after each), so a
-  gap between the report's estimate and the result is visible. The report's Docker build-cache line says
+  gap between the report's estimate and the result is visible. v96's `--run` prints only the total (free
+  space before and after, and the difference). The report's Docker build-cache line says
   "up to" and why (layers shared with images in use stay).
 - **"Where is the space"** (the hand checks above, built in): the largest folders in the home folder
   (including dot folders), Docker's real image store (`/var/lib/containerd` as well as
@@ -83,24 +84,24 @@ Nothing in use broke: VS Code, its extensions and sign-ins, DDEV's images (all s
 
 | Choice: when editors' items are cleaned | |
 | --- | --- |
-| A (recommended) | Only when that editor isn't running (checked per editor); otherwise the line says "left: VS Code is open". Same rule as Linux Chrome's cache. |
+| **A (chosen Oct 27)** | Only when that editor isn't running (checked per editor); otherwise the line says "left: VS Code is open". Same rule as Linux Chrome's cache. |
 | B | Always; editors cope with a missing download cache, but removing an extension version a running window may still load is riskier. |
 
 | Choice: extension versions left behind | |
 | --- | --- |
-| A (recommended) | Removed by `--run`, with the editor closed, when another version of the same extension is the installed one. |
+| **A (chosen Oct 27)** | Removed by `--run`, with the editor closed, when another version of the same extension is the installed one. |
 | B | Report only; `--run` names them and the command to remove each. |
 
 | Choice: the "where is the space" view | |
 | --- | --- |
-| A (recommended) | `devclean --where`, a separate option, so the default report stays short. |
+| **A (chosen Oct 27)** | `devclean --where`, a separate option, so the default report stays short. |
 | B | Always at the end of the plain `devclean` report. |
 | C | A separate command, `devdisk`, next to `devmem`. |
 
 **Test** (base, with the v96 `devclean` checks): the report still changes nothing (now including a
 scratch editor folder with a cached VSIX, an old extension version and a Chrome `Cache` folder); `--run`
 against those scratch folders removes the cache and the old version and keeps the installed version, the
-`User` folder and the profile; `--where` (or the chosen form) runs and names the largest folders.
+`User` folder and the profile; `devclean --where` runs, names the largest folders and changes nothing.
 
 **Init, demo:** version bump only.
 
@@ -122,10 +123,26 @@ are still there.
 
 ## Carried forward
 
-**From v96:** its own hand checks (in PR #6), and two fixes found during them that went to v96 itself:
-DDEV's usage-statistics opt-out moves to the base install (a first `ddev start` asked, on a machine set up
-without install-drupal), and `devclean --run`'s per-step figures (if not built in v96, item 1 here covers
-them).
+**From v96:** its hand checks all passed (Oct 27). Four fixes found during them went into v96 itself, so
+nothing here: DDEV's usage-statistics opt-out in the base install; a new light profile's floating layout
+read as stale; the IDE's own rebuilds target Qt5 (they came out GTK2); docking in the IDE's own options
+follows the docked layout (Lazarus 4's first-start single/multi window question). `devclean --run`'s
+per-step figures were not built in v96; item 1 covers them.
+
+**Found Oct 27 debugging TDaemon, noted (docs at most):**
+
+- Importing a VS Code profile into Devin (the profile export, 63 extensions) left out Native Debug
+  (`webfreak.debug`), which the `(gdb)` launch needs; F5 did nothing until it was installed. The
+  `.vscode/extensions.json` that `lazmode vscode` writes recommends it, so Devin offered it ("Do you want to
+  install the recommended 'Native Debug' extension…?") and Install fixed it. Devin installs from Open VSX, so
+  VS Code-only extensions in such a profile (Pylance, C# Dev Kit, Dev Containers, WSL, Codespaces, Speech,
+  FpDebug) don't come across either.
+- Native Debug with gdb shows some nested Pascal fields in Variables as "Could not expand variable: A syntax
+  error in expression" (it builds C-style expressions for them); the Watch panel reads the same values
+  (`fView`, `LogFilePath` as text). FpDebug in VS Code shows them all.
+- Candidate for `docs/init-checklist.md` (the `lazmode vscode` notes) if wanted: both lines above, and the
+  `TextRec absolute` trick for viewing a `Text` file variable (`fView: TextRec absolute f;`), since the RTL's
+  file types carry no debug info in either debugger.
 
 **Not bundle work, noted:** Codex's VS Code extension 26.1021.22027 (Oct 23) never loaded its panel on the
 Chromebook ("Webview renderer did not become ready", 30 s timeout, twice, after a reload too); rolling back to
@@ -133,7 +150,8 @@ Chromebook ("Webview renderer did not become ready", 30 s timeout, twice, after 
 
 ## Choices to make
 
-- [ ] Item 1: when editors' items are cleaned (A: only with the editor closed, recommended)
-- [ ] Item 1: extension versions left behind (A: removed by `--run`, recommended)
-- [ ] Item 1: the "where is the space" view (A: `devclean --where`, recommended)
+- [x] Item 1: when editors' items are cleaned: **A**, only with the editor closed (Oct 27)
+- [x] Item 1: extension versions left behind: **A**, removed by `--run` (Oct 27)
+- [x] Item 1: the "where is the space" view: **A**, `devclean --where` (Oct 27)
+- [ ] The Oct 27 debugging notes: into `docs/init-checklist.md`, or leave them here
 - [ ] Anything else for v97
