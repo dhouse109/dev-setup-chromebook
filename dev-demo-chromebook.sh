@@ -9750,18 +9750,428 @@ EOF
 }
 
 
+# v96: drupal/umami-headless: the one Drupal back end that drupal/drupal-nuxt and drupal/drupal-astro share (plan v96
+# item 2, choice A): Drupal 11's Umami on PHP's built-in server + SQLite on :8891, with core's JSON:API on (read-only,
+# published content). One site, so 'compare' in drupal-astro edits the content both front ends show, and the second
+# copy's ~250 MB isn't spent. Its launcher (up, stop, reset) starts Drupal detached, so it outlives the launcher that
+# asked for it; the front ends call 'run-umami-headless.sh up'. A site drupal-nuxt installed before v96
+# (drupal/drupal-nuxt/drupal) is moved here on the first 'up', not reinstalled.
+demo_umami_headless() {
+    begin drupal umami-headless "Drupal 11's Umami as a headless back end on :8891 (JSON:API), shared by drupal-nuxt and drupal-astro" \
+        "https://www.drupal.org/docs/core-modules-and-themes/core-modules/jsonapi-module" || return 0
+    need php "the base install" || return 0
+    need composer install-web || return 0
+    php -m 2> /dev/null | grep -qi '^pdo_sqlite$' || apt_need php-sqlite3 || { fail "php-sqlite3 missing"; return 0; }
+    mkdir -p "$DIR"
+    write_run << 'EOF'
+demo_need php "the base install"
+demo_need composer install-web
+DRUPAL=http://127.0.0.1:8891
+SERVE="php -d memory_limit=512M -S 127.0.0.1:8891 .ht.router.php"
+OLD="$HOME/dev-demo/drupal/drupal-nuxt/drupal"   # where drupal-nuxt kept its own site before v96
+# drush.php, not vendor/bin/drush: in drush 13.8 that is a shell script, which 'php' only prints, exiting 0 (Oct 27 2026).
+dr() { ( cd drupal && php -d memory_limit=512M vendor/bin/drush.php "$@" ); }
+listening() { (exec 3<> "/dev/tcp/127.0.0.1/$1") 2> /dev/null; }
+installed() { [ -f drupal/composer.json ] && dr status --field=bootstrap 2> /dev/null | grep -q Successful; }
+adopt_old() {   # drupal-nuxt's own site (before v96) becomes the shared one, content and all
+    [ -f drupal/composer.json ] || [ ! -f "$OLD/composer.json" ] || [ -L "$OLD" ] || {
+        pkill -f "$SERVE" 2> /dev/null && sleep 1
+        demo_step "Moving drupal-nuxt's Drupal site ($OLD) here, so drupal-nuxt and drupal-astro share it"
+        mv "$OLD" drupal || return 1
+        dr cache:rebuild > /dev/null 2>&1 || true
+        echo "  moved: its content, users and settings stay as they were"
+    }
+}
+install_site() {   # Composer project, Drupal with Umami, JSON:API on. Safe to repeat.
+    adopt_old || return 1
+    if [ ! -f drupal/composer.json ]; then
+        demo_step "composer create-project drupal/recommended-project drupal (a few minutes)"
+        composer create-project drupal/recommended-project drupal --no-progress || { rm -rf drupal; return 1; }
+    fi
+    ( cd drupal && composer show drush/drush > /dev/null 2>&1 ) || ( cd drupal && composer require drush/drush --no-progress ) || return 1
+    if ! installed; then
+        demo_step "Installing Drupal with Umami (admin / admin) on SQLite"
+        dr -y site:install demo_umami --db-url=sqlite://sites/default/files/.ht.sqlite --account-name=admin --account-pass=admin \
+            --site-name="Umami (headless)" || return 1
+    fi
+    dr -y pm:install jsonapi > /dev/null && echo "  JSON:API is on (read-only): $DRUPAL/jsonapi"
+}
+up() {
+    installed || install_site || return 1
+    if ! listening 8891; then
+        # Detached (its own session), so it keeps serving after this launcher and the front end's exit. exec, and the
+        # redirections on the whole subshell: a waiting subshell would hold the caller's output open.
+        ( cd drupal/web && PHP_CLI_SERVER_WORKERS=4 exec setsid $SERVE ) > "$DEMO_LOGS/umami-headless.log" 2>&1 < /dev/null &
+        demo_wait_port 8891 60 quiet || { tail -n 5 "$DEMO_LOGS/umami-headless.log"; return 1; }
+    fi
+    echo "Drupal (Umami, headless) on $DRUPAL: JSON:API at $DRUPAL/jsonapi, admin at $DRUPAL/user/login (admin / admin)."
+}
+while demo_menu "Umami, the shared headless Drupal (:8891)" \
+    "up: install Umami the first time, start Drupal on :8891 (it keeps running; 'stop' stops it)" \
+    "stop: stop Drupal" \
+    "reset: delete the Drupal site (the next 'up' reinstalls it; drupal-nuxt and drupal-astro use it)"; do
+    case "$DEMO_CHOICE" in
+        up*)    up || exit 1 ;;
+        stop*)  if pkill -f "$SERVE" 2> /dev/null; then echo "Drupal stopped."; else echo "Drupal was not running."; fi ;;
+        reset*) read -rp "Delete the shared Drupal site (its files and SQLite database)? The next 'up' reinstalls it. [y/N] " a
+                if [ "${a,,}" = y ]; then
+                    pkill -f "$SERVE" 2> /dev/null
+                    chmod -R u+w drupal 2> /dev/null; rm -rf drupal && demo_note "Gone. '$0 up' installs it again."
+                else
+                    echo "Kept."; [ -n "${1:-}" ] && exit 1
+                fi ;;
+    esac
+    [ -n "${1:-}" ] && break
+done
+EOF
+    done_demo
+}
+
+# v96: drupal/drupal-astro: the same Umami recipes as drupal-nuxt, from the same JSON:API on the same shared site
+# (drupal/umami-headless), rendered the other way (plan v96 item 2, choice C): 'astro build' writes one static HTML
+# page per recipe, and one server island (server:defer, @astrojs/node) renders per request: the most recently
+# changed recipe, read live. Static by default with a live part per component is what Astro shows here and Nuxt
+# can't. Astro is a framework, so it stays per project: no flag and no global CLI ('npm create astro' scaffolds a
+# project that pins its own version); Node and wrangler are already there. Ports: dev :4321, the built site's
+# Node server :4322. Images go through <Image> with Drupal's host in image.domains, so the build downloads and
+# resizes them into dist/ and the built site has no links back to :8891. 'deploy' ships only dist/client to
+# Cloudflare: the island needs Drupal, which stays on the Chromebook, so the deployed pages show its fallback.
+demo_drupal_astro() {
+    begin drupal drupal-astro "Headless Drupal: Umami's recipes over core's JSON:API, built into static pages by Astro 7, with one live server island" \
+        "https://docs.astro.build + https://www.drupal.org/docs/core-modules-and-themes/core-modules/jsonapi-module" || return 0
+    need npm install-node || return 0
+    [ -x "$DEMO_ROOT/drupal/run-umami-headless.sh" ] || { echo "  ${YEL}skip${RST}: needs drupal/umami-headless (php and composer, install-web)"; SKIPPED+=("$STACK/$NAME: needs drupal/umami-headless (install-web)"); return 0; }
+    FRESH=1
+    gen_file "$DIR/astro/package.json" << 'EOF_JSON'
+{
+  "name": "devdemo-umami-astro",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "start": "node dist/server/entry.mjs"
+  },
+  "dependencies": {
+    "@astrojs/node": "^11.0.0",
+    "astro": "^7.0.0"
+  }
+}
+EOF_JSON
+    gen_file "$DIR/astro/astro.config.mjs" << 'EOF_JS'
+// Umami on Astro: static pages (the default), plus server islands, which need an adapter: @astrojs/node, standalone.
+// Drupal's address is config, DRUPAL_URL overrides it; its host is allowed for <Image>, so the build downloads the
+// pictures and resizes them into dist/.
+import { defineConfig } from 'astro/config';
+import node from '@astrojs/node';
+
+const drupal = new URL(process.env.DRUPAL_URL ?? 'http://127.0.0.1:8891');
+
+export default defineConfig({
+  output: 'static',
+  adapter: node({ mode: 'standalone' }),
+  image: { domains: [drupal.hostname] },
+  server: { host: '127.0.0.1', port: 4321 },
+});
+EOF_JS
+    gen_file "$DIR/astro/src/drupal.ts" << 'EOF_TS'
+// Drupal's address (DRUPAL_URL overrides it) and one JSON:API request.
+export const DRUPAL = (process.env.DRUPAL_URL ?? 'http://127.0.0.1:8891').replace(/\/$/, '');
+
+export async function jsonapi(pathOrUrl: string): Promise<any> {
+  const url = pathOrUrl.startsWith('http') ? pathOrUrl : `${DRUPAL}/jsonapi${pathOrUrl}`;
+  let res: Response;
+  try {
+    res = await fetch(url, { headers: { Accept: 'application/vnd.api+json' } });
+  } catch (e) {
+    throw new Error(`Drupal does not answer at ${DRUPAL} (start it: ~/dev-demo/drupal/run-umami-headless.sh up): ${e}`);
+  }
+  if (!res.ok) throw new Error(`Drupal answered ${res.status} for ${url}`);
+  return await res.json();
+}
+EOF_TS
+    gen_file "$DIR/astro/src/content.config.ts" << 'EOF_TS'
+// The recipes collection: read from Drupal's JSON:API when the site is built (and when 'astro dev' starts), page
+// after page (links.next), only the fields the pages show, then checked against the schema.
+import { defineCollection } from 'astro:content';
+import { z } from 'astro/zod';
+import { DRUPAL, jsonapi } from './drupal';
+
+const fields = ['title', 'path', 'field_summary', 'field_difficulty', 'field_preparation_time', 'field_cooking_time',
+  'field_number_of_servings', 'field_ingredients', 'field_recipe_instruction', 'field_media_image'].join(',');
+
+const recipes = defineCollection({
+  loader: async () => {
+    let next: string | undefined = `/node/recipe?sort=title&page[limit]=50&fields[node--recipe]=${fields}`
+      + '&include=field_media_image.field_media_image&fields[media--image]=field_media_image&fields[file--file]=uri';
+    const out = [];
+    while (next) {
+      const doc = await jsonapi(next);
+      const included = doc.included ?? [];
+      for (const n of doc.data) {
+        const a = n.attributes;
+        const media = included.find((i: any) => i.id === n.relationships?.field_media_image?.data?.id);
+        const image = media?.relationships?.field_media_image?.data;
+        const file = included.find((i: any) => i.id === image?.id);
+        // The page's address: the last part of Drupal's alias (/recipes/super-easy-vegetarian-pasta-bake), else the nid.
+        const slug = (a.path?.alias ?? '').split('/').filter(Boolean).pop() ?? String(a.drupal_internal__nid ?? n.id);
+        out.push({
+          id: slug,
+          title: a.title,
+          summary: a.field_summary?.processed ?? '',
+          difficulty: a.field_difficulty ?? '',
+          preparation: a.field_preparation_time ?? 0,
+          cooking: a.field_cooking_time ?? 0,
+          servings: a.field_number_of_servings ?? null,
+          ingredients: a.field_ingredients ?? [],
+          instructions: a.field_recipe_instruction?.processed ?? '',
+          image: file?.attributes?.uri?.url ? {
+            src: `${DRUPAL}${file.attributes.uri.url}`,
+            width: image.meta?.width ?? 800, height: image.meta?.height ?? 600, alt: image.meta?.alt || a.title,
+          } : null,
+        });
+      }
+      next = doc.links?.next?.href;
+    }
+    return out;
+  },
+  schema: z.object({
+    title: z.string(),
+    summary: z.string(),
+    difficulty: z.string(),
+    preparation: z.number(),
+    cooking: z.number(),
+    servings: z.number().nullable(),
+    ingredients: z.array(z.string()),
+    instructions: z.string(),
+    image: z.object({ src: z.string().url(), width: z.number(), height: z.number(), alt: z.string() }).nullable(),
+  }),
+});
+
+export const collections = { recipes };
+EOF_TS
+    gen_file "$DIR/astro/src/components/LatestFromDrupal.astro" << 'EOF_ASTRO'
+---
+// The server island (used with server:defer): rendered on the server when a page loads, after the static page is
+// already there. The most recently changed recipe, read live from JSON:API. When Drupal doesn't answer it throws,
+// the island's request fails, and the page keeps the fallback it was built with.
+import { jsonapi } from '../drupal';
+
+const doc = await jsonapi('/node/recipe?sort=-changed&page[limit]=1&fields[node--recipe]=title,changed');
+const latest = doc.data[0]?.attributes;
+const when = latest ? new Date(latest.changed).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' }) : '';
+---
+<p class="live" data-testid="island">
+  Live from Drupal, rendered just now: the latest change is <strong>{latest?.title ?? 'no recipe yet'}</strong>{when && ` (${when})`}.
+</p>
+EOF_ASTRO
+    gen_file "$DIR/astro/src/layouts/Layout.astro" << 'EOF_ASTRO'
+---
+import LatestFromDrupal from '../components/LatestFromDrupal.astro';
+interface Props { title: string }
+const { title } = Astro.props;
+---
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width">
+    <title>{title === 'Recipes' ? 'Umami on Astro' : `${title} | Umami on Astro`}</title>
+  </head>
+  <body>
+    <div class="site">
+      <header><a href="/">Umami on Astro</a> <small>headless Drupal 11, built by Astro 7</small></header>
+      <LatestFromDrupal server:defer>
+        <p slot="fallback" class="live" data-testid="island-fallback">
+          Waiting for the live part: the latest change in Drupal shows here when this page's server and Drupal both answer.
+        </p>
+      </LatestFromDrupal>
+      <slot />
+    </div>
+  </body>
+</html>
+
+<style is:global>
+  body { font: 16px system-ui; margin: 0; color: #222 }
+  .site { max-width: 60rem; margin: 0 auto; padding: 1rem }
+  header { padding: .5rem 0 1rem; border-bottom: 1px solid #ddd; margin-bottom: 1rem }
+  header a { font-weight: 700; color: #b03a2e; text-decoration: none; margin-right: .5rem }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr)); gap: 1rem; list-style: none; padding: 0 }
+  .card img, .recipe img { width: 100%; height: auto; border-radius: .5rem }
+  .meta { color: #666; font-size: .9rem }
+  .live { background: #fdf3e7; border-left: 4px solid #b03a2e; padding: .5rem .75rem }
+</style>
+EOF_ASTRO
+    gen_file "$DIR/astro/src/pages/index.astro" << 'EOF_ASTRO'
+---
+// Built once, at 'astro build': the recipe list is plain HTML in dist/client/index.html.
+import { getCollection } from 'astro:content';
+import { Image } from 'astro:assets';
+import Layout from '../layouts/Layout.astro';
+
+const recipes = (await getCollection('recipes')).sort((a, b) => a.data.title.localeCompare(b.data.title));
+---
+<Layout title="Recipes">
+  <main>
+    <h1>Recipes</h1>
+    <ul class="grid">
+      {recipes.map((r) => (
+        <li class="card" data-testid="recipe">
+          <a href={`/recipes/${r.id}/`}>
+            {r.data.image && <Image src={r.data.image.src} alt={r.data.image.alt} width={480}
+              height={Math.round(480 * r.data.image.height / r.data.image.width)} loading="lazy" />}
+            <h2>{r.data.title}</h2>
+          </a>
+          <p class="meta">{r.data.difficulty} · {r.data.preparation + r.data.cooking} min</p>
+        </li>
+      ))}
+    </ul>
+  </main>
+</Layout>
+EOF_ASTRO
+    gen_file "$DIR/astro/src/pages/recipes/[slug].astro" << 'EOF_ASTRO'
+---
+// One static page per recipe, from getStaticPaths at build time.
+import { getCollection } from 'astro:content';
+import { Image } from 'astro:assets';
+import Layout from '../../layouts/Layout.astro';
+
+export async function getStaticPaths() {
+  return (await getCollection('recipes')).map((r) => ({ params: { slug: r.id }, props: { r: r.data } }));
+}
+const { r } = Astro.props;
+---
+<Layout title={r.title}>
+  <article class="recipe">
+    <h1>{r.title}</h1>
+    <p class="meta">{r.difficulty} · prep {r.preparation} min · cook {r.cooking} min · serves {r.servings}</p>
+    {r.image && <Image src={r.image.src} alt={r.image.alt} width={960} height={Math.round(960 * r.image.height / r.image.width)} />}
+    <div set:html={r.summary} />
+    <h2>Ingredients</h2>
+    <ul>{r.ingredients.map((i) => <li>{i}</li>)}</ul>
+    <h2>Method</h2>
+    <div set:html={r.instructions} />
+  </article>
+</Layout>
+EOF_ASTRO
+    gen_file "$DIR/astro/wrangler.toml" << 'EOF_TOML'
+# 'deploy' in the launcher: dist/client only, as static assets on Cloudflare. The server island needs Drupal, which
+# stays on the Chromebook, so the deployed pages show its fallback.
+name = "devdemo-umami-astro"
+compatibility_date = "2026-10-01"
+
+[assets]
+directory = "./dist/client"
+EOF_TOML
+    write_run << 'EOF'
+demo_need npm install-node
+UMAMI="$HOME/dev-demo/drupal/run-umami-headless.sh"
+[ -x "$UMAMI" ] || { echo "Needs drupal/umami-headless, the shared Drupal: rerun dev-demo with install-web."; exit 1; }
+DRUPAL=http://127.0.0.1:8891
+NUXT="$HOME/dev-demo/drupal/drupal-nuxt/nuxt"
+export ASTRO_TELEMETRY_DISABLED=1 DRUPAL_URL=$DRUPAL
+# wrangler's login for 'deploy', as cloud/cloudflare reads it (both optional; 'wrangler login' works too).
+[ -r "$HOME/.config/dev-init/secrets.env" ] && for _k in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID; do
+    [ -n "${!_k:-}" ] && continue
+    _v=$(grep -E "^(export )?$_k=" "$HOME/.config/dev-init/secrets.env" | tail -1 | cut -d= -f2- | sed -E "s/^['\"]//;s/['\"]\$//")
+    [ -n "$_v" ] && export "$_k=$_v"
+done
+listening() { (exec 3<> "/dev/tcp/127.0.0.1/$1") 2> /dev/null; }
+drupal_up() { "$UMAMI" up; }
+astro_deps() {
+    [ -d astro/node_modules/astro ] && return 0
+    demo_step "npm install in astro/ (Astro 7 and @astrojs/node; a minute or two the first time)"
+    ( cd astro && npm install --no-audit --no-fund )
+}
+build() { drupal_up && astro_deps && demo_step "astro build: static pages into dist/client, the island's server into dist/server" && ( cd astro && npx astro build ); }
+serve_built() {   # the built site's own Node server on :4322, in the background
+    listening 4322 && return 0
+    demo_bg drupal-astro-server env HOST=127.0.0.1 PORT=4322 node astro/dist/server/entry.mjs
+    demo_wait_port 4322 30 quiet
+}
+island_url() { curl -fsS "http://127.0.0.1:$1/" | grep -o '/_server-islands/[^"'"'"' ]*' | head -n 1 | sed 's/&amp;/\&/g'; }
+ITEMS=("serve: start Drupal (installing Umami the first time) and Astro's dev server on :4321"
+       "build: astro build (static pages and the island's server), then that server on :4322"
+       "api: one raw JSON:API request (a recipe's title and difficulty), the data the loader turns into pages"
+       "source: the recipe titles in dist/client's files, then Drupal stopped: the pages still served, the island on its fallback")
+[ -f "$NUXT/package.json" ] && ITEMS+=("compare: Nuxt (:3020) and Astro (:4321) side by side; edit a recipe in Drupal and reload both")
+ITEMS+=("drupal: open Drupal itself (admin / admin)")
+command -v wrangler > /dev/null 2>&1 && ITEMS+=("deploy: dist/client as static assets on Cloudflare (asks first; the island shows its fallback there)")
+ITEMS+=("stop: stop Astro's servers and Drupal" "reset: delete the shared Drupal site and dist/ (the next serve reinstalls it)")
+while demo_menu "Headless Drupal + Astro (Drupal :8891, Astro dev :4321, built :4322)" "${ITEMS[@]}"; do
+    case "$DEMO_CHOICE" in
+        serve*)   drupal_up && astro_deps || continue
+                  demo_open_when_ready 4321 http://localhost:4321/
+                  demo_note "The recipes are read once, when the dev server starts; the box at the top is the live server island."
+                  demo_note "Ctrl-C stops Astro; Drupal keeps running ('$0 stop' stops it)."
+                  ( cd astro && npx astro dev --host 127.0.0.1 --port 4321 ) ;;
+        build*)   build || continue
+                  demo_note "dist/client: $(find astro/dist/client -name '*.html' | wc -l) HTML pages, $(find astro/dist/client -name '*.webp' -o -name '*.jpg' | wc -l) images resized from Drupal's."
+                  demo_open_when_ready 4322 http://localhost:4322/
+                  demo_note "The built site on :4322 (Node, dist/server/entry.mjs). Ctrl-C stops it."
+                  ( HOST=127.0.0.1 PORT=4322 node astro/dist/server/entry.mjs ) ;;
+        api*)     drupal_up || continue
+                  curl -fsS -H 'Accept: application/vnd.api+json' "$DRUPAL/jsonapi/node/recipe?page%5Blimit%5D=3&fields%5Bnode--recipe%5D=title,field_difficulty" \
+                      | python3 -c 'import json, sys
+for r in json.load(sys.stdin)["data"]:
+    print(r["id"], " ", r["attributes"]["title"], "(" + str(r["attributes"]["field_difficulty"]) + ")")' ;;
+        source*)  [ -f astro/dist/client/index.html ] || build || continue
+                  demo_step "The recipe titles, in the static files 'astro build' wrote (no server needed to read them)"
+                  grep -o '<h2[^>]*>[^<]*</h2>' astro/dist/client/index.html | sed 's/<[^>]*>//g; s/^/  /' | head -n 5
+                  echo "  ... $(find astro/dist/client/recipes -name index.html | wc -l) recipe pages in dist/client/recipes/"
+                  grep -l '127.0.0.1:8891' -r astro/dist/client > /dev/null && demo_note "Some files still point at :8891." \
+                      || demo_note "No file in dist/client points back at Drupal (:8891): the images were downloaded and resized."
+                  serve_built || continue
+                  demo_step "Stopping Drupal, then asking the built site (:4322) again"
+                  "$UMAMI" stop
+                  printf '  GET /                %s\n' "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:4322/)"
+                  curl -fsS http://127.0.0.1:4322/ | grep -o '<h2[^>]*>[^<]*</h2>' | sed 's/<[^>]*>//g; s/^/  still served: /' | head -n 2
+                  u=$(island_url 4322)
+                  printf '  GET the island       %s  (%s)\n' "$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:4322$u")" "${u%%\?*}"
+                  demo_note "The pages are static: they need neither Drupal nor this server's code. The island's request fails while"
+                  demo_note "Drupal is down, so the page keeps its fallback text. '$0 serve' (or the umami-headless launcher) starts Drupal again." ;;
+        compare*) drupal_up && astro_deps || continue
+                  [ -d "$NUXT/node_modules/nuxt" ] || ( cd "$NUXT" && npm install --no-audit --no-fund ) || continue
+                  listening 4321 || demo_bg drupal-astro-dev bash -c 'cd astro && exec npx astro dev --host 127.0.0.1 --port 4321'
+                  listening 3020 || demo_bg drupal-nuxt-dev bash -c "cd '$NUXT' && NUXT_DRUPAL_URL=$DRUPAL exec npx nuxt dev --host 127.0.0.1 --port 3020"
+                  demo_wait_port 3020 180 && demo_wait_port 4321 180 || continue
+                  demo_open http://localhost:3020/; demo_open http://localhost:4321/; demo_open "$DRUPAL/admin/content?type=recipe"
+                  demo_note "Edit a recipe's title in Drupal (admin / admin), save, then reload both front ends:"
+                  demo_note "  Nuxt renders on every request, so its list shows the new title; Astro's island (the box at the top) does"
+                  demo_note "  too, but Astro's own list was read when its dev server started: it changes after '$0 build'."
+                  demo_hold "Press Enter to stop Nuxt and Astro (Drupal keeps running)" ;;
+        drupal*)  drupal_up && demo_open "$DRUPAL/user/login" ;;
+        deploy*)  [ -f astro/dist/client/index.html ] || build || continue
+                  if ! CI=1 wrangler whoami < /dev/null 2>&1 | grep -qiE 'associated with the email|You are logged in'; then
+                      echo "Not logged in to Cloudflare: set CLOUDFLARE_API_TOKEN (and CLOUDFLARE_ACCOUNT_ID) in"
+                      echo "~/.config/dev-init/secrets.env, or run 'wrangler login'. Then try again."; continue
+                  fi
+                  demo_note "Only dist/client goes up: Drupal stays on this Chromebook, so the deployed pages show the island's fallback."
+                  read -rp "Deploy dist/client as the Worker 'devdemo-umami-astro' (static assets) to your Cloudflare account? [y/N] " a
+                  [ "${a,,}" = y ] || continue
+                  ( cd astro && wrangler deploy ) && demo_note "Deployed. Remove it later: wrangler delete devdemo-umami-astro" ;;
+        stop*)    pkill -f "astro dev --host 127.0.0.1 --port 4321" 2> /dev/null; pkill -f "node astro/dist/server/entry.mjs" 2> /dev/null
+                  "$UMAMI" stop ;;
+        reset*)   "$UMAMI" reset && rm -rf astro/dist astro/.astro ;;
+    esac
+    [ -n "${1:-}" ] && break
+done
+EOF
+    done_demo
+}
+
 # v91: drupal/drupal-nuxt: Drupal 11's Umami as a headless back end (core's JSON:API, read-only, published
 # content) and a Nuxt 4 front end that renders its recipes on the server. Drupal runs on PHP's built-in server
 # + SQLite on :8891 (as drupal-graphql's local site does on :8889); Nuxt's dev server on :3020, its production
 # build on :3021. Nuxt's server routes (server/api/) call Drupal, so the browser never needs Drupal's address
 # except for images. Composer, Drupal and the Node packages arrive on the first 'serve'.
+# v96: the Drupal site is drupal/umami-headless now, shared with drupal/drupal-astro (the same :8891, so the two front
+# ends show literally the same content); this launcher starts it through run-umami-headless.sh, which moves a site
+# made here before v96 (drupal-nuxt/drupal) over on its first 'up'. Drupal now keeps running after Nuxt stops.
 demo_drupal_nuxt() {
     begin drupal drupal-nuxt "Headless Drupal: Umami's recipes over core's JSON:API, rendered on the server by a Nuxt 4 front end" \
         "https://www.drupal.org/docs/core-modules-and-themes/core-modules/jsonapi-module + https://nuxt.com" || return 0
-    need php "the base install" || return 0
-    need composer install-web || return 0
     need npm install-node || return 0
-    php -m 2> /dev/null | grep -qi '^pdo_sqlite$' || apt_need php-sqlite3 || { fail "php-sqlite3 missing"; return 0; }
+    [ -x "$DEMO_ROOT/drupal/run-umami-headless.sh" ] || { echo "  ${YEL}skip${RST}: needs drupal/umami-headless (php and composer, install-web)"; SKIPPED+=("$STACK/$NAME: needs drupal/umami-headless (install-web)"); return 0; }
     FRESH=1
     gen_file "$DIR/nuxt/package.json" << 'EOF_JSON'
 {
@@ -9902,33 +10312,13 @@ useHead({ title: () => r.value?.title ?? 'Recipe' })
 </template>
 EOF_VUE
     write_run << 'EOF'
-demo_need php "the base install"
-demo_need composer install-web
 demo_need npm install-node
+# v96: the shared Drupal (drupal/umami-headless), on :8891 as before.
+UMAMI="$HOME/dev-demo/drupal/run-umami-headless.sh"
+[ -x "$UMAMI" ] || { echo "Needs drupal/umami-headless, the shared Drupal: rerun dev-demo with install-web."; exit 1; }
 DRUPAL=http://127.0.0.1:8891
-dr() { ( cd drupal && php -d memory_limit=512M vendor/bin/drush "$@" ); }
 listening() { (exec 3<> "/dev/tcp/127.0.0.1/$1") 2> /dev/null; }
-installed() { [ -f drupal/composer.json ] && dr status --field=bootstrap 2> /dev/null | grep -q Successful; }
-install_site() {   # Composer project, Drupal with Umami, JSON:API on. Safe to repeat.
-    if [ ! -f drupal/composer.json ]; then
-        demo_step "composer create-project drupal/recommended-project drupal (a few minutes)"
-        composer create-project drupal/recommended-project drupal --no-progress || { rm -rf drupal; return 1; }
-    fi
-    ( cd drupal && composer show drush/drush > /dev/null 2>&1 ) || ( cd drupal && composer require drush/drush --no-progress ) || return 1
-    if ! installed; then
-        demo_step "Installing Drupal with Umami (admin / admin) on SQLite"
-        dr -y site:install demo_umami --db-url=sqlite://sites/default/files/.ht.sqlite --account-name=admin --account-pass=admin \
-            --site-name="Umami (headless)" || return 1
-    fi
-    dr -y pm:install jsonapi > /dev/null && echo "  JSON:API is on (read-only): $DRUPAL/jsonapi"
-}
-drupal_up() {
-    installed || install_site || return 1
-    if ! listening 8891; then
-        demo_bg drupal-nuxt-drupal bash -c 'cd drupal/web && PHP_CLI_SERVER_WORKERS=4 exec php -d memory_limit=512M -S 127.0.0.1:8891 .ht.router.php'
-        demo_wait_port 8891 60 quiet || { tail -n 5 "$DEMO_LOGS/drupal-nuxt-drupal.log"; return 1; }
-    fi
-}
+drupal_up() { "$UMAMI" up; }
 nuxt_deps() {
     [ -d nuxt/node_modules/nuxt ] && return 0
     demo_step "npm install in nuxt/ (Nuxt 4; a minute or two the first time)"
@@ -9940,12 +10330,12 @@ while demo_menu "Headless Drupal + Nuxt (Drupal :8891, Nuxt :3020)" \
     "api: one raw JSON:API request (a recipe's title and difficulty), the data Nuxt renders" \
     "source: show that the recipes are in the server-rendered HTML (no JavaScript needed to see them)" \
     "drupal: open Drupal itself (admin / admin)" \
-    "stop: stop Drupal and Nuxt" \
-    "reset: delete the Drupal site (the next serve reinstalls it)"; do
+    "stop: stop Nuxt and Drupal" \
+    "reset: delete the shared Drupal site (the next serve reinstalls it; drupal-astro uses it too)"; do
     case "$DEMO_CHOICE" in
         serve*)  drupal_up && nuxt_deps || continue
                  demo_open_when_ready 3020 http://localhost:3020/
-                 demo_note "Nuxt DevTools: the button at the bottom of the page. Ctrl-C stops Nuxt (Drupal stops with this launcher)."
+                 demo_note "Nuxt DevTools: the button at the bottom of the page. Ctrl-C stops Nuxt; Drupal keeps running ('$0 stop')."
                  ( cd nuxt && NUXT_DRUPAL_URL=$DRUPAL npx nuxt dev --host 127.0.0.1 --port 3020 ) ;;
         build*)  drupal_up && nuxt_deps || continue
                  ( cd nuxt && npx nuxt build ) || continue
@@ -9960,11 +10350,9 @@ for r in json.load(sys.stdin)["data"]:
                  p=3020; listening 3020 || p=3021
                  curl -fsS "http://127.0.0.1:$p/" | grep -o '<h2>[^<]*</h2>' | head -n 5
                  demo_note "Those titles came from Drupal, in the HTML Nuxt rendered on the server." ;;
-        drupal*) drupal_up && demo_open "$DRUPAL/user/login" && demo_hold "Press Enter to stop Drupal" ;;
-        stop*)   pkill -f "php -d memory_limit=512M -S 127.0.0.1:8891" 2> /dev/null; pkill -f "nuxt dev --host 127.0.0.1 --port 3020" 2> /dev/null; echo "Stopped." ;;
-        reset*)  read -rp "Delete the Drupal site (its files and SQLite database)? The next serve reinstalls it. [y/N] " a
-                 [ "${a,,}" = y ] || continue
-                 chmod -R u+w drupal 2> /dev/null; rm -rf drupal && demo_note "Gone. '$0 serve' installs it again." ;;
+        drupal*) drupal_up && demo_open "$DRUPAL/user/login" ;;
+        stop*)   pkill -f "nuxt dev --host 127.0.0.1 --port 3020" 2> /dev/null; "$UMAMI" stop ;;
+        reset*)  "$UMAMI" reset ;;
     esac
     [ -n "${1:-}" ] && break
 done
@@ -10693,6 +11081,9 @@ has install-java      && demo_java
 has install-ruby      && demo_ruby
 has install-lazarus   && demo_lazarus
 has install-web       && demo_web
+# v96: the shared headless Drupal (drupal-nuxt's and drupal-astro's), then the Astro front end.
+{ has install-web || has install-vue; } && demo_umami_headless
+has install-web       && demo_drupal_astro
 has install-drupal    && demo_drupal
 has install-ldap      && demo_ldap
 has install-tanstack  && demo_tanstack
