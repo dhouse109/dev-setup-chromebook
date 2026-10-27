@@ -1,5 +1,5 @@
 #!/bin/bash
-# dev-test-chromebook - Version 96
+# dev-test-chromebook - Version 97
 # Version history: CHANGELOG.md, next to this script in the bundle
 # (one section per script, newest version first).
 #
@@ -102,6 +102,58 @@ if ! grep -Eqs '^ID="?debian"?$' /etc/os-release && [ "${DEV_BUNDLE_ANY_HOST:-0}
     exit 1
 fi
 # <<< dev-bundle host guard <<<
+
+# >>> dev-bundle screen output >>>
+# v97: the run's screen output is also saved, as plain text, in assets/logs/<script>-<date-time>.output next to
+# the scripts (asked Oct 27 2026: until then 'dev-test-chromebook.sh ... 2>&1 | tee FILE' by hand). The script
+# starts itself again inside a recorder, so the file holds everything from the first line to the summary, and on
+# Ctrl-C what was printed so far. From a terminal the recorder is util-linux's 'script', which gives the run a
+# terminal of its own: colors, progress bars and every tool's own "am I on a terminal?" check come out as they
+# did before. Otherwise (piped into tee, or no 'script') it is a pipe, which is what the run had anyway. The copy
+# loses colors and carriage-return redraws, keeping the last state of each line. DEV_SCREEN_OUTPUT names the file
+# for the run; DEV_SCREEN_SAVE=0 turns this off.
+if [ -z "${DEV_SCREEN_OUTPUT:-}" ] && [ "${DEV_SCREEN_SAVE:-1}" != 0 ]; then
+    _sd="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2> /dev/null && pwd || true)"; [ -n "$_sd" ] || _sd="$PWD"
+    _sn=$(basename "$0"); _sn=${_sn%%-chromebook*}
+    if mkdir -p "$_sd/assets/logs" 2> /dev/null; then
+        export DEV_RUN_STAMP; DEV_RUN_STAMP=$(date +%Y%m%d-%H%M%S)
+        export DEV_SCREEN_OUTPUT="$_sd/assets/logs/$_sn-$DEV_RUN_STAMP.output"
+        # Plain text: no script(1) header or footer, no CR line ends, the last redraw of a line, no escape codes.
+        # A move to column 1 (ESC[G, ESC[0G, ESC[1G) counts as a carriage return: npm's spinner redraws that way
+        # (Node's cursorTo(0) and clearLine), and left only escapes stripped, its frames came out side by side in one
+        # long line (found in the v97 Chromebook hand checks, Oct 27 2026). wget's and curl's bars use \r.
+        # v97 (found in the v97 Chromebook run 4, Oct 27 2026): escape sequences take ECMA-48's full ranges (parameter
+        # bytes 0-?, intermediates space-/, final @-~), since Claude Code's installer left "[>4m[<u" behind; and a run
+        # of blank lines becomes one (its redraws left 12 in a row). The hold space remembers whether the last line
+        # written was blank, so nothing waits for the next line.
+        _plain() {
+            sed -u -e '/^Script started on .*\[COMMAND=/d' -e '/^Script done on .*\[COMMAND_EXIT_CODE=/d' \
+                -e 's/\x1b\[[01]\?G/\r/g' -e 's/\r$//' -e 's/.*\r//' -e 's|\x1b\[[0-?]*[ -/]*[@-~]||g' \
+                -e 's/\x1b\][^\x07\x1b]*\(\x07\|\x1b\\\)//g' -e 's/\x1b[()][0-9A-Za-z]//g' -e 's/\x1b[=>78]//g' -e 's/\x00//g' \
+                -e '/^$/{x;/^B$/{x;d;};s/^.*$/B/;x;b;}' -e 'x;s/^.*$//;x'
+        }
+        # Recorders ignore Ctrl-C, so they keep writing until the run itself has stopped. If the file can't be
+        # written (a full disk), the copy just drains its input: the run never stops because of it.
+        _copy() { trap '' INT TERM; _plain > "$DEV_SCREEN_OUTPUT" 2> /dev/null || cat > /dev/null; }
+        if [ -t 0 ] && [ -t 1 ] && command -v script > /dev/null 2>&1; then
+            # script(1) runs its command with $SHELL -c: bash here, and the run gets your SHELL back.
+            _cmd="SHELL=$(printf '%q' "${SHELL:-/bin/bash}") exec $(printf '%q ' "$BASH" "$0" "$@")"
+            SHELL=/bin/bash script -qfec "$_cmd" >(_copy)
+            _rc=$?
+            wait $! 2> /dev/null   # the copy's last lines
+        else
+            [ -t 1 ] && export DEV_SCREEN_TTY=1   # decided before the pipe: dev-test keeps its colors on a terminal
+            "$BASH" "$0" "$@" 2>&1 | (trap '' INT TERM; tee -p >(_copy); wait $! 2> /dev/null)
+            _rc=${PIPESTATUS[0]}
+        fi
+        sed -i -e :a -e '/^\n*$/{$d;N;ba' -e '}' "$DEV_SCREEN_OUTPUT" 2> /dev/null   # no trailing blank lines
+        # The run ends with its summary block, its last line a row of '='. Anything else: it stopped early.
+        if grep -q ' Version [0-9]* complete' "$DEV_SCREEN_OUTPUT" 2> /dev/null && tail -n 1 "$DEV_SCREEN_OUTPUT" | grep -q '^=\{20,\}$'; then :
+        else echo "Screen output (stopped before the summary): $DEV_SCREEN_OUTPUT" >&2; fi
+        exit "$_rc"
+    fi
+fi
+# <<< dev-bundle screen output <<<
 
 # Deliberately NO 'set -e': a failing check must be recorded, not abort the run.
 
@@ -354,7 +406,7 @@ mkdir -p "$ASSETS/logs" "$ASSETS/downloads"
 for old_log in "$HOME"/dev-test-*.log "$HOME"/dev-test-*.output; do
     [ -e "$old_log" ] && mv "$old_log" "$ASSETS/logs/" && echo "moved $(basename "$old_log") from ~ to $ASSETS/logs/"
 done
-LOG="$ASSETS/logs/dev-test-$(date +%Y%m%d-%H%M%S).log"
+LOG="$ASSETS/logs/dev-test-${DEV_RUN_STAMP:-$(date +%Y%m%d-%H%M%S)}.log"   # v97: the same date-time as the .output
 # v72: on disk, not in /tmp: Debian 13 mounts /tmp as tmpfs, so scratch there is held in RAM. Not
 # under ./assets either: that folder has a '#' in its path, which Vite and other tools mishandle.
 mkdir -p "$HOME/.cache/dev-test"
@@ -363,7 +415,7 @@ rm -rf "$HOME"/.hermes/.dev-test-* 2> /dev/null      # v86: the same for the Her
 export WORK; WORK=$(mktemp -d "$HOME/.cache/dev-test/run.XXXXXX")
 trap 'rm -rf "$WORK"' EXIT
 
-if [ -t 1 ]; then GRN=$'\e[32m' RED=$'\e[31m' YEL=$'\e[33m' DIM=$'\e[2m' RST=$'\e[0m'; else GRN=; RED=; YEL=; DIM=; RST=; fi
+if [ -t 1 ] || [ "${DEV_SCREEN_TTY:-}" = 1 ]; then GRN=$'\e[32m' RED=$'\e[31m' YEL=$'\e[33m' DIM=$'\e[2m' RST=$'\e[0m'; else GRN=; RED=; YEL=; DIM=; RST=; fi
 
 section() { echo; echo "== $* =="; echo; echo "== $* ==" >> "$LOG"; }
 
@@ -423,7 +475,7 @@ info()  { printf '  %-62s %s\n' "$1" "${DIM}INFO${RST} $2"; echo "--- $1: INFO $
 # v92: a check that cannot run because an earlier one already failed for the same cause (counted as SKIP).
 skipped() { printf '  %-62s %s\n' "$1" "${DIM}SKIP${RST} $2"; SKIP=$((SKIP + 1)); LAST=skip; echo "--- $1: SKIP $2" >> "$LOG"; }
 
-echo "Testing Chromebook Linux provisioning (Version 96)... log: $LOG"
+echo "Testing Chromebook Linux provisioning (Version 97)... log: $LOG"
 [ "$QUICK" = 1 ] && echo "(quick mode: slow functional tests will be skipped)"
 
 # v68: say so when dev-init has not applied the secrets file yet. Filling in secrets.env logs
@@ -476,6 +528,15 @@ hint  "rerun setup (v93 prefers IPv4 when IPv6 does not get out), or by hand: ec
 check "t64-renamed libs (libfuse2, libmagic1, libasound2, ...)" 'm=""; for p in libfuse2 libmagic1 libasound2 libcups2 libatk1.0-0 libatk-bridge2.0-0; do dpkg_has "${p}t64" "$p" || m="$m $p/${p}t64"; done; /sbin/ldconfig -p | grep -q "libasound.so.2 (libc6,x86-64)" || m="$m libasound.so.2(x86-64)"; [ -z "$m" ] || { echo "missing:$m"; exit 1; }; echo "all there (amd64)"'
 # v65: nothing these scripts generate should sit loose in the home directory any more.
 warn  "no script-generated files loose in ~"           '! ls ~/gemma_client.py ~/dev-test-*.log ~/google-chrome-stable_current_amd64.deb ~/packages.microsoft.gpg ~/windsurf-stable.gpg ~/fpc-laz_*.deb ~/fpc-src_*.deb ~/lazarus-project_*.deb 2> /dev/null | grep .'
+# v97: the screen output saved as plain text next to the log (the start of this run, written so far): from the first
+# line, no color codes, no carriage returns. That it ends with the summary is checked by the run itself once the
+# summary is out ("Screen output (stopped before the summary)" on the terminal otherwise).
+if [ -n "${DEV_SCREEN_OUTPUT:-}" ]; then
+    check "screen output saved as plain text ($(basename "$DEV_SCREEN_OUTPUT"))" 'f=$DEV_SCREEN_OUTPUT; [ -s "$f" ] || { echo "no $f"; exit 1; }; head -n 1 "$f"; head -n 1 "$f" | grep -q "^Active Test Flags:" || { echo "does not start with the Active Test Flags line"; exit 1; }; ! grep -q $'"'"'[\e\r]'"'"' "$f" || { echo "has color codes or carriage returns"; exit 1; }'
+    hint  "the run starts itself again inside util-linux 'script' (from a terminal) or a pipe; DEV_SCREEN_SAVE=0 turns it off"
+else
+    skipped "screen output saved as plain text" "(DEV_SCREEN_SAVE=0)"
+fi
 hint  "~/gemma_client.py goes away when setup (v65 or later) runs with install-gemma; the rest can simply be deleted"
 check "gcc compiles and runs a C program"                  'printf "#include <stdio.h>\nint main(){puts(\"hello from gcc\");return 0;}\n" > hello.c && gcc hello.c -o hello_c && ./hello_c | grep -q "hello from gcc"'
 check "php-cli runs"                                       'php -r "echo PHP_VERSION;"'
@@ -629,7 +690,33 @@ check "devmem: 'taken back by ChromeOS' is between 0 and the total" 'bash devmem
 # v96 (plan item 8): devclean, the disk cleanup. Its report must change nothing: the caches it would clear and DDEV's
 # state files are listed (names, sizes, times) before and after a plain 'devclean'. --run isn't run here (it clears
 # your caches); its hand check is in the v96 plan.
+# v97 (plan item 1): the editors' steps and Linux Chrome's profile caches run, --run included, against a scratch home
+# in $WORK (DEVCLEAN_ONLY keeps every other step out, so your real caches and Docker are never touched): the report
+# changes nothing; --run removes the cached download, the old extension version and the Cache folder, and keeps the
+# installed version, a version only a profile uses, an extension with no other version, the User folder and the
+# profile's own files. devclean --where runs on the scratch home, names its largest folder and changes nothing.
+# Found in the v97 Chromebook runs (Oct 27 2026), also checked: after --run the Chrome line stays at 0 B and still counts
+# the profile; uv's cache is reported whole and emptied by 'uv cache clean' (a scratch UV_CACHE_DIR; run 1's hard-link
+# check is gone, its reading was wrong); DDEV's empty .state.yaml is moved aside and .update, always empty, is not.
 cat > "$WORK/devclean_check.sh" << 'DEVCLEAN_EOF'
+scratch() {   # a scratch home: VS Code with a cached VSIX and an old Pub.ext, a Chrome profile with a Cache folder
+    S="$WORK/devclean-home"; rm -rf "$S"
+    local x="$S/.vscode/extensions" v
+    mkdir -p "$S/.config/Code/CachedExtensionVSIXs" "$S/.config/Code/User/globalStorage" "$S/.config/Code/User/profiles/p1" \
+        "$S/.config/google-chrome/Default/Cache" "$x/other.solo-1.0.0"
+    head -c 2097152 /dev/zero > "$S/.config/Code/CachedExtensionVSIXs/pub.ext-2.0.0"
+    echo '{}' > "$S/.config/Code/User/settings.json"; echo state > "$S/.config/Code/User/globalStorage/state.vscdb"
+    for v in 1.0.0 1.5.0 2.0.0; do
+        mkdir -p "$x/pub.ext-$v"; head -c 1048576 /dev/zero > "$x/pub.ext-$v/blob"
+        printf '{"publisher": "Pub", "name": "ext", "version": "%s"}\n' "$v" > "$x/pub.ext-$v/package.json"
+    done
+    echo '{"publisher": "other", "name": "solo", "version": "1.0.0"}' > "$x/other.solo-1.0.0/package.json"
+    echo '[{"identifier": {"id": "pub.ext"}, "version": "2.0.0", "relativeLocation": "pub.ext-2.0.0"}]' > "$x/extensions.json"
+    echo '[{"identifier": {"id": "pub.ext"}, "version": "1.5.0", "relativeLocation": "pub.ext-1.5.0"}]' > "$S/.config/Code/User/profiles/p1/extensions.json"
+    head -c 1048576 /dev/zero > "$S/.config/google-chrome/Default/Cache/data_0"
+    echo '{}' > "$S/.config/google-chrome/Default/Bookmarks"; echo '{}' > "$S/.config/google-chrome/Default/Preferences"
+}
+tree() { find "$S/.config" "$S/.vscode" -printf '%P %s %T@\n' 2> /dev/null | sort; }
 snap() {   # the first cache folder there, and DDEV's state files
     local d
     for d in "$HOME/.npm/_cacache" "${XDG_CACHE_HOME:-$HOME/.cache}/go-build" "$HOME/.cache/pip" "$HOME/.cache/composer" "$HOME/.cache/uv"; do
@@ -649,15 +736,87 @@ case "$1" in
         echo "unchanged: ${f/#$HOME/\~}" ;;
     help)   # the never-touch list, with each entry
         h=$(devclean --help) || exit 1
-        for w in 'docker system prune' 'Docker volumes' 'ms-playwright' 'Hugging Face' 'Ollama models' '~/dev-demo' 'DDEV projects'; do
+        for w in 'docker system prune' 'Docker volumes' 'ms-playwright' 'Hugging Face' 'Ollama models' '~/dev-demo' 'DDEV projects' \
+            'extension versions in use' 'globalStorage' 'browser profiles' '~/.config/nvm'; do
             grep -qF "$w" <<< "$h" || { echo "--help does not name: $w"; exit 1; }
         done
-        echo "all seven named" ;;
+        echo "all eleven named" ;;
+    editors)   # the report on a scratch home changes nothing; --run clears what it named and keeps the rest
+        scratch; a=$(tree)
+        o=$(HOME=$S DEVCLEAN_ONLY='vsix:* oldext:* chrome-profile' devclean) || { echo "devclean exited $?"; exit 1; }
+        [ "$a" = "$(tree)" ] || { echo "the report changed the scratch home"; exit 1; }
+        for w in "VS Code's cached extension downloads" "VS Code's old extension versions" 'pub.ext-1.0.0' "Linux Chrome's profile caches"; do
+            grep -qF "$w" <<< "$o" || { echo "the report does not name: $w"; printf '%s\n' "$o"; exit 1; }
+        done
+        grep -q 'pub.ext-1.5.0' <<< "$o" && { echo "the report lists pub.ext-1.5.0, which a profile uses"; exit 1; }
+        o=$(HOME=$S DEVCLEAN_ONLY='vsix:* oldext:* chrome-profile' devclean --run) || { echo "devclean --run exited $?"; exit 1; }
+        grep -q 'left: ' <<< "$o" && { printf '%s\n' "$o" | grep 'left: '; exit 1; }
+        for p in .config/Code/CachedExtensionVSIXs/pub.ext-2.0.0 .vscode/extensions/pub.ext-1.0.0 .config/google-chrome/Default/Cache; do
+            [ -e "$S/$p" ] && { echo "--run left $p"; exit 1; }
+        done
+        for p in .config/Code/CachedExtensionVSIXs .vscode/extensions/pub.ext-2.0.0 .vscode/extensions/pub.ext-1.5.0 \
+            .vscode/extensions/other.solo-1.0.0 .vscode/extensions/extensions.json .config/Code/User/settings.json \
+            .config/Code/User/globalStorage/state.vscdb .config/google-chrome/Default/Bookmarks .config/google-chrome/Default/Preferences; do
+            [ -e "$S/$p" ] || { echo "--run removed $p"; exit 1; }
+        done
+        grep -c '^.* \.\.\. done, freed ' <<< "$o" | sed 's/$/ steps done, each with what it freed/'
+        # v97 (the v97 Chromebook run, Oct 27 2026): the Chrome line stays, at 0 B, once its folders are gone
+        o=$(HOME=$S DEVCLEAN_ONLY='chrome-profile' devclean) || exit 1
+        grep -q "^  Linux Chrome's profile caches  *0 B .* in 1 profile(s) " <<< "$o" || { echo "after --run, no 0 B line for Linux Chrome's profile caches in 1 profile"; printf '%s\n' "$o"; exit 1; }
+        rm -rf "$S" ;;
+    where)   # devclean --where names the scratch home's largest folder and changes nothing
+        scratch; a=$(tree)
+        o=$(HOME=$S devclean --where) || { echo "devclean --where exited $?"; exit 1; }
+        [ "$a" = "$(tree)" ] || { echo "--where changed the scratch home"; exit 1; }
+        for w in 'Largest in your home folder' '~/.vscode ' "Docker's image store" '~/.vscode/extensions/pub.ext-'; do
+            grep -qF -- "$w" <<< "$o" || { echo "--where does not show: $w"; printf '%s\n' "$o"; exit 1; }
+        done
+        sed -n '/^Largest in your home folder/{n;p;}' <<< "$o"
+        rm -rf "$S" ;;
+    uv)   # v97 (run 2): the report gives uv's whole cache, and --run empties it with 'uv cache clean' (scratch cache)
+        command -v uv > /dev/null 2>&1 || { echo "uv isn't installed: nothing to check"; exit 0; }
+        S="$WORK/devclean-uv"; rm -rf "$S"; mkdir -p "$S/home" "$S/cache/archive-v0/x" "$S/cache/wheels-v5"
+        head -c 2097152 /dev/zero > "$S/cache/archive-v0/x/f"; head -c 1048576 /dev/zero > "$S/cache/wheels-v5/w"
+        o=$(HOME=$S/home UV_CACHE_DIR="$S/cache" DEVCLEAN_ONLY=uv devclean) || { echo "devclean exited $?"; exit 1; }
+        l=$(grep -F "  uv's cache " <<< "$o")
+        grep -q " 3.0 MB " <<< "$l" || { echo "expected uv's cache at 3.0 MB, got: ${l:-no line}"; exit 1; }
+        o=$(HOME=$S/home UV_CACHE_DIR="$S/cache" DEVCLEAN_ONLY=uv devclean --run) || { echo "devclean --run exited $?"; exit 1; }
+        grep -q "^uv's cache \.\.\. done" <<< "$o" || { printf '%s\n' "$o"; exit 1; }
+        [ -z "$(find "$S/cache" -type f ! -name '*.lock' ! -name CACHEDIR.TAG ! -name .gitignore 2> /dev/null)" ] || { echo "--run left files in the uv cache:"; find "$S/cache" -type f; exit 1; }
+        echo "uv's cache: 3.0 MB reported, emptied by --run"
+        rm -rf "$S" ;;
+    apt)   # v97 (hand checks): apt's line counts what 'apt-get clean' removes, /var/cache/apt/*.bin included
+        b=$(stat -c %s /var/cache/apt/pkgcache.bin 2> /dev/null)
+        [ -n "$b" ] && [ "$b" -gt 0 ] || { echo "no /var/cache/apt/pkgcache.bin: nothing to check"; exit 0; }
+        o=$(DEVCLEAN_ONLY=apt devclean) || { echo "devclean exited $?"; exit 1; }
+        l=$(grep -F "  apt's downloaded packages " <<< "$o"); echo "${l#  }"
+        # the line's size back to bytes (human() prints powers of 1024, one decimal place at most)
+        m=$(awk '{ for (i = 1; i < NF; i++) if ($(i + 1) ~ /^(B|KB|MB|GB|TB)$/) {
+                u = $(i + 1); f = (u == "KB") ? 1024 : (u == "MB") ? 1048576 : (u == "GB") ? 1073741824 : (u == "TB") ? 1099511627776 : 1
+                printf "%.0f\n", $i * f; exit } }' <<< "$l")
+        [ -n "$m" ] && [ "$m" -ge $((b * 9 / 10)) ] || { echo "apt's line (${m:-?} bytes) is less than pkgcache.bin alone ($b bytes)"; exit 1; } ;;
+    ddev)   # v97 (run 2): a 0-byte ~/.ddev/.state.yaml is flagged and moved aside; ~/.ddev/.update (always empty) is not
+        S="$WORK/devclean-ddev"; rm -rf "$S"; mkdir -p "$S/.ddev"; : > "$S/.ddev/.state.yaml"; : > "$S/.ddev/.update"
+        o=$(HOME=$S DEVCLEAN_ONLY=- devclean) || { echo "devclean exited $?"; exit 1; }
+        grep -q '^DDEV: ~/.ddev/.state.yaml is 0 bytes' <<< "$o" || { echo "the report does not flag the empty .state.yaml"; exit 1; }
+        grep -q '\.update' <<< "$o" && { echo "the report flags ~/.ddev/.update, which DDEV always leaves empty"; exit 1; }
+        HOME=$S DEVCLEAN_ONLY=- devclean --run > /dev/null || { echo "devclean --run exited $?"; exit 1; }
+        [ -e "$S/.ddev/.state.yaml" ] && { echo "--run left the empty .state.yaml"; exit 1; }
+        [ -f "$S/.ddev/.state.yaml.bak" ] || { echo "--run did not keep .state.yaml.bak"; exit 1; }
+        [ -f "$S/.ddev/.update" ] && [ ! -e "$S/.ddev/.update.bak" ] || { echo "--run moved ~/.ddev/.update"; exit 1; }
+        echo ".state.yaml moved aside, .update left alone"
+        rm -rf "$S" ;;
 esac
 DEVCLEAN_EOF
 check "devclean: the report runs and changes nothing"             'bash devclean_check.sh report' 300
 hint  "rerun setup (any flags): v96 writes ~/.local/bin/devclean"
 check "devclean --help names what it never touches"                'bash devclean_check.sh help'
+check "devclean: editors' downloads, old versions, Chrome caches (scratch home)" 'bash devclean_check.sh editors' 120
+hint  "rerun setup (any flags): v97 adds the editors' steps to ~/.local/bin/devclean"
+check "devclean --where names the largest folders, changes nothing"  'bash devclean_check.sh where' 120
+check "devclean: uv's whole cache reported, emptied by uv cache clean (scratch)" 'bash devclean_check.sh uv' 120
+check "devclean: only an empty .state.yaml is moved aside, not .update" 'bash devclean_check.sh ddev'
+check "devclean: apt's line counts what apt-get clean removes (*.bin too)" 'bash devclean_check.sh apt' 60
 # v96: DDEV's router on 8080/8443, since ChromeOS passes high ports to Linux but not 80 and 443 (Oct 26 2026:
 # ERR_CONNECTION_REFUSED on https://ddev-test.ddev.site, fine on :8443). Setup sets them unless you set others:
 # missing (or DDEV's own 80/443, which it writes into the file on every save) is a FAIL, ports of your own a WARN.
@@ -5658,7 +5817,7 @@ fi
 # =================================================================
 echo
 echo "================================================================="
-echo "Test Version 96 complete: ${GRN}PASS $PASS${RST}   ${RED}FAIL $FAIL${RST}   ${YEL}WARN $WARN${RST}   SKIP $SKIP"
+echo "Test Version 97 complete: ${GRN}PASS $PASS${RST}   ${RED}FAIL $FAIL${RST}   ${YEL}WARN $WARN${RST}   SKIP $SKIP"
 if [ ${#FAILED[@]} -gt 0 ]; then
     echo
     echo "Failed (must fix to get started):"
@@ -5672,6 +5831,7 @@ if [ ${#WARNED[@]} -gt 0 ]; then
 fi
 echo
 echo "Full output of every check: $LOG"
+[ -n "${DEV_SCREEN_OUTPUT:-}" ] && echo "Screen output:              $DEV_SCREEN_OUTPUT"
 [ -n "${DISK_TSV:-}" ] && echo "Disk usage by stack:        $DISK_TSV"
 echo "================================================================="
 { echo; echo "SUMMARY: PASS $PASS FAIL $FAIL WARN $WARN SKIP $SKIP"; } >> "$LOG"
