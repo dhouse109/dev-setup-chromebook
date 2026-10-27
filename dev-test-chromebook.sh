@@ -1488,8 +1488,14 @@ THR_EOF
     # isn't run here (it needs VS Code); gdb is.
     check "gdb (Devin's and Cursor's debugger for Lazarus projects)"   'gdb --version | head -n 1'
     hint  "rerun setup with install-lazarus (v96 adds gdb)"
-    check "GNU Global: gtags indexes a Lazarus project (GTAGS written)" 'global --version | head -n 1 && d=$(ls -d /usr/share/lazarus/*/examples/TDaemon 2> /dev/null | sort -V | tail -n 1) && cp -r "$d" gtags-test && cd gtags-test && gtags && [ -s GTAGS ]'
-    hint  "rerun setup with install-lazarus (v96 adds GNU Global, which the Pascal extension uses for Go to Definition)"
+    # v96: Global's built-in parsers don't read Pascal, so setup sends Pascal files to Universal Ctags through ~/.globalrc;
+    # the proof is a definition found in TDaemon. Skipped only where apt has no universal-ctags (setup skips it too).
+    if dpkg_has universal-ctags || apt-cache policy universal-ctags 2> /dev/null | grep -q 'Candidate: [0-9]'; then
+        check "GNU Global finds a Pascal definition (gtags, then global -x LogToFile)" 'global --version | head -n 1 && d=$(ls -d /usr/share/lazarus/*/examples/TDaemon 2> /dev/null | sort -V | tail -n 1) && cp -r "$d" gtags-test && cd gtags-test && gtags && global -x LogToFile | grep -q "daemonunit.pas"'
+        hint  "rerun setup with install-lazarus (v96: GNU Global, Universal Ctags and the Pascal block in ~/.globalrc; a 'default' label of your own there wins)"
+    else
+        skipped "GNU Global finds a Pascal definition"                 "(no universal-ctags package in the apt sources; setup skipped Pascal navigation)"
+    fi
     cat > "$WORK/lazvs_check.sh" << 'LAZVS_EOF'
 # lazvs_check.sh setup|mode|json|tasks|dwarf|gdb, in $WORK/lazvs (a copy of TDaemon)
 P="$WORK/lazvs"; L="$P/TestDaemon.lpi"
@@ -1548,13 +1554,15 @@ PY
         run_task "lazbuild (Debug)" debug || { echo "lazbuild (Debug) failed"; tail -n 5 "$WORK/lazvs-debug.log"; exit 1; }
         run_task "lazbuild (Debug-gdb)" gdb || { echo "lazbuild (Debug-gdb) failed"; tail -n 5 "$WORK/lazvs-gdb.log"; exit 1; }
         echo "both build" ;;
-    dwarf)   # Debug's program (or its .dbg) on DWARF 3, Debug-gdb's on 2; each built just before, since they may share a file
-        run_task "lazbuild (Debug)" debug || exit 1
-        f=$(cfg fpDebug program); [ -f "$f.dbg" ] && f="$f.dbg"
-        a=$(dwarf "$f"); echo "Debug: ${f#"$P"/}, DWARF ${a:-none}"
-        run_task "lazbuild (Debug-gdb)" gdb || exit 1
-        g=$(cfg gdb target); [ -f "$g.dbg" ] && g="$g.dbg"
-        b=$(dwarf "$g"); echo "Debug-gdb: ${g#"$P"/}, DWARF ${b:-none}"
+    dwarf)   # both built, side by side (v96: Debug-gdb gets its own folders), Debug's (or its .dbg) DWARF 3, Debug-gdb's 2
+        run_task "lazbuild (Debug)" debug && run_task "lazbuild (Debug-gdb)" gdb || exit 1
+        p=$(cfg fpDebug program); t=$(cfg gdb target)
+        [ "$p" != "$t" ] || { echo "Debug and Debug-gdb build the same file: ${p#"$P"/}"; exit 1; }
+        [ -f "$p" ] && [ -f "$t" ] || { echo "missing: $( [ -f "$p" ] || echo "${p#"$P"/}") $( [ -f "$t" ] || echo "${t#"$P"/}")"; exit 1; }
+        f=$p; [ -f "$f.dbg" ] && f="$f.dbg"
+        g=$t; [ -f "$g.dbg" ] && g="$g.dbg"
+        a=$(dwarf "$f"); b=$(dwarf "$g")
+        echo "Debug: ${f#"$P"/}, DWARF ${a:-none}; Debug-gdb: ${g#"$P"/}, DWARF ${b:-none}"
         [ "$a" = "3 " ] && [ "$b" = "2 " ] ;;
     gdb)   # gdb runs the Debug-gdb program to its exit (TDaemon without arguments prints its usage)
         run_task "lazbuild (Debug-gdb)" gdb || exit 1
@@ -1568,7 +1576,7 @@ LAZVS_EOF
     check "lazmode vscode: a Debug-gdb build mode, and lazbuild builds it" 'bash lazvs_check.sh mode' 300
     check "lazmode vscode: .vscode JSON parses, an fpDebug and a gdb launch" 'bash lazvs_check.sh json'
     check "lazmode vscode: both build tasks, run as written, build"    'bash lazvs_check.sh tasks' 300
-    check "lazmode vscode: Debug on DWARF 3, Debug-gdb on DWARF 2"     'bash lazvs_check.sh dwarf' 300
+    check "lazmode vscode: Debug (DWARF 3) and Debug-gdb (2) side by side" 'bash lazvs_check.sh dwarf' 300
     hint  "FpDebug needs DWARF 3 (Debug), gdb reads strings only with Dwarf 2 with sets (Debug-gdb)"
     check "gdb runs the Debug-gdb build to its exit"                   'bash lazvs_check.sh gdb' 300
 fi
@@ -5370,8 +5378,8 @@ if ! has nodisk; then
     # system tree, and the two Qt5 packages: the debs alone left out most of what Lazarus takes.
     if has install-lazarus; then
         LAZ_U=$(ls -d /usr/share/lazarus/*/units/x86_64-linux/qt5 2> /dev/null | tr '\n' ' ')
-        # v96: plus GNU Global (and gdb when install-cpp, whose line counts it, is not there)
-        LAZ_PK=(fpc-laz fpc-src lazarus-project libqt5pas-dev qt5ct global); has install-cpp || LAZ_PK+=(gdb)
+        # v96: plus GNU Global and Universal Ctags (and gdb when install-cpp, whose line counts it, is not there)
+        LAZ_PK=(fpc-laz fpc-src lazarus-project libqt5pas-dev qt5ct global universal-ctags); has install-cpp || LAZ_PK+=(gdb)
         LAZ_A=$(_apt_bytes "${LAZ_PK[@]}")
         # shellcheck disable=SC2086   # LAZ_U: folder names without spaces, one per installed version
         LAZ_D=$(_disk_bytes "$HOME/.lazarus/bin" "$HOME/.lazarus/units" "$HOME/.lazarus/lib" \

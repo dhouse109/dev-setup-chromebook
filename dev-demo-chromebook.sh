@@ -983,7 +983,9 @@ EOF
 demo_need php "the base install"
 SETTINGS=web/sites/default/settings.php
 installed() { [ -f "$SETTINGS" ] && grep -q sqlite "$SETTINGS"; }
-drush() { php -d memory_limit=512M vendor/bin/drush "$@"; }
+# v96: drush.php, not vendor/bin/drush: with drush 13.8 that is a shell script, which 'php' only prints, exiting 0, so
+# every drush step here silently did nothing (found Oct 27 2026 while building drupal/umami-headless).
+drush() { php -d memory_limit=512M vendor/bin/drush.php "$@"; }
 need_site() { installed || { echo "Install Umami first: the 'serve' item (it installs on its first run)."; return 1; }; }
 # settings_block NAME [CONTENT]: replace the marked block NAME at the end of settings.php (removed when
 # CONTENT is empty). Drupal makes settings.php and its folder read-only after installing; this opens them
@@ -7936,7 +7938,8 @@ rt() {
     mkdir -p "work/$RT"
 }
 dr() {   # drush in the current site
-    if [ "$RT" = local ]; then ( cd local && php -d memory_limit=512M vendor/bin/drush "$@" ); else ( cd ddev && ddev drush "$@" ); fi
+    # v96: drush.php: with drush 13.8, vendor/bin/drush is a shell script that 'php' only prints (Oct 27 2026).
+    if [ "$RT" = local ]; then ( cd local && php -d memory_limit=512M vendor/bin/drush.php "$@" ); else ( cd ddev && ddev drush "$@" ); fi
 }
 installed() {
     [ -f "$RT/composer.json" ] || return 1
@@ -9769,7 +9772,7 @@ demo_need composer install-web
 DRUPAL=http://127.0.0.1:8891
 SERVE="php -d memory_limit=512M -S 127.0.0.1:8891 .ht.router.php"
 OLD="$HOME/dev-demo/drupal/drupal-nuxt/drupal"   # where drupal-nuxt kept its own site before v96
-# drush.php, not vendor/bin/drush: in drush 13.8 that is a shell script, which 'php' only prints, exiting 0 (Oct 27 2026).
+# v96: drush.php, not vendor/bin/drush: in drush 13.8 that is a shell script, which 'php' only prints, exiting 0 (Oct 27 2026).
 dr() { ( cd drupal && php -d memory_limit=512M vendor/bin/drush.php "$@" ); }
 listening() { (exec 3<> "/dev/tcp/127.0.0.1/$1") 2> /dev/null; }
 installed() { [ -f drupal/composer.json ] && dr status --field=bootstrap 2> /dev/null | grep -q Successful; }

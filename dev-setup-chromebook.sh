@@ -1725,6 +1725,62 @@ if [[ "$FLAGS" =~ " install-lazarus " ]]; then
     # is not available'.
     sudo apt install -y gdb global
 
+    # v96: Go to Definition for Pascal (chosen Oct 27 2026, after the build found that gtags' built-in parsers don't
+    # read Pascal: the tags gtags wrote for TDaemon were empty, and the Pascal extension's README says Global needs a
+    # plug-in parser for it). universal-ctags parses the Pascal files (.pas .pp .lpr .inc .dpr); Global's built-in
+    # parsers keep everything else. Machine-wide, in ~/.globalrc, which Global reads when there is no $GTAGSCONF and
+    # no gtags.conf in the project (an editor started from its icon would not see an exported GTAGSCONF, and a file
+    # per project would sit outside .vscode). The block takes the native setup from the system gtags.conf by
+    # reference (tc=gtags@FILE, tc=htags@FILE), so Debian's file stays the source for everything but Pascal.
+    if apt-cache policy universal-ctags 2> /dev/null | grep -q 'Candidate: [0-9]'; then
+        sudo apt install -y universal-ctags
+    else
+        echo "NOTICE: no universal-ctags package in the apt sources, so Go to Definition for Pascal was skipped (GNU Global's"
+        echo "        own parsers don't read Pascal; the Pascal extension's code navigation finds nothing without it)."
+    fi
+    CTAGS_U=$(command -v ctags-universal 2> /dev/null || true)
+    if [ -z "$CTAGS_U" ] && ctags --version 2> /dev/null | grep -q 'Universal Ctags'; then CTAGS_U=$(command -v ctags); fi
+    GTAGS_SYS=""
+    for GTAGS_CAND in /etc/gtags/gtags.conf /etc/gtags.conf /usr/local/etc/gtags.conf; do
+        if [ -f "$GTAGS_CAND" ]; then GTAGS_SYS=$GTAGS_CAND; break; fi
+    done
+    GLOBALRC="$HOME/.globalrc"
+    if [ -z "$CTAGS_U" ]; then
+        echo "NOTICE: no Universal Ctags on PATH, so ~/.globalrc was not written (gtags would stop on every Pascal file)."
+    elif [ -z "$GTAGS_SYS" ]; then
+        echo "NOTICE: no system gtags.conf found (looked in /etc/gtags, /etc, /usr/local/etc), so ~/.globalrc was not written."
+    else
+        # Tabs and backslashes as gtags.conf wants them: a label, then capabilities on continued lines.
+        GLOBAL_BLOCK=$(printf '%s\n' '# >>> dev-setup lazarus >>>' \
+            '# v96: Pascal (.pas .pp .lpr .inc .dpr) through Universal Ctags, everything else through Global'"'"'s built-in' \
+            "# parsers, as $GTAGS_SYS sets them. Rewritten by dev-setup (install-lazarus) on every run." \
+            'default:\' \
+            '	:tc=dev-setup-pascal:' \
+            'dev-setup-pascal|built-in parsers, plus Universal Ctags for Pascal (dev-setup):\' \
+            "	:tc=gtags@$GTAGS_SYS:\\" \
+            "	:ctagscom=$CTAGS_U:\\" \
+            '	:ctagslib=$libdir/gtags/universal-ctags.la:\' \
+            '	:langmap=Pascal\:.pas.pp.lpr.inc.dpr:\' \
+            '	:gtags_parser=Pascal\:$ctagslib:\' \
+            "	:tc=htags@$GTAGS_SYS:" \
+            '# <<< dev-setup lazarus <<<')
+        GLOBAL_OTHER=$(sed '/^# >>> dev-setup lazarus >>>$/,/^# <<< dev-setup lazarus <<<$/d' "$GLOBALRC" 2> /dev/null || true)
+        if [ ! -f "$GLOBALRC" ]; then
+            printf '%s\n' "$GLOBAL_BLOCK" > "$GLOBALRC"
+            echo "Wrote ~/.globalrc: Pascal files through Universal Ctags for GNU Global (Go to Definition in the Pascal extension)."
+        elif printf '%s\n' "$GLOBAL_OTHER" | grep -qE '^default[:|]'; then
+            echo "NOTICE: your ~/.globalrc has its own 'default' label, so setup left it alone. For Pascal, add to that label:"
+            echo "        :langmap=Pascal\\:.pas.pp.lpr.inc.dpr: and :gtags_parser=Pascal\\:\$ctagslib: with Universal Ctags' ctagscom/ctagslib."
+        else
+            awk -v block="$GLOBAL_BLOCK" '
+                /^# >>> dev-setup lazarus >>>$/ { print block; skip = 1; done = 1; next }
+                skip && /^# <<< dev-setup lazarus <<<$/ { skip = 0; next }
+                !skip { print }
+                END { if (!done) print block }' "$GLOBALRC" > "$GLOBALRC.new" && mv -f "$GLOBALRC.new" "$GLOBALRC"
+            echo "~/.globalrc: the Pascal block is in place (GNU Global, Go to Definition in the Pascal extension)."
+        fi
+    fi
+
     # v94: the IDE rebuilt on Qt5, in a light and a dark profile, each with a docked and a floating layout
     # (Oct 24 2026: the stock GTK2 IDE drew some modal dialogs blank under Crostini, Run Parameters and New
     # Project among them, and they never took keyboard focus; removing gtk2-engines-pixbuf did not help, Qt5
@@ -2319,6 +2375,39 @@ else:
     if not on:   # with no Debug mode the copy is of the default one, with debug info turned on
         sub(dbg, "GenerateDebugInfo").set("Value", "True")
     sub(dbg, "DebugInfoType").set("Value", "dsDwarf2Set")
+    # v96 (chosen Oct 27 2026): own folders for Debug-gdb when Debug's paths don't vary by build mode. Lazarus 4.8's
+    # TDaemon writes $(TargetCPU)-$(TargetOS)\Debug\TestDaemon, a literal Debug, so the two modes overwrote each
+    # other's binary and units. A path with $(BuildMode) or $(BuildModeCaption) is left alone (Lazarus's macros for the
+    # mode, ide/buildmanager.pas; the plan's $(BuildModeName) is not one). Otherwise a folder named like the copied mode
+    # becomes Debug-gdb, or Debug-gdb is added (the target's folder, the unit path's last one).
+    pd = co.find("PathDelim")
+    delim = "\\" if pd is not None and pd.get("Value") == "\\" else "/"
+
+    def own_folder(path, target):
+        if re.search(r"\$\(BuildMode(Caption)?\)", path, re.I):
+            return None
+        parts = [x for x in re.split(r"[\\/]", path) if x != ""] if path else []
+        for i in range(len(parts) - 1 if target else len(parts)):
+            if parts[i].lower() == src_name.lower():
+                parts[i] = GDB_MODE
+                return delim.join(parts)
+        return delim.join(parts[:-1] + [GDB_MODE, parts[-1]]) if target else delim.join(parts + [GDB_MODE])
+
+    moved = []
+    t = co.find("Target/Filename")
+    if t is not None and t.get("Value"):
+        tpath = t.get("Value")
+    else:   # no target in the .lpi: the default one, as lazbuild has it, relative to the project
+        tpath = os.path.relpath(target_of(src_name)[0], pdir).replace("/", delim)
+    new_t = own_folder(tpath, True)
+    if new_t is not None:
+        sub(sub(co, "Target"), "Filename").set("Value", new_t)
+        moved.append("target %s" % new_t)
+    u = co.find("SearchPaths/UnitOutputDirectory")
+    new_u = own_folder(u.get("Value", "") if u is not None else "", False)
+    if new_u is not None:
+        sub(sub(co, "SearchPaths"), "UnitOutputDirectory").set("Value", new_u)
+        moved.append("units %s" % new_u)
     cust = co.find("Other/CustomOptions")
     if cust is not None and re.search(r"(^|\s)-g[wsl]?\d?(\s|$)", cust.get("Value", "")):
         note("%s's custom options (%s) set debug info themselves, and Debug-gdb copies them: check Project Options >"
@@ -2381,6 +2470,9 @@ else:
     os.chmod(lpi, st.st_mode & 0o7777)
     print("%s: added the %s build mode (a copy of %s on Dwarf 2 with sets, -gw2 -godwarfsets), checked with"
           " lazbuild --bm=%s%s" % (base, GDB_MODE, src_name, GDB_MODE, "; the original is %s.bak" % base if made_bak else ""))
+    if moved:
+        print("%s: gave %s its own folders (%s's paths don't include $(BuildMode)): %s"
+              % (base, GDB_MODE, src_name, ", ".join(moved)))
     root = ET.fromstring(new.encode("utf-8"))
     ms = modes(root)
 
@@ -2403,7 +2495,7 @@ dbg_exe, how = target_of(dbg_name)
 gdb_exe, _ = target_of(GDB_MODE)
 print("Targets (from lazbuild, %s): %s %s, %s %s" % (how, dbg_name, dbg_exe, GDB_MODE, gdb_exe))
 if dbg_exe == gdb_exe:
-    note("%s and %s build the same file (%s): its path does not include $(BuildModeName), so each launch's build step"
+    note("%s and %s build the same file (%s): its path does not include $(BuildMode), so each launch's build step"
          " rebuilds it for its own debugger." % (dbg_name, GDB_MODE, os.path.relpath(dbg_exe, pdir)))
 
 
