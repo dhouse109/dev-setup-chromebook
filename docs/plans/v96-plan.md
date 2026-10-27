@@ -1,6 +1,6 @@
 # dev-setup-chromebook v96 plan
 
-Oct 26, 2026 · item 1 chosen Oct 26 (all choices) · item 2 added Oct 26, back end, flag and rendering chosen Oct 26 · item 3 added and chosen Oct 26, revised Oct 26 (memory; launcher goes through `/usr/bin/devin-desktop`) · item 4 added and chosen Oct 26, DDEV ports settled Oct 26 · items 6 and 7 added Oct 26 · **plan final Oct 26** · item 5 added and chosen Oct 26
+Oct 26, 2026 · item 1 chosen Oct 26 (all choices) · item 2 added Oct 26, back end, flag and rendering chosen Oct 26 · item 3 added and chosen Oct 26, revised Oct 26 (memory; launcher goes through `/usr/bin/devin-desktop`) · item 4 added and chosen Oct 26, DDEV ports settled Oct 26 · items 6 and 7 added Oct 26 · **plan final Oct 26** · item 5 added and chosen Oct 26 · items 5 and 2 amended Oct 27 after the build (decisions from the v96 PR) · item 8 added Oct 26, after the plan was merged
 
 ## Scope
 
@@ -23,8 +23,10 @@ run turns up and doesn't go into v95 itself can join this plan.
    10 s limit, naming the slow lines.
 7. **A memory report, `devmem`:** what's using Linux's memory, how much ChromeOS has taken back, and what to
    close.
+8. **A disk cleanup command, `devclean`** (added Oct 26, after the plan was merged): what fills the Linux disk,
+   the caches that are safe to clear, and the repair for DDEV's 0-byte state files after a full disk.
 
-Items 1, 3, 4, 5, 6 and 7 change scripts, so the bundle goes to v96: all four scripts bumped, CHANGELOG entries under all
+Items 1, 3, 4, 5, 6, 7 and 8 change scripts, so the bundle goes to v96: all four scripts bumped, CHANGELOG entries under all
 four sections ("version bump only" where nothing changed). Item 2 changes dev-demo only.
 
 Each item lists the choices that were offered; the decision is marked. All choices are settled (Oct 26);
@@ -221,6 +223,12 @@ Under choice A, a machine that already has drupal-nuxt's site keeps its content 
 drupal-nuxt's `serve` still works. `compare` shows Nuxt and the island picking up an edit that Astro's
 page shows only after `build`. `deploy` is a hand check once wrangler is logged in (pages up, island
 on its fallback).
+
+**Decided Oct 27 2026, after the build** (found while testing umami-headless): with drush 13.8,
+`vendor/bin/drush` is a shell script, so `php vendor/bin/drush` only prints it and exits 0, and every drush step
+(Umami's install among them) silently did nothing. Every call through `php` in the bundle now uses
+`vendor/bin/drush.php`: umami-headless, web/drupal-umami and drupal/drupal-graphql (the only ones; a v96 comment
+records the finding at each). The `-x vendor/bin/drush` existence check in drupal-umami stays.
 
 ## 3. Devin Desktop (formerly Windsurf) under X11 (install-windsurf)
 
@@ -667,6 +675,25 @@ project still builds and debugs in the Lazarus IDE. The dark-profile packages ar
 (once a Delphi 3–7 is installed): `delphi 7 vscode` in a project folder, Ctrl+Shift+B builds it, the run
 task starts it in the Delphi desktop.
 
+**Decided Oct 27 2026, after the build** (the build's findings, then the owner's answers in the v96 PR):
+
+- **Go to Definition, machine-wide.** gtags' built-in parsers don't read Pascal: the tags it wrote for TDaemon were
+  empty, and the Pascal extension's README says Global needs a plug-in parser. Setup (install-lazarus) installs
+  `universal-ctags` (when `apt-cache policy` shows a candidate; otherwise a NOTICE and the Pascal part is skipped,
+  setup doesn't fail) and writes `~/.globalrc` as a marked block: Pascal files (`.pas .pp .lpr .inc .dpr`) go to
+  Universal Ctags, everything else keeps Global's built-in parsers (taken from the system `gtags.conf` by reference).
+  `lazmode vscode` writes no `gtags.conf`. Test: `gtags` on a scratch copy of TDaemon, then `global -x LogToFile`
+  finds it. The checklist's manual step is replaced.
+- **Debug-gdb gets its own folders, only when needed.** TDaemon's 4.8 `.lpi` writes
+  `$(TargetCPU)-$(TargetOS)\Debug\TestDaemon` with a literal `Debug`, so the premise above ("TDaemon's does" vary
+  by mode) doesn't hold, and Lazarus's macro is `$(BuildMode)` (or `$(BuildModeCaption)`), not `$(BuildModeName)`
+  (`ide/buildmanager.pas`). When the target or unit output path doesn't vary by build mode, Debug-gdb gets its own
+  target and unit folders (`Debug` -> `Debug-gdb` in the path), Debug unchanged; the NOTICE becomes "gave Debug-gdb
+  its own folders". On TDaemon both binaries now sit side by side (`x86_64-linux/Debug`, `x86_64-linux/Debug-gdb`)
+  with DWARF 3 and 2.
+- **Accepted as built:** the DDEV ports in the laravel, symfony and drupal-graphql notes (item 4), and devmem's swap
+  line ("Memory looks fine." with the missing swap noted, item 7).
+
 ## 6. How long a new login shell takes (dev-test, base)
 
 **Found Oct 26 2026** (with item 3): Devin's first launcher-started log said "Unable to resolve your shell
@@ -749,6 +776,53 @@ Desktop at the top and a "taken back by ChromeOS" figure close to what the Oct 2
 heavy ChromeOS tabs makes that figure grow under `devmem --watch`; starting a `devsvc` heavy engine adds it
 to the services and the verdict; with Linux's Chrome open the verdict names it.
 
+## 8. A disk cleanup command: `devclean` (setup base; added Oct 26, after the plan was merged)
+
+**Found Oct 26 2026** (dragonair, 38 GB Linux disk, during item 4's DDEV check): DDEV's image pull ran the disk
+out of space twice. The full disk left `~/.ddev/.state.yaml` and `~/.ddev/.update` at 0 bytes, and every
+`ddev start` then panicked ("assignment to entry in nil map"); moving the two files aside fixed it (DDEV rewrote
+them). Clearing caches freed ~5 GB: npm 2.3 GB, Docker's build cache 2.7 GB (`docker system df` showed only 16 kB
+"reclaimable": it took `docker builder prune -af`), uv 641 MB, Homebrew 264 MB, Linux Chrome's cache 189 MB, pnpm
+172 MB, Go's build cache 133 MB, Composer 61 MB, plus apt's downloaded packages.
+
+**Setup** (base, next to `devmem`): a command, `~/.local/bin/devclean`.
+
+- **`devclean`** (no options): report only, changes nothing. Free space (`df`), then each category with what it
+  would free (measured where the tool can say, `du` otherwise), and the total.
+- **`devclean --run`:** clears the safe caches, then shows free space before and after: `npm cache clean --force`,
+  `docker builder prune -af`, `docker image prune -f`, `sudo apt clean`, `brew cleanup -s`, `uv cache prune`,
+  `go clean -cache`, `composer clear-cache`, `pnpm store prune` (or `~/.cache/pnpm`), `pip cache purge`, and
+  `~/.cache/google-chrome` only when Linux Chrome isn't running. Each step only when its tool is installed; one
+  failing step doesn't stop the rest.
+- **`devclean --run --images`:** also `docker image prune -a` (images no container uses; the bundle's stopped
+  service containers keep theirs). It says what will download again.
+- **Never:** `docker system prune` (it deletes the bundle's stopped service containers), Docker volumes,
+  `~/.cache/ms-playwright`, Hugging Face caches, Ollama models, `~/dev-demo`, DDEV projects. `devclean --help` lists
+  them with the reason for each.
+- **DDEV repair** (every run; report mode says what it would do): a 0-byte `~/.ddev/.state.yaml` or
+  `~/.ddev/.update` is moved aside (`.bak`), so `ddev start` recreates it.
+
+**Test** (base): `devclean` runs and exits 0; without `--run` it changes nothing (a cache folder's contents are
+untouched); the never-touch list appears in `--help`.
+
+**Init, demo:** version bump only.
+
+**Docs:**
+
+- `docs/crostini-gotchas.md`, a "Disk" entry: what fills the disk, the DDEV 0-byte crash and its fix, and that DDEV
+  wants ~3 GB free.
+- `docs/init-checklist.md`: `devclean`, when to use it, the manual commands with what each frees, and what never to
+  delete.
+- README: the commands list.
+- CHANGELOG (all four sections).
+
+**To verify on the Chromebook:** `devclean` on a machine that has run the demos reports figures close to the Oct 26
+ones and changes nothing (free space the same before and after); `devclean --run` frees them, Docker's build cache
+included, and the bundle's stopped service containers (`devsvc`, `mssql`, `oracle`) are all still there
+(`docker ps -a`); `devclean --run --images` names the images it removes, and `devsvc up` / a demo pulls them
+again; with `~/.ddev/.state.yaml` emptied by hand (`: > ~/.ddev/.state.yaml`), `devclean` says it would move it
+aside, `--run` does, and `ddev start` works.
+
 ## Carried forward
 
 **From v95** (its own on-hardware checks, in the v95 plan): `lazmode`'s install-list handling and
@@ -779,6 +853,7 @@ go into v95 if you keep them there, otherwise here.
 - [x] Item 2, back end: A (shared `drupal/umami-headless`)
 - [x] Item 2, flag: A (`install-web`)
 - [x] Item 2, rendering: C (static pages plus a server island, `@astrojs/node`)
+- [x] Item 2, Oct 27 (after the build): drush through `vendor/bin/drush.php` everywhere in the bundle (drush 13.8)
 - [x] Item 3: Devin Desktop under X11, under install-windsurf
 - [x] Item 3, launcher: A (a separate "Devin (X11)" entry, stock entry hidden with `NoDisplay`)
 - [x] Item 3, terminal: A (`~/.local/bin/devin-desktop` wrapper adds the flag)
@@ -795,6 +870,10 @@ go into v95 if you keep them there, otherwise here.
       VS Code's FpDebug, `CNOC.fpdebug`)
 - [x] Item 5, added Oct 26: GNU Global under install-lazarus, and `lazmode vscode` writes
       `.vscode/settings.json` for the Pascal extension's gtags navigation
+- [x] Item 5, Oct 27 (after the build): Universal Ctags and a `~/.globalrc` block for Pascal (machine-wide, no
+      `gtags.conf` per project); Debug-gdb gets its own target and unit folders when Debug's paths don't vary by mode
 - [x] Item 6: dev-test times a new login shell (WARN 5 s, FAIL 10 s, slowest lines in the hint)
 - [x] Item 7: `devmem` memory report (with `--watch` and `--brief`)
+- [x] Item 8 (added Oct 26, after the plan was merged): `devclean`, report by default, `--run` for the safe caches,
+      `--images` for unused Docker images, the DDEV 0-byte repair, a never-touch list in `--help`
 - [x] Anything else for v96: nothing further (Oct 26); plan final

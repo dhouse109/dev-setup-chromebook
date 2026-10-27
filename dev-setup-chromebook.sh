@@ -1,5 +1,5 @@
 #!/bin/bash
-# dev-setup-chromebook - Version 95
+# dev-setup-chromebook - Version 96
 # Version history: CHANGELOG.md, next to this script in the bundle
 # (one section per script, newest version first).
 
@@ -252,7 +252,7 @@ if [[ "$FLAGS" =~ " install-gemma " ]] || [[ "$FLAGS" =~ " install-models " ]] |
 fi
 # =================================================================
 
-echo "Starting comprehensive Chromebook Linux provisioning (Version 95)..."
+echo "Starting comprehensive Chromebook Linux provisioning (Version 96)..."
 
 # v93: prefer IPv4 when this network's IPv6 does not get out. On Oct 4 2026 a Chromebook's Linux got IPv6
 # addresses for dl.google.com but no IPv6 route out, and wget hung on one address after another (the
@@ -424,6 +424,76 @@ brew_after_system
 brew install gcc ddev/ddev/ddev gh mkcert
 mkcert -install
 
+# v96: DDEV's router on 8080/8443 (Oct 26 2026, on dragonair: ChromeOS's browser got ERR_CONNECTION_REFUSED for
+# https://ddev-test.ddev.site on the default 80/443, since ChromeOS passes high ports through to Linux but not 80
+# and 443; after 'ddev config global --router-http-port=8080 --router-https-port=8443' and 'ddev poweroff && ddev
+# start', 'ddev launch' opened https://ddev-test.ddev.site:8443 there). The same ports install-lan-share already
+# uses for DDEV between laptops (LAN 8080/8443, read by ddev_router_port), so a site is :8443 on its own laptop
+# and from the others. Ports you set yourself win. ChromeOS only: elsewhere 80/443 work as DDEV expects.
+# (The plan put this next to install-drupal's 'ddev config global'; DDEV itself is base, so it is here.)
+DDEV_GCFG="$HOME/.ddev/global_config.yaml"
+ddev_gport() { sed -n "s/^router_$1_port:[[:space:]]*\"\{0,1\}\([0-9]*\)\"\{0,1\}.*/\1/p" "$DDEV_GCFG" 2> /dev/null | head -n 1; }
+if [ "$DEV_ON_CHROMEOS" != 1 ]; then
+    echo "NOTICE: not ChromeOS, so DDEV's router stays on its own ports (80/443 unless you set others)."
+elif ! command -v ddev > /dev/null 2>&1; then
+    echo "NOTICE: ddev is not on PATH, so its router ports were not set (rerun setup)."
+else
+    # DDEV writes its defaults into the file on every save (router_http_port: "80", router_https_port: "443";
+    # checked in its source, pkg/globalconfig: no omitempty), so 80/443 count as unset, not as yours.
+    DDEV_HP=$(ddev_gport http); DDEV_SP=$(ddev_gport https)
+    case "$DDEV_HP" in ''|80) DDEV_HP_MINE="" ;; *) DDEV_HP_MINE=$DDEV_HP ;; esac
+    case "$DDEV_SP" in ''|443) DDEV_SP_MINE="" ;; *) DDEV_SP_MINE=$DDEV_SP ;; esac
+    if [ "${DDEV_HP_MINE:-8080}" != 8080 ] || [ "${DDEV_SP_MINE:-8443}" != 8443 ]; then
+        echo "NOTICE: DDEV's router ports are yours (router_http_port ${DDEV_HP:-80}, router_https_port ${DDEV_SP:-443} in $DDEV_GCFG),"
+        echo "        so setup left them: DDEV sites are on http://<site>.ddev.site:${DDEV_HP:-80} and https://<site>.ddev.site:${DDEV_SP:-443}."
+        [ "${DDEV_HP:-80}" = 80 ] || [ "${DDEV_SP:-443}" = 443 ] && echo "        ChromeOS's browser cannot reach 80 or 443 in Linux."
+    elif [ "$DDEV_HP" = 8080 ] && [ "$DDEV_SP" = 8443 ]; then
+        echo "DDEV's router: already on 8080/8443 (sites are https://<site>.ddev.site:8443)."
+    elif timeout 60 ddev config global --router-http-port=8080 --router-https-port=8443 < /dev/null > /dev/null 2>&1 \
+        && [ "$(ddev_gport http)" = 8080 ] && [ "$(ddev_gport https)" = 8443 ]; then
+        echo "DDEV's router moved to 8080/8443 (ChromeOS does not pass 80/443 to Linux): sites are https://<site>.ddev.site:8443."
+        if sudo -n docker ps --format '{{.Names}}' 2> /dev/null | grep -qx ddev-router; then
+            echo "        The DDEV router running now keeps its old ports until 'ddev poweroff' (then 'ddev start' your project)."
+        fi
+    else
+        echo "NOTICE: 'ddev config global --router-http-port=8080 --router-https-port=8443' did not take; run it by hand."
+    fi
+fi
+unset -f ddev_gport
+# v96: DDEV's usage telemetry off here, with DDEV itself (base), on every host. Until v96 only install-drupal set it,
+# so a machine set up without that flag was asked "May we send anonymous DDEV usage statistics and errors? [Y/n]"
+# on its first 'ddev start' (Oct 27 2026, install-editors install-web). DDEV asks on the first container start of
+# each new DDEV version while instrumentation_opt_in is false (its default), and an empty answer (Enter, or no
+# terminal) opts in (cmd/ddev/cmd/root.go and util.ConfirmTo, v1.25.5). 'ddev config global
+# --instrumentation-opt-in=false' also records the installed version as started (config-global.go), so it runs on
+# every setup run, even when the file already says false (a fresh file does: DDEV writes its defaults on any save,
+# the router's above included): the installed version never asks. A later version (brew upgrade) would ask again;
+# DDEV_NO_INSTRUMENTATION=true in ~/.bashrc skips the question for every version and keeps telemetry off whatever
+# the file says (DDEV's docs, usage/diagnostics). A line of your own is kept. Checked with DDEV v1.25.5 in a scratch
+# HOME: config global set last_started_version to v1.25.5 and instrumentation_opt_in to false.
+if command -v ddev > /dev/null 2>&1; then
+    grep -q '^export DDEV_NO_INSTRUMENTATION=' ~/.bashrc 2> /dev/null \
+        || echo 'export DDEV_NO_INSTRUMENTATION=true   # DDEV: no usage statistics, and no question about them on a first start' >> ~/.bashrc
+    export DDEV_NO_INSTRUMENTATION=true
+    if timeout 60 ddev config global --instrumentation-opt-in=false < /dev/null > /dev/null 2>&1 \
+        && grep -q '^instrumentation_opt_in: false' "$DDEV_GCFG" 2> /dev/null; then
+        echo "DDEV: usage telemetry off, and no question about it (instrumentation_opt_in: false; DDEV_NO_INSTRUMENTATION=true in ~/.bashrc)."
+    else
+        echo "NOTICE: 'ddev config global --instrumentation-opt-in=false' did not take; run it by hand."
+    fi
+else
+    echo "NOTICE: ddev is not on PATH, so its usage telemetry was not turned off (rerun setup)."
+fi
+# v96: mkcert's CA is trusted in Linux only (mkcert -install above); ChromeOS's browser, which opens Linux's links
+# since v96, has its own certificate store, which Linux can't reach. So *.ddev.site shows "Not secure" there until
+# the CA is imported by hand (Oct 26 2026: https://ddev-test.ddev.site:8443 opened with Chrome's warning).
+if [ "$DEV_ON_CHROMEOS" = 1 ] && [ -f "$(mkcert -CAROOT 2> /dev/null)/rootCA.pem" ]; then
+    echo "To open DDEV's https sites in ChromeOS's browser without a warning, import mkcert's CA there once:"
+    echo "  cp \"\$(mkcert -CAROOT)/rootCA.pem\" ~/ddev-rootCA.pem, then in ChromeOS: Settings > Privacy and security >"
+    echo "  Security > Manage certificates > Authorities > Import (from Linux files), tick \"Trust this certificate for"
+    echo "  identifying websites\", then delete ~/ddev-rootCA.pem. (docs/init-checklist.md, DDEV in ChromeOS's browser)"
+fi
+
 # 6. Google Chrome (Unconditional)
 echo "Installing Google Chrome..."
 # v65: downloaded into assets/downloads, not the current directory. Always fetched fresh (-nc would
@@ -432,6 +502,430 @@ rm -f "$ASSETS/downloads/google-chrome-stable_current_amd64.deb"
 wget -P "$ASSETS/downloads" https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
 sudo apt install -y "$ASSETS/downloads/google-chrome-stable_current_amd64.deb"
 rm -f "$ASSETS/downloads/google-chrome-stable_current_amd64.deb"
+
+# v96: links from Linux open in ChromeOS's browser, not in a Linux Google Chrome (Oct 26 2026: Chrome registered
+# itself as Linux's handler for web links, so Devin Desktop's Login opened its sign-in page in a Linux Chrome inside
+# the VM's memory, separate from ChromeOS's browser and its sign-ins, and that Chrome, left running, added to the
+# memory squeeze that froze Devin). 'xdg-settings set default-web-browser' refuses ("$BROWSER is set": ChromeOS sets
+# BROWSER=/usr/bin/garcon-url-handler), and xdg-open checks the MIME registration before $BROWSER anyway; this line
+# worked, tested Oct 26 with https, http://localhost and 127.0.0.1 (ChromeOS passes localhost to Linux), a file in
+# Linux files, and a DDEV site on 8443. Playwright, Selenium, Cypress and Puppeteer start their own browser, so they
+# are unaffected, and Linux Chrome stays installed. Here, after Chrome's install, so this overrides its registration.
+# Back to Linux Chrome: xdg-mime default com.google.Chrome.desktop x-scheme-handler/https x-scheme-handler/http text/html
+if [ -f /usr/share/applications/garcon_host_browser.desktop ] && command -v xdg-mime > /dev/null 2>&1; then
+    LINK_TYPES=(x-scheme-handler/https x-scheme-handler/http text/html)
+    LINK_HAD=()
+    for LINK_T in "${LINK_TYPES[@]}"; do LINK_HAD+=("$(xdg-mime query default "$LINK_T" 2> /dev/null)"); done
+    if [ "${LINK_HAD[*]}" = "garcon_host_browser.desktop garcon_host_browser.desktop garcon_host_browser.desktop" ]; then
+        echo "Links from Linux: already open in ChromeOS's browser (garcon_host_browser.desktop)."
+    elif xdg-mime default garcon_host_browser.desktop "${LINK_TYPES[@]}"; then
+        echo "Links from Linux now open in ChromeOS's browser (was: ${LINK_HAD[0]:-none}; ~/.config/mimeapps.list)."
+    else
+        echo "NOTICE: xdg-mime could not make ChromeOS's browser the handler for web links."
+    fi
+else
+    echo "NOTICE: no garcon_host_browser.desktop (not ChromeOS?), so Linux's handler for web links is unchanged."
+fi
+
+# 7. devmem, a memory report (v96)
+# v96: Oct 26 2026, with Devin Desktop freezing: Linux showed 6.4 GB total, 4.9 GB used, 1.5 GB available and no
+# swap, while its processes held only 2.2 GB (Devin 1.65 GB of it) and slab plus shmem ~0.2 GB: ChromeOS had taken
+# ~2.5 GB back from the Linux VM. Seeing that took several commands and some arithmetic, and with no swap a reclaim
+# at the wrong moment freezes a large app instead of slowing it. devmem does the arithmetic: PSS from smaps_rollup
+# (shared pages counted once; RSS where a process can't be read), kernel and shmem from /proc/meminfo, the rest of
+# "used" as ChromeOS's share (an estimate), the top programs, the bundle's containers and Ollama's loaded models,
+# and a verdict. Only procps, awk and (when there) docker and ollama.
+mkdir -p ~/.local/bin
+cat > "$HOME/.local/bin/devmem.new" << 'DEVMEM_EOF'
+#!/bin/bash
+# devmem: what is using Linux's memory, how much ChromeOS has taken back, and what to close (dev-setup v96).
+# Written by dev-setup and rewritten on every run: copy it before editing.
+#   devmem                  the full report: Memory, Where "used" is, Top programs, Bundle services, Verdict
+#   devmem --brief          the memory line and the verdict only
+#   devmem --watch [SECS]   the full report, refreshed in place every SECS seconds (default 5) until Ctrl-C
+# "Taken back by ChromeOS" is an estimate: what "used" holds beyond Linux's processes, kernel and shared memory.
+export LC_ALL=C
+usage() { awk 'NR > 1 && !/^#/ { exit } NR > 1 { sub(/^# ?/, ""); print }' "$0"; }
+# HEAVY: the containers that are one-at-a-time in devsvc (and mssql / oracle): NAME|COMMAND THAT STOPS IT
+HEAVY='devsvc-solr|devsvc down solr
+devsvc-opensearch|devsvc down opensearch
+devsvc-elasticsearch|devsvc down elasticsearch
+devsvc-milvus|devsvc down milvus
+devsvc-atlas-local|devsvc down atlas-local
+devsvc-selenium|devsvc down selenium
+devdb-mssql|mssql down
+devdb-oracle|oracle down'
+
+fmt() {   # fmt KB: "1.6 GB" or "350 MB"
+    awk -v k="$1" 'BEGIN { if (k >= 1048576 * 0.95) printf "%.1f GB", k / 1048576; else printf "%d MB", k / 1024 }'
+}
+meminfo() { awk -v k="$1" '$1 == k ":" { print $2; f = 1 } END { if (!f) print 0 }' /proc/meminfo; }
+
+collect() {   # sets the figures every section uses (KB)
+    TOTAL=$(meminfo MemTotal); AVAIL=$(meminfo MemAvailable)
+    SWAP=$(meminfo SwapTotal); SWAPFREE=$(meminfo SwapFree)
+    USED=$((TOTAL - AVAIL))
+    KERNEL=$(( $(meminfo Slab) + $(meminfo KernelStack) + $(meminfo PageTables) ))
+    SHMEM=$(meminfo Shmem)
+    # One line per process: PID<TAB>KB<TAB>pss|rss<TAB>PROGRAM<TAB>EXE PATH. PSS where smaps_rollup can be read (your own
+    # processes); RSS from status otherwise (root's). Kernel threads have neither and are left out.
+    PROCS=$(
+        declare -A pss=()
+        while IFS=: read -r f v; do
+            f=${f#/proc/}; pss[${f%%/*}]=$(awk '{ print $2 }' <<< "$v")   # v: "Pss:   1234 kB"
+        done < <(grep -H '^Pss:' /proc/[0-9]*/smaps_rollup 2> /dev/null)
+        while IFS=: read -r f v; do
+            p=${f#/proc/}; p=${p%%/*}
+            if [ -n "${pss[$p]:-}" ]; then kb=${pss[$p]}; how=pss; else kb=$(awk '{ print $2 }' <<< "$v"); how=rss; fi
+            [ "${kb:-0}" -gt 0 ] 2> /dev/null || continue
+            # The program: the executable's name (all of an Electron app's helpers share it), else comm.
+            exe=$(readlink "/proc/$p/exe" 2> /dev/null); exe=${exe% (deleted)}; prog=${exe##*/}
+            [ -n "$prog" ] || prog=$(cat "/proc/$p/comm" 2> /dev/null)
+            [ -n "$prog" ] || continue
+            printf '%s\t%s\t%s\t%s\t%s\n' "$p" "$kb" "$how" "$prog" "${exe:--}"
+        done < <(grep -H '^VmRSS:' /proc/[0-9]*/status 2> /dev/null)
+    )
+    PROC_KB=$(awk -F'\t' '{ s += $2 } END { print s + 0 }' <<< "$PROCS")
+    N_PSS=$(awk -F'\t' '$3 == "pss"' <<< "$PROCS" | grep -c .)
+    N_RSS=$(awk -F'\t' '$3 == "rss"' <<< "$PROCS" | grep -c .)
+    TAKEN=$((USED - PROC_KB - KERNEL - SHMEM)); [ "$TAKEN" -lt 0 ] && TAKEN=0
+    # Linux's Google Chrome, by its install path (Playwright's and Puppeteer's browsers are called chrome too)
+    LINUX_CHROME=$(awk -F'\t' 'index($5, "/opt/google/chrome/") == 1 { s += $2; n++ } END { if (n) print s }' <<< "$PROCS")
+    SERVICES=""; HEAVY_UP=()
+    local d=(docker)
+    if command -v docker > /dev/null 2>&1; then
+        timeout 5 docker info > /dev/null 2>&1 || d=(sudo -n docker)
+        SERVICES=$(timeout 20 "${d[@]}" stats --no-stream --format '{{.Name}}\t{{.MemUsage}}' 2> /dev/null \
+            | awk -F'\t' '$1 ~ /^(devsvc-|devdb-|devldap-|ddev-)/ { sub(/ \/.*/, "", $2); print $1 "\t" $2 }' | sort)
+        local name stop
+        while IFS='|' read -r name stop; do
+            grep -q "^$name"$'\t' <<< "$SERVICES" && HEAVY_UP+=("$name|$stop")
+        done <<< "$HEAVY"
+    fi
+    OLLAMA=""
+    command -v ollama > /dev/null 2>&1 && OLLAMA=$(timeout 5 ollama ps 2> /dev/null | awk 'NR > 1 && NF')
+}
+
+memory_line() {
+    local swap="none"
+    [ "$SWAP" -gt 0 ] && swap="$(fmt $((SWAP - SWAPFREE))) used of $(fmt "$SWAP")"
+    echo "Memory: $(fmt "$TOTAL") total, $(fmt "$USED") used, $(fmt "$AVAIL") available, swap: $swap"
+}
+
+verdict() {
+    local out=() h
+    [ "$TAKEN" -gt $((1536 * 1024)) ] && out+=("ChromeOS has taken back $(fmt "$TAKEN"): close ChromeOS tabs or Android apps (Search + Esc shows them).")
+    [ "$AVAIL" -lt $((1024 * 1024)) ] && out+=("Less than 1 GB available ($(fmt "$AVAIL")): close something before starting anything large.")
+    [ -n "$LINUX_CHROME" ] && out+=("Linux's Google Chrome is running ($(fmt "$LINUX_CHROME")): links open in ChromeOS's browser since v96, so it can usually be closed.")
+    for h in "${HEAVY_UP[@]}"; do out+=("A heavy engine or database server is running: ${h%%|*} (stop it with '${h#*|}')."); done
+    echo "Verdict:"
+    if [ ${#out[@]} -eq 0 ]; then
+        echo "  Memory looks fine.$([ "$SWAP" -eq 0 ] && echo " (No swap: a large app freezes instead of slowing down when memory runs out.)")"
+        return
+    fi
+    printf '  %s\n' "${out[@]}"
+    [ "$SWAP" -eq 0 ] && echo "  No swap: a large app freezes instead of slowing down when memory runs out."
+    return 0
+}
+
+report() {
+    local how
+    memory_line
+    echo
+    echo "Where \"used\" is:"
+    if [ "$N_RSS" -eq 0 ]; then how="PSS of $N_PSS processes, shared pages counted once"
+    else how="PSS of $N_PSS processes, RSS for $N_RSS that can't be read (other users')"; fi
+    printf '  %-34s %9s  (%s)\n' "Linux processes" "$(fmt "$PROC_KB")" "$how"
+    printf '  %-34s %9s  (Slab + KernelStack + PageTables)\n' "kernel" "$(fmt "$KERNEL")"
+    printf '  %-34s %9s  (Shmem)\n' "shared memory" "$(fmt "$SHMEM")"
+    printf '  %-34s %9s  (used minus the three above)\n' "taken back by ChromeOS (estimate)" "$(fmt "$TAKEN")"
+    echo
+    echo "Top programs by memory:"
+    awk -F'\t' 'NF >= 4 { s[$4] += $2; n[$4]++ } END { for (p in s) printf "%d\t%s\t%d\n", s[p], p, n[p] }' <<< "$PROCS" \
+        | sort -rn | head -n 10 | while IFS=$'\t' read -r kb p n; do
+            printf '  %-34s %9s  (%d process%s)\n' "$p" "$(fmt "$kb")" "$n" "$([ "$n" -eq 1 ] || echo es)"
+        done
+    echo
+    echo "Bundle services running:"
+    if [ -n "$SERVICES" ]; then
+        while IFS=$'\t' read -r c m; do printf '  %-34s %9s\n' "$c" "$m"; done <<< "$SERVICES"
+    elif command -v docker > /dev/null 2>&1; then echo "  no devsvc, devdb, devldap or DDEV containers running"
+    else echo "  (no docker)"; fi
+    if [ -n "$OLLAMA" ]; then
+        echo "  Ollama models loaded:"
+        while read -r line; do echo "    $line"; done <<< "$OLLAMA"
+    elif command -v ollama > /dev/null 2>&1; then echo "  Ollama: no model loaded"; fi
+    echo
+    verdict
+}
+
+case "${1:-}" in
+    "") collect; report ;;
+    --brief) collect; memory_line; verdict ;;
+    --watch)
+        secs=${2:-5}
+        [[ "$secs" =~ ^[0-9]+$ ]] && [ "$secs" -gt 0 ] || { echo "devmem: --watch takes a number of seconds, not '$secs'" >&2; exit 1; }
+        trap 'printf "\n"; exit 0' INT TERM
+        while :; do
+            collect; screen=$(report)
+            printf '\033[H\033[2J%s\n\n(every %ss, %s; Ctrl-C stops)\n' "$screen" "$secs" "$(date +%T)"
+            sleep "$secs"
+        done ;;
+    help|-h|--help) usage ;;
+    *) usage >&2; exit 1 ;;
+esac
+DEVMEM_EOF
+chmod +x "$HOME/.local/bin/devmem.new"
+mv -f "$HOME/.local/bin/devmem.new" "$HOME/.local/bin/devmem"
+echo "Wrote ~/.local/bin/devmem (what is using memory, what ChromeOS has taken back, what to close)."
+
+# 8. devclean, a disk cleanup (v96)
+# v96 (plan item 8): Oct 26 2026, dragonair's 38 GB Linux disk: DDEV's image pull ran it out of space twice, and the
+# full disk left ~/.ddev/.state.yaml and ~/.ddev/.update at 0 bytes, after which every 'ddev start' panicked
+# ("assignment to entry in nil map"); moving the two files aside fixed it. Clearing caches by hand freed ~5 GB: npm
+# 2.3 GB, Docker's build cache 2.7 GB ('docker system df' called only 16 kB of it reclaimable; it took
+# 'docker builder prune -af'), uv 641 MB, Homebrew 264 MB, Linux Chrome's cache 189 MB, pnpm 172 MB, Go's build cache
+# 133 MB, Composer 61 MB, plus apt. devclean reports by default and clears only with --run, only what comes back by
+# itself. Never 'docker system prune': the bundle's services (devsvc-*, devdb-*, devldap-*) are containers created
+# stopped, and it would delete them with their settings.
+cat > "$HOME/.local/bin/devclean.new" << 'DEVCLEAN_EOF'
+#!/bin/bash
+# devclean: what fills the Linux disk, and the caches that are safe to clear (dev-setup v96).
+# Written by dev-setup and rewritten on every run: copy it before editing.
+#   devclean                   report only, changes nothing: free space, what each cache would free, the total
+#   devclean --run             clear the safe caches (each step only when its tool is installed), then free space
+#                              before and after; one failing step doesn't stop the rest
+#   devclean --run --images    also Docker images no container uses (they download again when needed)
+#   devclean --images          the report, with those images
+# Every run also checks DDEV's state files: a 0-byte ~/.ddev/.state.yaml or ~/.ddev/.update (what a full disk
+# leaves, after which 'ddev start' panics) is moved aside as .bak with --run, so ddev recreates it.
+# Never touched, and why:
+#   docker system prune        deletes stopped containers, and the bundle's services (devsvc-*, devdb-*, devldap-*)
+#                              are containers created stopped, with their settings
+#   Docker volumes             the data of the databases and services (SQL Server, Oracle, MongoDB, DDEV's databases)
+#   ~/.cache/ms-playwright     the browsers Playwright tests run in (install-playwright; ~1 GB to download again)
+#   Hugging Face caches        downloaded models and datasets (~/.cache/huggingface), slow to fetch again
+#   Ollama models              pulled models, several GB each: 'ollama rm NAME' removes one on purpose
+#   ~/dev-demo                 the demos and your changes in them (dev-demo's demo-clean removes a flag's demos)
+#   DDEV projects              their code and databases ('ddev delete' is per project, on purpose)
+export LC_ALL=C
+usage() { awk 'NR > 1 && !/^#/ { exit } NR > 1 { sub(/^# ?/, ""); print }' "$0"; }
+RUN=0; IMAGES=0
+for a in "$@"; do
+    case "$a" in
+        --run) RUN=1 ;;
+        --images) IMAGES=1 ;;
+        help|-h|--help) usage; exit 0 ;;
+        *) echo "devclean: unknown option '$a' (devclean --help)" >&2; exit 1 ;;
+    esac
+done
+# The tools as a new terminal has them: nvm's npm, Go, Homebrew last (as ~/.bashrc puts them).
+[ -s "$HOME/.nvm/nvm.sh" ] && ! command -v npm > /dev/null 2>&1 && . "$HOME/.nvm/nvm.sh" > /dev/null 2>&1
+for d in "$HOME/.local/bin" /usr/local/go/bin "$HOME/go/bin"; do
+    [ -d "$d" ] && case ":$PATH:" in *":$d:"*) ;; *) PATH="$PATH:$d" ;; esac
+done
+[ -x /home/linuxbrew/.linuxbrew/bin/brew ] && case ":$PATH:" in *":/home/linuxbrew/.linuxbrew/bin:"*) ;; *) PATH="$PATH:/home/linuxbrew/.linuxbrew/bin" ;; esac
+export COREPACK_ENABLE_DOWNLOAD_PROMPT=0 HOMEBREW_NO_ENV_HINTS=1 HOMEBREW_NO_AUTO_UPDATE=1
+
+has() { command -v "$1" > /dev/null 2>&1; }
+human() {   # human BYTES: "2.3 GB", "641 MB", "16 KB", "0 B" (powers of 1024)
+    awk -v b="${1:-0}" 'BEGIN { split("B KB MB GB TB", u, " "); i = 1
+        while (b >= 1024 && i < 5) { b /= 1024; i++ }
+        if (i <= 2 || b >= 100) printf "%d %s\n", b + 0.5, u[i]; else printf "%.1f %s\n", b, u[i] }'
+}
+dub() {   # dub PATH...: bytes under the paths that exist
+    local p have=()
+    for p in "$@"; do [ -e "$p" ] && have+=("$p"); done
+    [ ${#have[@]} -gt 0 ] || { echo 0; return; }
+    du -sbc "${have[@]}" 2> /dev/null | tail -n 1 | cut -f1
+}
+to_bytes() {   # to_bytes "2.7GB" / "16.38kB" / "264.1MB" / "1.2GiB": a size as tools print it, in bytes
+    awk -v s="$1" 'BEGIN { if (!match(s, /^[0-9.]+/)) { print 0; exit }
+        n = substr(s, 1, RLENGTH); u = toupper(substr(s, RLENGTH + 1)); gsub(/[ B]/, "", u)
+        k = (u ~ /I$/) ? 1024 : 1000; sub(/I$/, "", u)
+        m = (u == "K") ? k : (u == "M") ? k ^ 2 : (u == "G") ? k ^ 3 : (u == "T") ? k ^ 4 : 1
+        printf "%.0f\n", n * m }'
+}
+free_bytes() { df -B1 --output=avail "$HOME" 2> /dev/null | tail -n 1 | tr -d ' '; }
+disk_line() { df -B1 --output=avail,size,target "$HOME" 2> /dev/null | tail -n 1 | awk '{ printf "%s %s %s\n", $1, $2, $3 }'; }
+
+DOCKER=()
+if has docker; then
+    if timeout 10 docker info > /dev/null 2>&1; then DOCKER=(docker)
+    elif timeout 10 sudo -n docker info > /dev/null 2>&1; then DOCKER=(sudo -n docker); fi
+fi
+chrome_running() { pgrep -f '^/opt/google/chrome/' > /dev/null 2>&1; }
+pip_cmd() { if python3 -m pip --version > /dev/null 2>&1; then echo "python3 -m pip"; elif has pip3; then echo pip3; fi; }
+# npm's and Go's cache folders as the tools resolve them, read rather than asked: 'npm config get' writes a debug log
+# and 'go env' a telemetry count on every call, and the report changes nothing.
+npm_cache() {
+    local c=${npm_config_cache:-}
+    [ -n "$c" ] || c=$(sed -n 's/^[[:space:]]*cache[[:space:]]*=[[:space:]]*//p' "$HOME/.npmrc" 2> /dev/null | tail -n 1)
+    c=${c/#\~/$HOME}; echo "${c:-$HOME/.npm}"
+}
+go_cache() {
+    local c=${GOCACHE:-}
+    [ -n "$c" ] || c=$(sed -n 's/^GOCACHE=//p' "${XDG_CONFIG_HOME:-$HOME/.config}/go/env" 2> /dev/null | tail -n 1)
+    echo "${c:-${XDG_CACHE_HOME:-$HOME/.cache}/go-build}"
+}
+
+# The categories: NAME|what it is. size_of NAME prints "BYTES<TAB>how it was measured" (or nothing when the tool isn't
+# there); clean NAME clears it.
+CATS="npm docker-build docker-dangling apt brew uv go composer pnpm pip chrome"
+label() {
+    case "$1" in
+        npm) echo "npm's cache" ;;
+        docker-build) echo "Docker's build cache" ;;
+        docker-dangling) echo "Docker's dangling images" ;;
+        apt) echo "apt's downloaded packages" ;;
+        brew) echo "Homebrew's old versions and downloads" ;;
+        uv) echo "uv's cache" ;;
+        go) echo "Go's build cache" ;;
+        composer) echo "Composer's cache" ;;
+        pnpm) echo "pnpm's store and cache" ;;
+        pip) echo "pip's cache" ;;
+        chrome) echo "Linux Chrome's cache" ;;
+    esac
+}
+size_of() {
+    local b d out
+    case "$1" in
+        npm) has npm || return; d=$(npm_cache); printf '%s\tdu %s\n' "$(dub "$d/_cacache")" "$d/_cacache" ;;
+        docker-build)
+            [ ${#DOCKER[@]} -gt 0 ] || return
+            # The build cache's whole size: 'docker system df' calls only part of it reclaimable (16 kB on Oct 26,
+            # when 'docker builder prune -af' then freed 2.7 GB).
+            b=$("${DOCKER[@]}" system df --format '{{.Type}}|{{.Size}}' 2> /dev/null | awk -F'|' '$1 == "Build Cache" { print $2 }')
+            printf '%s\tdocker system df (its whole size)\n' "$(to_bytes "${b:-0}")" ;;
+        docker-dangling)
+            [ ${#DOCKER[@]} -gt 0 ] || return
+            mapfile -t ids < <("${DOCKER[@]}" image ls -q -f dangling=true 2> /dev/null | sort -u)
+            b=0; [ ${#ids[@]} -gt 0 ] && b=$("${DOCKER[@]}" image inspect -f '{{.Size}}' "${ids[@]}" 2> /dev/null | awk '{ s += $1 } END { printf "%.0f", s }')
+            printf '%s\t%d image(s), up to (layers can be shared)\n' "${b:-0}" "${#ids[@]}" ;;
+        apt) has apt-get || return; printf '%s\tdu /var/cache/apt/archives\n' "$(dub /var/cache/apt/archives/*.deb /var/cache/apt/archives/partial)" ;;
+        brew)
+            has brew || return
+            out=$(timeout 120 brew cleanup -s --dry-run 2>&1 | grep -o 'would free approximately [0-9.]*[KMGT]*B' | grep -o '[0-9.]*[KMGT]*B$')
+            if [ -n "$out" ]; then printf '%s\tbrew cleanup -s --dry-run\n' "$(to_bytes "$out")"
+            else printf '0\tbrew cleanup -s --dry-run (nothing to remove)\n'; fi ;;
+        uv) has uv || return; d=$(uv cache dir 2> /dev/null); printf '%s\tdu %s, up to (prune keeps what is in use)\n' "$(dub "${d:-$HOME/.cache/uv}")" "${d:-$HOME/.cache/uv}" ;;
+        go) has go || return; d=$(go_cache); printf '%s\tdu %s\n' "$(dub "$d")" "$d" ;;
+        composer) has composer || return; d=$(COMPOSER_NO_INTERACTION=1 composer config --global cache-dir 2> /dev/null | tail -n 1); printf '%s\tdu %s\n' "$(dub "${d:-$HOME/.cache/composer}")" "${d:-$HOME/.cache/composer}" ;;
+        pnpm)
+            # The content store (pnpm store prune keeps what a project still links) and the metadata cache.
+            d="$HOME/.local/share/pnpm/store"
+            [ -d "$d" ] || [ -d "$HOME/.cache/pnpm" ] || return
+            printf '%s\tdu %s, ~/.cache/pnpm, up to\n' "$(dub "$d" "$HOME/.cache/pnpm")" "${d/#$HOME/\~}" ;;
+        pip) [ -n "$(pip_cmd)" ] || return; d=$($(pip_cmd) cache dir 2> /dev/null); printf '%s\tdu %s\n' "$(dub "${d:-$HOME/.cache/pip}")" "${d:-$HOME/.cache/pip}" ;;
+        chrome) [ -d "$HOME/.cache/google-chrome" ] || return
+            printf '%s\tdu ~/.cache/google-chrome%s\n' "$(dub "$HOME/.cache/google-chrome")" "$(chrome_running && echo ', skipped while Linux Chrome runs')" ;;
+    esac
+}
+clean() {
+    case "$1" in
+        npm) npm cache clean --force ;;
+        docker-build) "${DOCKER[@]}" builder prune -af ;;
+        docker-dangling) "${DOCKER[@]}" image prune -f ;;
+        apt) sudo -n apt-get clean ;;
+        brew) brew cleanup -s ;;
+        uv) uv cache prune ;;
+        go) go clean -cache ;;
+        composer) COMPOSER_NO_INTERACTION=1 composer clear-cache ;;
+        pnpm) if has pnpm && [ -d "$HOME/.local/share/pnpm/store" ]; then timeout 300 pnpm store prune || return 1; fi
+              rm -rf "$HOME/.cache/pnpm" ;;
+        pip) $(pip_cmd) cache purge ;;
+        chrome) chrome_running && return 3   # left while Linux Chrome runs
+                rm -rf "$HOME/.cache/google-chrome" ;;
+    esac
+}
+unused_images() {   # IMAGE-ID<TAB>BYTES<TAB>NAME for images no container (running or stopped) uses
+    [ ${#DOCKER[@]} -gt 0 ] || return 0
+    local used
+    used=$("${DOCKER[@]}" ps -aq 2> /dev/null | xargs -r "${DOCKER[@]}" inspect -f '{{.Image}}' 2> /dev/null | sort -u)
+    "${DOCKER[@]}" image ls -q --no-trunc 2> /dev/null | sort -u | while read -r id; do
+        grep -qx "$id" <<< "$used" && continue
+        "${DOCKER[@]}" image inspect -f '{{.Id}}	{{.Size}}	{{if .RepoTags}}{{index .RepoTags 0}}{{else}}<none>{{end}}' "$id" 2> /dev/null
+    done
+}
+DDEV_BAD=()
+for f in "$HOME/.ddev/.state.yaml" "$HOME/.ddev/.update"; do [ -f "$f" ] && [ ! -s "$f" ] && DDEV_BAD+=("$f"); done
+ddev_repair() {   # move each 0-byte state file aside; DDEV writes a new one on its next start
+    local f to
+    for f in "${DDEV_BAD[@]}"; do
+        to="$f.bak"; [ -e "$to" ] && to="$f.bak.$(date +%Y%m%d-%H%M%S)"
+        if mv "$f" "$to"; then echo "DDEV: moved the empty ${f/#$HOME/\~} aside (${to/#$HOME/\~}); 'ddev start' writes a new one."
+        else echo "DDEV: could not move ${f/#$HOME/\~} aside"; fi
+    done
+}
+
+read -r AVAIL SIZE MNT <<< "$(disk_line)"
+echo "Free space: $(human "$AVAIL") of $(human "$SIZE") (on $MNT)"
+if [ "$RUN" = 0 ]; then
+    echo
+    echo "Would free (devclean --run):"
+    TOTAL=0
+    for c in $CATS; do
+        line=$(size_of "$c") || true
+        [ -n "$line" ] || continue
+        b=${line%%$'\t'*}; how=${line#*$'\t'}
+        [[ "$b" =~ ^[0-9]+$ ]] || b=0
+        [ "$c" = chrome ] && chrome_running || TOTAL=$((TOTAL + b))
+        printf '  %-40s %10s   (%s)\n' "$(label "$c")" "$(human "$b")" "${how//$HOME/\~}"
+    done
+    [ ${#DOCKER[@]} -gt 0 ] || { has docker && echo "  (Docker isn't reachable: open a new terminal for the docker group, or start Docker)"; }
+    echo "  Total, about $(human "$TOTAL")"
+    if [ "$IMAGES" = 1 ]; then
+        imgs=$(unused_images)
+        echo
+        echo "With --images, Docker images no container uses (they download again the next time a demo or devsvc needs them):"
+        if [ -n "$imgs" ]; then
+            while IFS=$'\t' read -r _ b n; do printf '  %-50s %10s\n' "$n" "$(human "$b")"; done <<< "$imgs"
+            echo "  up to $(human "$(awk -F'\t' '{ s += $2 } END { printf "%.0f", s }' <<< "$imgs")") (layers can be shared)"
+        else
+            echo "  none"
+        fi
+    fi
+    [ ${#DDEV_BAD[@]} -gt 0 ] && echo
+    for f in "${DDEV_BAD[@]}"; do echo "DDEV: ${f/#$HOME/\~} is 0 bytes (a full disk does that; 'ddev start' then panics): devclean --run moves it aside."; done
+    echo
+    echo "Nothing was changed. 'devclean --run' clears these; 'devclean --help' lists what it never touches."
+    exit 0
+fi
+
+BEFORE=$AVAIL
+ddev_repair
+for c in $CATS; do
+    line=$(size_of "$c") || true
+    [ -n "$line" ] || continue
+    printf '%s ... ' "$(label "$c")"
+    out=$(clean "$c" 2>&1); rc=$?
+    case $rc in
+        0) echo "done" ;;
+        3) echo "left: Linux Chrome is running (close it, then devclean --run again)" ;;
+        *) echo "failed (devclean goes on):"; printf '%s\n' "$out" | tail -n 3 | sed 's/^/    /' ;;
+    esac
+done
+if [ "$IMAGES" = 1 ]; then
+    if [ ${#DOCKER[@]} -gt 0 ]; then
+        imgs=$(unused_images)
+        if [ -n "$imgs" ]; then
+            echo "Docker images no container uses, removed now (they download again when a demo or devsvc needs them):"
+            while IFS=$'\t' read -r _ b n; do printf '  %-50s %10s\n' "$n" "$(human "$b")"; done <<< "$imgs"
+        fi
+        printf 'docker image prune -a ... '
+        if out=$("${DOCKER[@]}" image prune -af 2>&1); then echo "done"; else echo "failed:"; printf '%s\n' "$out" | tail -n 3 | sed 's/^/    /'; fi
+    else
+        echo "--images: Docker isn't reachable, so no images were removed."
+    fi
+fi
+AFTER=$(free_bytes)
+echo
+echo "Free space: $(human "$BEFORE") before, $(human "$AFTER") after (freed $(human $(( AFTER > BEFORE ? AFTER - BEFORE : 0 ))))."
+exit 0
+DEVCLEAN_EOF
+chmod +x "$HOME/.local/bin/devclean.new"
+mv -f "$HOME/.local/bin/devclean.new" "$HOME/.local/bin/devclean"
+echo "Wrote ~/.local/bin/devclean (what fills the disk; 'devclean --run' clears the safe caches)."
 
 # =================================================================
 # SHARED HELPERS
@@ -834,8 +1328,8 @@ if [[ "$FLAGS" =~ " install-drupal " ]]; then
         echo "NOTICE: the Terminus rsync plugin did not install. By hand: terminus self:plugin:install pantheon-systems/terminus-rsync-plugin"
     fi
 
-    # DDEV: usage telemetry off, like npm / Angular / .NET / Vercel. Tokens for 'ddev pull' are dev-init's job.
-    ddev config global --instrumentation-opt-in=false < /dev/null > /dev/null 2>&1 || true
+    # DDEV: tokens for 'ddev pull' are dev-init's job. v96: its usage telemetry is turned off in base now, next
+    # to the router ports (DDEV is base; this flag alone left other machines asking on their first 'ddev start').
 
     echo "terminus: $(timeout 60 terminus --version --no-interaction < /dev/null 2>/dev/null | tail -n 1)   acli: $(timeout 60 acli --version --no-interaction < /dev/null 2>/dev/null | tail -n 1)   upsun: $(timeout 60 upsun --version < /dev/null 2>/dev/null | tail -n 1)"
     echo "Log in with dev-init (install-drupal): platform tokens from secrets.env, SSH key upload, DDEV global config."
@@ -1337,7 +1831,85 @@ if [[ "$FLAGS" =~ " install-windsurf " ]]; then
     echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/windsurf-stable.gpg] https://windsurf-stable.codeiumdata.com/wVxQEIWkwPUEAGf3/apt stable main" | sudo tee /etc/apt/sources.list.d/windsurf.list > /dev/null
     rm -f "$KEY_TMP"
     sudo apt update
-    sudo apt install -y windsurf
+    # v96: Windsurf is now Devin Desktop (1.126.0, Oct 26 2026): the package is devin-desktop, and windsurf is a
+    # transitional package that pulls it in. Install devin-desktop by name, or windsurf where the source has no
+    # devin-desktop yet. The flag keeps its name.
+    if apt-cache policy devin-desktop 2> /dev/null | grep -q 'Candidate: [0-9]'; then
+        sudo apt install -y devin-desktop
+    else
+        echo "NOTICE: the Windsurf apt source offers no devin-desktop package yet; installing windsurf."
+        sudo apt install -y windsurf
+    fi
+    # v96: Devin Desktop on X11, from its own launcher entry and a terminal wrapper (Oct 26 2026). Under ChromeOS's
+    # Wayland its window froze at sign-in (62 s of silence after devin.login, then "Fatal Wayland communication
+    # error: Broken pipe") or closed ("clean-exit"); not the extensions (--disable-extensions froze too), not the
+    # keyring. '--ozone-platform=x11' (XWayland) fixed it, as for Android Studio's dimming (v70). Two launcher
+    # findings: a copy of devin-desktop.desktop in ~/.local/share/applications with the flag added was NOT used by
+    # the ChromeOS launcher (the icon still started it on Wayland), while a separately named entry was; and the
+    # entry must go through /usr/bin/devin-desktop, not the Electron binary the stock entry runs: started bare,
+    # Electron resolves the shell environment itself ('bash -i -l'; "Unable to resolve your shell environment in a
+    # reasonable time") and the icon crashed within 5 s every time, while /usr/bin/devin-desktop, the CLI launcher
+    # script, sets VSCODE_CLI so that step is skipped (resolveShellEnv(): skipped) and it stayed up. So both the
+    # icon and the terminal run the wrapper below. The freezes that came back later were memory, not X11 (devmem,
+    # docs/crostini-gotchas.md). No extension is installed or removed here (CodeLLDB's Linux add-on is a manual
+    # install with --profile, in the init checklist).
+    if [ -x /usr/bin/devin-desktop ]; then
+        mkdir -p ~/.local/bin ~/.local/share/applications
+        DEVIN_WRAP="$HOME/.local/bin/devin-desktop"
+        for DEVIN_W in devin-desktop windsurf; do
+            [ "$DEVIN_W" = windsurf ] && [ ! -e /usr/bin/windsurf ] && { rm -f "$HOME/.local/bin/windsurf.new"; continue; }
+            printf '%s\n' '#!/bin/sh' \
+                "# $DEVIN_W: Devin Desktop (formerly Windsurf) on X11. Written by dev-setup (install-windsurf, v96) and rewritten" \
+                '# on every run. ChromeOS'"'"'s Wayland froze or closed its window (Oct 26 2026); --ozone-platform=x11 runs it on' \
+                '# XWayland. /usr/bin/devin-desktop by absolute path, so this never calls itself; CLI-only calls' \
+                '# (--install-extension, --list-extensions, --version) ignore the flag.' \
+                'exec /usr/bin/devin-desktop --ozone-platform=x11 "$@"' > "$HOME/.local/bin/$DEVIN_W.new"
+            chmod +x "$HOME/.local/bin/$DEVIN_W.new" && mv -f "$HOME/.local/bin/$DEVIN_W.new" "$HOME/.local/bin/$DEVIN_W"
+        done
+        # The entries are generated from the installed stock files on every run (not a frozen copy), so vendor changes
+        # to Icon, StartupWMClass or MimeType carry over. In each Exec= the program (first word, quoted or not) is
+        # replaced and the stock arguments (%F, --new-window %F) are kept. A .desktop file expands neither ~ nor $HOME,
+        # and the launcher has no ~/.local/bin on PATH, so the wrapper's path is written out.
+        DEVIN_STOCK=/usr/share/applications/devin-desktop.desktop
+        DEVIN_APPS="$HOME/.local/share/applications"
+        if [ -f "$DEVIN_STOCK" ]; then
+            # "Devin (X11)": the main group's names get " (X11)", every Exec= runs the wrapper, and no NoDisplay.
+            awk -v wrap="$DEVIN_WRAP" '
+                /^\[/ { main = ($0 == "[Desktop Entry]") }
+                main && /^NoDisplay=/ { next }
+                main && /^Name(\[[^]]*\])?=/ { print $0 " (X11)"; next }
+                /^Exec=/ { rest = substr($0, 6)
+                    if (rest ~ /^"/) { sub(/^"[^"]*"/, "", rest) } else { sub(/^[^ ]*/, "", rest) }
+                    print "Exec=" wrap rest; next }
+                { print }' "$DEVIN_STOCK" > "$DEVIN_APPS/devin-desktop-x11.desktop.new" \
+                && mv -f "$DEVIN_APPS/devin-desktop-x11.desktop.new" "$DEVIN_APPS/devin-desktop-x11.desktop"
+            # The stock entry, hidden: the same file plus NoDisplay=true in its main group. If the launcher ignores
+            # this override as it ignored an Exec= change, the stock icon simply stays (the hand check tells).
+            awk '/^\[/ { main = ($0 == "[Desktop Entry]") } main && /^NoDisplay=/ { next }
+                 { print } $0 == "[Desktop Entry]" { print "NoDisplay=true" }' "$DEVIN_STOCK" > "$DEVIN_APPS/devin-desktop.desktop.new" \
+                && mv -f "$DEVIN_APPS/devin-desktop.desktop.new" "$DEVIN_APPS/devin-desktop.desktop"
+            echo "Added Devin (X11) to the ChromeOS launcher ($DEVIN_APPS/devin-desktop-x11.desktop) and hid the stock icon."
+        else
+            echo "NOTICE: no $DEVIN_STOCK, so the Devin (X11) launcher entry was not made; 'devin-desktop' in a terminal still runs on X11."
+        fi
+        # The URL handler (devin:// links, e.g. the sign-in callback) keeps the Electron binary and --open-url %U (going
+        # through the CLI script there is untested) with the flag added after the program. xdg-open inside Linux
+        # follows this user-directory override, so a devin:// link starts it on X11 too.
+        DEVIN_URL=/usr/share/applications/devin-desktop-url-handler.desktop
+        if [ -f "$DEVIN_URL" ]; then
+            awk '/^Exec=/ { rest = substr($0, 6)
+                    if (rest ~ /^"/) { match(rest, /^"[^"]*"/) } else { match(rest, /^[^ ]*/) }
+                    if (index(rest, "--ozone-platform=x11") == 0) rest = substr(rest, 1, RLENGTH) " --ozone-platform=x11" substr(rest, RLENGTH + 1)
+                    print "Exec=" rest; next }
+                 { print }' "$DEVIN_URL" > "$DEVIN_APPS/devin-desktop-url-handler.desktop.new" \
+                && mv -f "$DEVIN_APPS/devin-desktop-url-handler.desktop.new" "$DEVIN_APPS/devin-desktop-url-handler.desktop"
+        fi
+        command -v update-desktop-database > /dev/null 2>&1 && update-desktop-database "$DEVIN_APPS" > /dev/null 2>&1 || true
+        echo "Devin Desktop: open 'Devin (X11)' from the launcher (machines set up before v96: shut Linux down once so it"
+        echo "               appears); 'devin-desktop' in a terminal runs it on X11 too ($DEVIN_WRAP)."
+    else
+        echo "NOTICE: /usr/bin/devin-desktop is missing (the source installed windsurf only), so no X11 launcher or wrapper was made."
+    fi
 else
     echo "Skipping Windsurf. (Run with 'install-windsurf' flag to enable)"
 fi
@@ -1374,6 +1946,113 @@ if [[ "$FLAGS" =~ " install-lazarus " ]]; then
     echo "Cleaning up Lazarus installers..."
     rm -f "$ASSETS"/downloads/fpc-laz_*.deb "$ASSETS"/downloads/fpc-src_*.deb "$ASSETS"/downloads/lazarus-project_*.deb
 
+    # v96: thread support for every compile: -dUseCThreads in ~/.fpc.cfg (Oct 26 2026: Lazarus's examples/TDaemon,
+    # dev-demo's copy, installed with 'sudo ./TestDaemon -i', then 'sudo ./TestDaemon -r' stopped with "This binary has
+    # no thread support compiled in" and runtime error 232). On Linux the RTL has no thread manager until the cthreads
+    # unit is loaded first, and Lazarus's templates and many of its examples load it only behind {$IFDEF UseCThreads},
+    # which nothing defines by default. fpc, lazbuild and both IDE profiles all read ~/.fpc.cfg. Not a Crostini
+    # difference: the same project fails the same way on any Linux. The IDE itself already uses cthreads (its own
+    # guard is DisableCThreads), so lazmode's builds come out the same.
+    # fpc reads only the FIRST config file it finds (./fpc.cfg, ~/.fpc.cfg, <fpc's dir>/../etc/fpc.cfg, /etc/fpc.cfg),
+    # so a ~/.fpc.cfg replaces the system file and must #INCLUDE it, or fpc loses its unit paths and nothing compiles.
+    FPC_SYS_CFG=""
+    FPC_BIN=$(command -v fpc 2> /dev/null || true)
+    for FPC_CAND in ${FPC_BIN:+"$(dirname "$(readlink -f "$FPC_BIN")")/../etc/fpc.cfg"} /etc/fpc.cfg; do
+        if [ -f "$FPC_CAND" ]; then FPC_SYS_CFG=$(realpath -s "$FPC_CAND"); break; fi
+    done
+    FPC_BLOCK=$(printf '%s\n' '# >>> dev-setup lazarus >>>' \
+        '# v96: thread support for programs whose uses clause has {$IFDEF UseCThreads} CThreads (Lazarus'"'"'s' \
+        '# templates and examples). Without it they stop with runtime error 232 when they start a thread.' \
+        '-dUseCThreads' '# <<< dev-setup lazarus <<<')
+    FPC_CFG="$HOME/.fpc.cfg"
+    if [ -z "$FPC_SYS_CFG" ]; then
+        echo "NOTICE: no system fpc.cfg found (looked next to fpc and in /etc), so ~/.fpc.cfg was not written:"
+        echo "        a ~/.fpc.cfg without '#INCLUDE <system fpc.cfg>' would cut fpc off from its units."
+    elif [ ! -f "$FPC_CFG" ]; then
+        printf '#INCLUDE %s\n%s\n' "$FPC_SYS_CFG" "$FPC_BLOCK" > "$FPC_CFG"
+        echo "Wrote ~/.fpc.cfg: #INCLUDE $FPC_SYS_CFG, then -dUseCThreads (thread support in Lazarus's templates and examples)."
+    else
+        # Your own -dUseCThreads (outside the marked block) is left alone; otherwise the block is rewritten in place,
+        # or appended to a file that can compile (it #INCLUDEs a system config or has its own -Fu unit paths).
+        FPC_OTHER=$(sed '/^# >>> dev-setup lazarus >>>$/,/^# <<< dev-setup lazarus <<<$/d' "$FPC_CFG")
+        if printf '%s\n' "$FPC_OTHER" | grep -qiE '^[[:space:]]*-dUseCThreads([[:space:]]|$)'; then
+            echo "~/.fpc.cfg: UseCThreads already set; left as it is."
+        elif ! printf '%s\n' "$FPC_OTHER" | grep -qiE '^[[:space:]]*(#INCLUDE[[:space:]]|-Fu)'; then
+            echo "NOTICE: ~/.fpc.cfg neither #INCLUDEs a system config nor has its own -Fu unit paths, so fpc cannot"
+            echo "        compile anything with it. Add '#INCLUDE $FPC_SYS_CFG' as its first line; setup left it unchanged."
+        else
+            awk -v block="$FPC_BLOCK" '
+                /^# >>> dev-setup lazarus >>>$/ { print block; skip = 1; done = 1; next }
+                skip && /^# <<< dev-setup lazarus <<<$/ { skip = 0; next }
+                !skip { print }
+                END { if (!done) print block }' "$FPC_CFG" > "$FPC_CFG.new" && mv -f "$FPC_CFG.new" "$FPC_CFG"
+            echo "~/.fpc.cfg: -dUseCThreads block in place (thread support in Lazarus's templates and examples)."
+        fi
+    fi
+
+    # v96: gdb and GNU Global, for 'lazmode vscode' (building and debugging Lazarus projects in VS Code, Cursor and
+    # Devin). gdb is the debugger Devin and Cursor drive through Native Debug (Oct 26 2026: it was not there without
+    # install-cpp, and Lazarus 4's own debugger is FpDebug); GNU Global (gtags, global) is what the Pascal extension
+    # (alefragnani.pascal) uses for Go to Definition and Find References, which otherwise says 'The "global" command
+    # is not available'.
+    sudo apt install -y gdb global
+
+    # v96: Go to Definition for Pascal (chosen Oct 27 2026, after the build found that gtags' built-in parsers don't
+    # read Pascal: the tags gtags wrote for TDaemon were empty, and the Pascal extension's README says Global needs a
+    # plug-in parser for it). universal-ctags parses the Pascal files (.pas .pp .lpr .inc .dpr); Global's built-in
+    # parsers keep everything else. Machine-wide, in ~/.globalrc, which Global reads when there is no $GTAGSCONF and
+    # no gtags.conf in the project (an editor started from its icon would not see an exported GTAGSCONF, and a file
+    # per project would sit outside .vscode). The block takes the native setup from the system gtags.conf by
+    # reference (tc=gtags@FILE, tc=htags@FILE), so Debian's file stays the source for everything but Pascal.
+    if apt-cache policy universal-ctags 2> /dev/null | grep -q 'Candidate: [0-9]'; then
+        sudo apt install -y universal-ctags
+    else
+        echo "NOTICE: no universal-ctags package in the apt sources, so Go to Definition for Pascal was skipped (GNU Global's"
+        echo "        own parsers don't read Pascal; the Pascal extension's code navigation finds nothing without it)."
+    fi
+    CTAGS_U=$(command -v ctags-universal 2> /dev/null || true)
+    if [ -z "$CTAGS_U" ] && ctags --version 2> /dev/null | grep -q 'Universal Ctags'; then CTAGS_U=$(command -v ctags); fi
+    GTAGS_SYS=""
+    for GTAGS_CAND in /etc/gtags/gtags.conf /etc/gtags.conf /usr/local/etc/gtags.conf; do
+        if [ -f "$GTAGS_CAND" ]; then GTAGS_SYS=$GTAGS_CAND; break; fi
+    done
+    GLOBALRC="$HOME/.globalrc"
+    if [ -z "$CTAGS_U" ]; then
+        echo "NOTICE: no Universal Ctags on PATH, so ~/.globalrc was not written (gtags would stop on every Pascal file)."
+    elif [ -z "$GTAGS_SYS" ]; then
+        echo "NOTICE: no system gtags.conf found (looked in /etc/gtags, /etc, /usr/local/etc), so ~/.globalrc was not written."
+    else
+        # Tabs and backslashes as gtags.conf wants them: a label, then capabilities on continued lines.
+        GLOBAL_BLOCK=$(printf '%s\n' '# >>> dev-setup lazarus >>>' \
+            '# v96: Pascal (.pas .pp .lpr .inc .dpr) through Universal Ctags, everything else through Global'"'"'s built-in' \
+            "# parsers, as $GTAGS_SYS sets them. Rewritten by dev-setup (install-lazarus) on every run." \
+            'default:\' \
+            '	:tc=dev-setup-pascal:' \
+            'dev-setup-pascal|built-in parsers, plus Universal Ctags for Pascal (dev-setup):\' \
+            "	:tc=gtags@$GTAGS_SYS:\\" \
+            "	:ctagscom=$CTAGS_U:\\" \
+            '	:ctagslib=$libdir/gtags/universal-ctags.la:\' \
+            '	:langmap=Pascal\:.pas.pp.lpr.inc.dpr:\' \
+            '	:gtags_parser=Pascal\:$ctagslib:\' \
+            "	:tc=htags@$GTAGS_SYS:" \
+            '# <<< dev-setup lazarus <<<')
+        GLOBAL_OTHER=$(sed '/^# >>> dev-setup lazarus >>>$/,/^# <<< dev-setup lazarus <<<$/d' "$GLOBALRC" 2> /dev/null || true)
+        if [ ! -f "$GLOBALRC" ]; then
+            printf '%s\n' "$GLOBAL_BLOCK" > "$GLOBALRC"
+            echo "Wrote ~/.globalrc: Pascal files through Universal Ctags for GNU Global (Go to Definition in the Pascal extension)."
+        elif printf '%s\n' "$GLOBAL_OTHER" | grep -qE '^default[:|]'; then
+            echo "NOTICE: your ~/.globalrc has its own 'default' label, so setup left it alone. For Pascal, add to that label:"
+            echo "        :langmap=Pascal\\:.pas.pp.lpr.inc.dpr: and :gtags_parser=Pascal\\:\$ctagslib: with Universal Ctags' ctagscom/ctagslib."
+        else
+            awk -v block="$GLOBAL_BLOCK" '
+                /^# >>> dev-setup lazarus >>>$/ { print block; skip = 1; done = 1; next }
+                skip && /^# <<< dev-setup lazarus <<<$/ { skip = 0; next }
+                !skip { print }
+                END { if (!done) print block }' "$GLOBALRC" > "$GLOBALRC.new" && mv -f "$GLOBALRC.new" "$GLOBALRC"
+            echo "~/.globalrc: the Pascal block is in place (GNU Global, Go to Definition in the Pascal extension)."
+        fi
+    fi
+
     # v94: the IDE rebuilt on Qt5, in a light and a dark profile, each with a docked and a floating layout
     # (Oct 24 2026: the stock GTK2 IDE drew some modal dialogs blank under Crostini, Run Parameters and New
     # Project among them, and they never took keyboard focus; removing gtk2-engines-pixbuf did not help, Qt5
@@ -1402,13 +2081,18 @@ if [[ "$FLAGS" =~ " install-lazarus " ]]; then
 # the "Lazarus" launcher) and dark (~/.lazarus-dark, "Lazarus (Dark)"), each built docked and floating.
 # Written by dev-setup and rewritten on every run: copy it before editing.
 #   lazmode status [--profile light|dark|both] [--check]       --check: exit 1 unless both layouts are built
-#                                                              and current and the install list follows the layout
+#                                                              and current and the install list follows the layout;
+#                                                              v96: exit 2 when only the IDE's docking option is off
+#                                                              while docked is active
 #   lazmode dock on|off [--profile light|dark|both]             docked or floating layout (copies a build; a
 #                                                              stale layout is rebuilt first)
 #   lazmode rebuild [--profile light|dark|both] [--add-package LPK...]
 #                                                              rebuild both layouts on Qt5, keep the active one
 #   lazmode theme                                              qt5ct (the dark profile's style and palette)
-# --profile defaults to both. v95: install packages from inside the IDE (Package > Install/Uninstall Packages, or
+#   lazmode vscode [DIR|PROJECT.lpi] [--profile light|dark] [--force]
+#                                                              v96: build and debug the project in VS Code, Cursor
+#                                                              or Devin: a Debug-gdb build mode and .vscode/ files
+# --profile defaults to both (vscode: dark when ~/.lazarus-dark exists). v95: install packages from inside the IDE (Package > Install/Uninstall Packages, or
 # when a project asks): the install list names the docking packages exactly while docked is active, so the IDE's
 # own rebuild keeps the layout it was started in, and lazmode adopts that build instead of overwriting it. The
 # other layout is then stale (built from an older list) and is rebuilt when you switch to it. 'lazmode rebuild
@@ -1509,15 +2193,20 @@ restore_lists() {   # restore_lists PROFILE_DIR: put back the list files of a v9
     done
     rm -rf "$s"
 }
-settle() {   # settle PROFILE LAYOUT: that layout active, and the install list following it
-    activate "$(pdir "$1")" "$2" && list_follow "$1" "$2"
+settle() {   # settle PROFILE LAYOUT: that layout active, the install list following it, the IDE's rebuilds on Qt5
+    activate "$(pdir "$1")" "$2" && list_follow "$1" "$2" || return 1
+    ide_target "$1" || true   # reported; never fails a switch
+    dock_options "$1" init || true
 }
 # Ctrl-C during a build: the layout that was active stays active, with its list.
 trap '[ -n "$ACTIVE" ] && settle "${ACTIVE% *}" "${ACTIVE##* }"; exit 130' INT TERM
 # listtool names|docking|remove FILE: the install list as the IDE reads it (LoadStringList: Item1..ItemCount,
 # empty or missing items skipped). names: the packages other than the docking ones, sorted, one line; docking:
 # exit 0 when a docking package is listed; remove: delete the docking items (the IDE skips a missing ItemN, so
-# the rest of the list is untouched; its next save writes the list out renumbered).
+# the rest of the list is untouched; its next save writes the list out renumbered). v96: version: the file's
+# MiscellaneousOptions/Version (0 when the file or the key is missing, as the IDE reads it). v96: targets: the
+# IDE's build profiles (Tools > Configure Build Lazarus), one "NAME<tab>WIDGETSET" line each (empty: none saved);
+# qt5: those that say gtk2 say qt5 instead, and the number changed is printed.
 listtool() {
     python3 - "$@" << 'LIST_PY'
 import re, sys
@@ -1528,6 +2217,26 @@ try:
         text = fh.read()
 except FileNotFoundError:
     text = ""
+if act == "version":
+    v = re.search(r'<MiscellaneousOptions(?:\s[^>]*)?>.*?<Version\s+Value="(\d+)"', text, re.S)
+    print(v.group(1) if v else 0)
+    sys.exit(0)
+if act in ("targets", "qt5"):
+    import html
+    pm = re.search(r'<Profiles(?:\s[^>]*)?(?<!/)>.*?</Profiles>', text, re.S)
+    if act == "targets":
+        prof = re.compile(r'<Profile(\d+)((?:\s[^>]*?)?)(?:/>|>(.*?)</Profile\1>)', re.S)
+        for m in prof.finditer(pm.group(0) if pm else ""):
+            n = re.search(r'Name="([^"]*)"', m.group(2))
+            w = re.search(r'<LCLPlatform\s+Value="([^"]*)"', m.group(3) or "")
+            print(html.unescape(n.group(1)) if n else "Profile" + m.group(1), w.group(1) if w else "", sep="\t")
+    else:
+        new, k = re.subn(r'<LCLPlatform\s+Value="gtk2"\s*/>', '<LCLPlatform Value="qt5"/>', pm.group(0) if pm else "")
+        if k:
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(text[:pm.start()] + new + text[pm.end():])
+        print(k)
+    sys.exit(0)
 block = re.compile(r'<StaticAutoInstallPackages(?:\s[^>]*)?(?<!/)>.*?</StaticAutoInstallPackages>', re.S)
 names = []
 m = block.search(text)
@@ -1574,6 +2283,104 @@ add_docking() {   # add_docking PROFILE NAME: put them in, with lazbuild's own w
       lazbuild ${pcp:+"$pcp"} --add-package "$dir/components/anchordocking/design/anchordockingdsgn.lpk" \
           "$dir/components/dockedformeditor/dockedformeditor.lpk"; } > "$log" 2>&1
     docking_listed "$d" || { echo "$1: could not add the docking packages to the install list (log: $log)"; return 1; }
+}
+# v96: Lazarus adds syneditdsgn to the install list in memory whenever miscellaneousoptions.xml is missing or
+# older than its version 3 (TBuildLazarusProfiles.Load: "if FileVersion<3 then ...Add('syneditdsgn')"), and
+# writes it out only when lazbuild saves the file, which --add-package does and a plain --build-ide does not.
+# So a new profile's floating build compiled SynEditDsgn but was recorded as built from the empty list on disk;
+# the docked build's --add-package then saved the list with syneditdsgn, and floating read as stale (Oct 26 2026:
+# dev-test FAIL "floating is stale: built from [], the list names [syneditdsgn]" on a fresh ~/.lazarus; the
+# floating log compiles allsyneditdsgn.pas). Writing the list out with lazbuild's own writer before any build
+# makes the list on disk the one lazbuild builds from: add the docking packages (that saves the file at
+# version 3 with Lazarus's defaults in it), and the floating build takes them out again as before.
+list_materialize() {   # list_materialize PROFILE: the install list on disk at version 3, as lazbuild reads it
+    local d v
+    d=$(pdir "$1")
+    v=$(listtool version "$d/miscellaneousoptions.xml") || return 1
+    [ "${v:-0}" -ge 3 ] 2> /dev/null && return 0
+    scrub_docking "$d" "$1" quiet && add_docking "$1" || return 1
+    echo "$1: install list written out with Lazarus's defaults: [$(list_names "$d")]"
+}
+# v96: the IDE's own rebuild (installing a package, Tools > Build Lazarus) builds for the widgetset its current build
+# profile names (Profile.TargetPlatform -> LCL_PLATFORM, ide/buildlazdialog.pas), and lazbuild saves the profiles
+# with gtk2 in all four: --ws only overrides the target in memory (lazbuild.lpr BuildLazarusIDE), so a save by
+# --add-package (list_materialize, the docked build) writes Lazarus's defaults, gtk2 on Linux, and nothing writes
+# Qt5. So the first package installed from the IDE rebuilt it on GTK2 (Oct 27 2026: the dark docked IDE, installing
+# lazdaemon for TDaemon, restarted light with a blank white dialog; adopt kept the build aside). The IDE reads an
+# explicit LCLPlatform only: missing means the widgetset it runs on. So gtk2, lazbuild's default, becomes qt5 in
+# every build profile; a widgetset you chose yourself (qt6, gtk3...) is left alone and shown by 'lazmode status'.
+# Not while Lazarus runs: the IDE saves its options on exit and would write gtk2 back.
+ide_target() {   # ide_target PROFILE: gtk2 in the IDE's build profiles becomes qt5
+    local d f n
+    d=$(pdir "$1"); f="$d/miscellaneousoptions.xml"
+    listtool targets "$f" | cut -f2 | grep -qx gtk2 || return 0
+    if running; then
+        echo "$1: the IDE's own rebuilds target gtk2 (Configure Build Lazarus); 'lazmode status' sets Qt5 once Lazarus is closed"
+        return 0
+    fi
+    cp -p "$f" "$LOGDIR/miscellaneousoptions-$1-$(date +%Y%m%d-%H%M%S).xml"
+    n=$(listtool qt5 "$f") || return 1
+    if listtool targets "$f" | cut -f2 | grep -qx gtk2; then echo "$1: could not set the IDE's build profiles to Qt5 in $f"; return 1; fi
+    echo "$1: the IDE's own rebuilds now target Qt5 ($n of its build profiles said gtk2, lazbuild's default; the old file is in $LOGDIR)"
+}
+# v96: the docked build's AnchorDockingDsgn docks the IDE only when <profile>/anchordockingoptions.xml says
+# EnableAnchorDock=True, and while DoneAskUserEnableAnchorDock isn't True the IDE's first start asks "single
+# window (docked) or multi window" and saves the answer there; both default to False (anchordesktopoptions.pas,
+# registeranchordocking.pas Register, anchordockdsgninitialsetupframe.pas RequireSetup/ApplySelection, Lazarus
+# 4.8). So a docked build opened undocked after multi window was picked at a first start, while 'lazmode status'
+# said docked (Oct 27 2026, the light profile). init: a missing file is written with both True (docked, and no
+# question), byte for byte what the IDE's TXMLConfig writes; an answer already saved is kept. on: 'lazmode dock
+# on' sets both True, since asking for docked means wanting docking on. 'dock off' leaves the file alone (the
+# floating build has no AnchorDocking). Not while Lazarus runs, as for ide_target.
+DOCKOPT=anchordockingoptions.xml
+dockopt() {   # dockopt get|init|on FILE. get: on, off, or unset (the IDE would ask)
+    python3 - "$@" << 'DOCKOPT_PY'
+import re, sys
+act, path = sys.argv[1], sys.argv[2]
+canon = ('<?xml version="1.0" encoding="UTF-8"?>\n<CONFIG>\n  <EnableAnchorDock Value="True"/>\n'
+         '  <DoneAskUserEnableAnchorDock Value="True"/>\n</CONFIG>\n')
+try:
+    text = open(path, encoding="utf-8").read()
+except FileNotFoundError:
+    text = None
+def val(key):
+    m = re.search(r'<%s\s+Value="([^"]*)"' % key, text or "")
+    return bool(m) and m.group(1).lower() == "true"
+if act == "get":
+    print("unset" if text is None else "on" if val("EnableAnchorDock")
+          else "off" if val("DoneAskUserEnableAnchorDock") else "unset")
+    sys.exit(0)
+if act == "init" and text is not None:
+    sys.exit(0)
+if text is None or "</CONFIG>" not in text:
+    new = canon
+else:
+    new = text
+    for key in ("EnableAnchorDock", "DoneAskUserEnableAnchorDock"):
+        el = '<%s Value="True"/>' % key
+        new, k = re.subn(r'<%s\s+Value="[^"]*"\s*/>' % key, el, new)
+        if not k:
+            new = new.replace("</CONFIG>", "  %s\n</CONFIG>" % el, 1)
+with open(path, "w", encoding="utf-8") as fh:
+    fh.write(new)
+DOCKOPT_PY
+}
+dock_options() {   # dock_options PROFILE init|on: docking on in the IDE's options (init: only when not saved yet)
+    local d f
+    d=$(pdir "$1"); f="$d/$DOCKOPT"
+    if [ "$2" = init ]; then [ -d "$d" ] && [ ! -e "$f" ] || return 0
+    elif [ "$(dockopt get "$f")" = on ]; then return 0; fi
+    if running; then
+        echo "$1: docking in the IDE's options ($DOCKOPT) is set once Lazarus is closed ('lazmode status', or 'lazmode dock on')"
+        return 0
+    fi
+    [ -f "$f" ] && cp -p "$f" "$LOGDIR/anchordockingoptions-$1-$(date +%Y%m%d-%H%M%S).xml"
+    dockopt "$2" "$f" && [ "$(dockopt get "$f")" = on ] || { echo "$1: could not turn docking on in $f"; return 1; }
+    if [ "$2" = init ]; then
+        echo "$1: docking turned on in the IDE's options ($f), so the docked build docks and doesn't ask single or multi window"
+    else
+        echo "$1: docking turned on in the IDE's options (it was off: multi window; the old file is in $LOGDIR)"
+    fi
 }
 list_follow() {   # list_follow PROFILE LAYOUT: the install list names the docking packages exactly while docked is active
     local d; d=$(pdir "$1")
@@ -1632,10 +2439,12 @@ adopt() {   # adopt PROFILE
 }
 
 cmd_status() {
-    local p d b f had now bad=0 ws
+    local p d b f had now bad=0 dbad=0 ws tg
     for p in "${PROFILES[@]}"; do
         d=$(pdir "$p"); b="$d/bin"
         adopt "$p"
+        ide_target "$p"
+        dock_options "$p" init
         now=$(list_names "$d")
         echo "$p profile ($d)"
         echo "  active layout   $(layout "$d")"
@@ -1669,6 +2478,27 @@ cmd_status() {
             [ "$(layout "$d")" != docked ] || bad=1
         fi
         [ -s "$d/lazmode-packages" ] && printf '  %-15s %s\n' "extra packages" "$(tr '\n' ' ' < "$d/lazmode-packages")"
+        # v96: the widgetset the IDE's own rebuilds target (see ide_target)
+        tg=$(listtool targets "$d/miscellaneousoptions.xml")
+        if [ -z "$tg" ]; then
+            printf '  %-15s %s\n' "IDE rebuilds" "the widgetset the IDE runs on (no build profiles saved yet)"
+        elif ! printf '%s\n' "$tg" | cut -f2 | grep -qvx 'qt5\|'; then
+            printf '  %-15s %s\n' "IDE rebuilds" "qt5 (all $(printf '%s\n' "$tg" | wc -l) build profiles, Tools > Configure Build Lazarus)"
+        else
+            printf '%s\n' "$tg" | while IFS=$'\t' read -r n w; do
+                case "$w" in qt5|'') ;; gtk2) printf '  %-15s %s\n' "IDE rebuilds" "'$n' targets gtk2: the IDE's own rebuild comes out GTK2 ('lazmode status' with Lazarus closed sets Qt5)" ;;
+                    *) printf '  %-15s %s\n' "IDE rebuilds" "'$n' targets $w (yours; lazmode keeps a build that is not Qt5 aside)" ;; esac
+            done
+            printf '%s\n' "$tg" | cut -f2 | grep -qx gtk2 && bad=1
+        fi
+        # v96: docking in the IDE's own options (see dock_options): the docked build docks only when it is on
+        case "$(dockopt get "$d/$DOCKOPT"):$(layout "$d")" in
+            on:*) printf '  %-15s %s\n' "IDE docking" "on (single window, $DOCKOPT)" ;;
+            off:docked) printf '  %-15s %s\n' "IDE docking" "off (multi window), so the docked build opens undocked: 'lazmode dock on --profile $p' turns it on, or 'lazmode dock off --profile $p' for the floating layout"; dbad=1 ;;
+            unset:docked) printf '  %-15s %s\n' "IDE docking" "not set: the docked build asks single or multi window at its next start ('lazmode dock on --profile $p' sets single)"; dbad=1 ;;
+            off:*) printf '  %-15s %s\n' "IDE docking" "off (multi window; the floating layout doesn't use it)" ;;
+            *) printf '  %-15s %s\n' "IDE docking" "not set yet (the floating layout doesn't use it)" ;;
+        esac
     done
     if [ -f "$DARK_DESKTOP" ]; then
         echo "dark launcher   $(grep -m1 '^Exec=' "$DARK_DESKTOP")"
@@ -1686,7 +2516,10 @@ cmd_status() {
         echo "qt5ct           no $QT5CT_CONF ('lazmode theme' writes one)"
     fi
     running && echo "Lazarus is running now."
-    [ "$CHECK" = 1 ] && return $bad
+    if [ "$CHECK" = 1 ]; then
+        [ "$bad" = 1 ] && return 1
+        [ "$dbad" = 1 ] && return 2   # v96: builds in order, only the IDE's docking option disagrees (no rebuild fixes it)
+    fi
     return 0
 }
 
@@ -1741,6 +2574,7 @@ build_layout() {   # build_layout PROFILE LAYOUT: one layout, recorded with the 
     d=$(pdir "$p")
     # The floating build runs with the docking packages out of the list; the docked build adds them itself
     # (--add-package). The caller then makes the list follow the active layout (settle).
+    list_materialize "$p" || return 1
     if [ "$lay" = floating ]; then scrub_docking "$d" "$p" quiet || return 1; fi
     build_one "$p" "$lay" && record_build "$d" "$lay"
 }
@@ -1773,6 +2607,7 @@ cmd_dock() {
             ACTIVE=""
         fi
         settle "$p" "$want" || die "$p: could not make $want active with its install list (see above)"
+        [ "$want" = docked ] && { dock_options "$p" on || true; }
         echo "$p: $want layout active (next IDE start)"
     done
 }
@@ -1805,6 +2640,15 @@ cmd_rebuild() {
         # Floating first, then docked; then the active layout is put back with its install list.
         ok=0
         build_layout "$p" floating && build_layout "$p" docked && ok=1
+        # v96: and a layout that a later build made stale (the docked build's --add-package saves the list, see
+        # list_materialize) is rebuilt once, so a rebuild ends with both layouts current or reports that it failed.
+        if [ "$ok" = 1 ]; then
+            for f in floating docked; do
+                is_current "$d" "$f" && continue
+                echo "$p: the $f layout is stale after the rebuild (built from [$(built_from "$d" "$f")], the list names [$(list_names "$d")]): rebuilding it"
+                build_layout "$p" "$f" && is_current "$d" "$f" || { echo "$p: the $f layout is still not current"; ok=0; break; }
+            done
+        fi
         if [ "$ok" = 1 ]; then
             settle "$p" "$was" || fail=1
             echo "$p: both layouts built on Qt5, $was active"
@@ -1818,6 +2662,356 @@ cmd_rebuild() {
     return $fail
 }
 
+# v96: lazmode vscode: build and debug a Lazarus project in VS Code, Cursor or Devin (Oct 26 2026: by hand in Devin on
+# TDaemon, lazbuild built the Debug mode and gdb through Native Debug stopped at a breakpoint on the worker thread).
+# lazbuild reads the .lpi as the IDE does, with the IDE's own --pcp, so packages installed from the IDE are found.
+# The two debuggers want opposite debug info (plan v96 item 5, choice B): Lazarus's FpDebug (VS Code's CNOC.fpdebug)
+# needs DWARF 3, while gdb reads strings only with "Dwarf 2 with sets" (-gw2 -godwarfsets; on DWARF 3 they showed as
+# <unknown>). So the project gains a second build mode, Debug-gdb, a copy of Debug on Dwarf 2 with sets: VS Code
+# builds Debug and debugs it with FpDebug, Devin and Cursor build Debug-gdb and debug it with gdb. Debug itself is
+# never changed. The .lpi keys are Lazarus 4.8's own (ide/packages/ideconfig/compileroptions.pp and
+# ide/packages/ideproject/project.pp): Linking/Debugging/DebugInfoType (dsDwarf3, dsDwarf2Set; dsAuto when absent),
+# GenerateDebugInfo (on when absent from compiler-options version 11), and the first build mode is the default, its
+# options in the top-level CompilerOptions, the others' in BuildModes/Item(N)/CompilerOptions. Executable paths are
+# asked of lazbuild (--get-expand-text='$(TargetFile)', Lazarus 4.8's ide/lazbuild.lpr; a build's "Linking" line
+# where that option is missing), never read from the .lpi: TDaemon's target is $(TargetCPU)-$(TargetOS)\Debug\...,
+# which a plain read got wrong (the hand-written launch.json pointed at ./TestDaemon).
+cmd_vscode() {
+    local target="" prof="" force=0 lpi pick lpis=()
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --profile) shift
+                case "${1:-}" in light|dark) prof=$1 ;; *) die "vscode: --profile takes light or dark, not '${1:-}'" ;; esac ;;
+            --profile=*) set -- --profile "${1#--profile=}" "${@:2}"; continue ;;
+            --force) force=1 ;;
+            -*) die "vscode: unknown option '$1' (lazmode help)" ;;
+            *) [ -z "$target" ] || die "vscode: one folder or .lpi at a time"; target=$1 ;;
+        esac
+        shift
+    done
+    target=${target:-.}
+    if [ -f "$target" ]; then
+        case "$target" in *.lpi) lpi=$(realpath "$target") ;; *) die "vscode: not a Lazarus project file (.lpi): $target" ;; esac
+    elif [ -d "$target" ]; then
+        mapfile -t lpis < <(find "$(realpath "$target")" -maxdepth 1 -type f -name '*.lpi' ! -name '.*' | sort)
+        case ${#lpis[@]} in
+            0) die "vscode: no .lpi in $(realpath "$target")" ;;
+            1) lpi=${lpis[0]} ;;
+            *) [ -t 0 ] || die "vscode: several projects in $(realpath "$target") (${lpis[*]##*/}): name the .lpi"
+               echo "Several projects in $(realpath "$target"): which one?"
+               select pick in "${lpis[@]##*/}"; do [ -n "$pick" ] && break; done
+               [ -n "$pick" ] || exit 1
+               lpi="$(realpath "$target")/$pick" ;;
+        esac
+    else
+        die "vscode: no such folder or .lpi: $target"
+    fi
+    command -v lazbuild > /dev/null || die "lazbuild not found: run dev-setup with install-lazarus"
+    # The profile you work in: dark when it exists, unless --profile light.
+    if [ -z "$prof" ]; then if [ -d "$DARK" ]; then prof=dark; else prof=light; fi; fi
+    command -v gdb > /dev/null || echo "NOTICE: gdb is not installed (rerun dev-setup with install-lazarus, v96 adds it); the (gdb) configuration needs it."
+    running && echo "NOTICE: Lazarus is running: if it has this project open, close it there first, or the IDE may save its own copy over the new build mode."
+    python3 - "$lpi" "$(pdir "$prof")" "$force" << 'VSCODE_PY'
+import copy, json, os, re, shlex, subprocess, sys
+import xml.etree.ElementTree as ET
+
+lpi, pcp, force = sys.argv[1], sys.argv[2], sys.argv[3] == "1"
+pdir, base = os.path.dirname(lpi), os.path.basename(lpi)
+name = os.path.splitext(base)[0]
+GDB_MODE = "Debug-gdb"
+
+
+def note(msg):
+    print("NOTICE: " + msg)
+
+
+def die(msg):
+    print("lazmode: vscode: " + msg, file=sys.stderr)
+    sys.exit(1)
+
+
+def items(bm):   # the build modes in order: plain <Item> lists, or legacy <Item1>..<ItemN> (with a Count)
+    if bm is None:
+        return []
+    its = [c for c in bm if c.tag == "Item"]
+    legacy = sorted((c for c in bm if re.fullmatch(r"Item\d+", c.tag)), key=lambda c: int(c.tag[4:]))
+    return its or legacy
+
+
+def modes(root):   # [(name, CompilerOptions element)]; the first mode is the default one, at the top level
+    out = []
+    for i, it in enumerate(items(root.find("ProjectOptions/BuildModes"))):
+        out.append((it.get("Name", ""), root.find("CompilerOptions") if i == 0 else it.find("CompilerOptions")))
+    return out or [("default", root.find("CompilerOptions"))]   # no build modes: an old project, one mode
+
+
+def find_mode(ms, want):
+    return next(((n, co) for n, co in ms if n.lower() == want.lower()), None)
+
+
+def dbginfo(co):   # (debug info on?, DebugInfoType) as Lazarus reads them
+    if co is None:
+        return False, "dsAuto"
+    v = co.find("Version")
+    ver = int(v.get("Value", "0")) if v is not None and v.get("Value", "").isdigit() else 0
+    g = co.find("Linking/Debugging/GenerateDebugInfo")
+    on = (g.get("Value", "") == "True") if g is not None else ver >= 11
+    t = co.find("Linking/Debugging/DebugInfoType")
+    return on, (t.get("Value") if t is not None and t.get("Value") else "dsAuto")
+
+
+def sub(parent, tag):
+    e = parent.find(tag)
+    if e is None:
+        e = ET.SubElement(parent, tag)
+    return e
+
+
+def lazbuild(*args):
+    return subprocess.run(["lazbuild", "--pcp=" + pcp, *args], cwd=pdir, capture_output=True, text=True)
+
+
+def target_of(mode, lpifile=lpi):
+    """The mode's executable, asked of lazbuild: --get-expand-text first, a build's Linking line otherwise."""
+    r = lazbuild("--bm=" + mode, "--get-expand-text=$(TargetFile)", lpifile)
+    lines = [l.strip() for l in r.stdout.splitlines() if l.strip()]
+    # A first run in a new profile prints a CopySecondaryConfigFile line before the answer.
+    if r.returncode == 0 and lines and lines[-1].startswith("/"):
+        return lines[-1], "--get-expand-text"
+    r = lazbuild("--bm=" + mode, lpifile)
+    links = re.findall(r"Linking (/\S+)", r.stdout + r.stderr)
+    if r.returncode == 0 and links:
+        return links[-1], "the Linking line of a build"
+    die("lazbuild found no executable for mode %s (build output: %s)" % (mode, (r.stdout + r.stderr).strip()[-600:]))
+
+
+raw = open(lpi, "rb").read()
+text = raw.decode("utf-8")
+try:
+    root = ET.fromstring(raw)
+except ET.ParseError as e:
+    die("%s is not valid XML: %s" % (base, e))
+ms = modes(root)
+default_name = ms[0][0]
+debug = find_mode(ms, "Debug")
+dbg_name = debug[0] if debug else default_name
+src_name, src_co = debug if debug else ms[0]
+
+# --- the Debug-gdb build mode -----------------------------------------------------------------------------------
+if find_mode(ms, GDB_MODE):
+    print("%s: a %s build mode is there already; left as it is." % (base, GDB_MODE))
+else:
+    co = copy.deepcopy(src_co) if src_co is not None else ET.Element("CompilerOptions")
+    if co.find("Version") is None:
+        ET.SubElement(co, "Version").set("Value", "11")
+    dbg = sub(sub(co, "Linking"), "Debugging")
+    on, _ = dbginfo(co)
+    if not on:   # with no Debug mode the copy is of the default one, with debug info turned on
+        sub(dbg, "GenerateDebugInfo").set("Value", "True")
+    sub(dbg, "DebugInfoType").set("Value", "dsDwarf2Set")
+    # v96 (chosen Oct 27 2026): own folders for Debug-gdb when Debug's paths don't vary by build mode. Lazarus 4.8's
+    # TDaemon writes $(TargetCPU)-$(TargetOS)\Debug\TestDaemon, a literal Debug, so the two modes overwrote each
+    # other's binary and units. A path with $(BuildMode) or $(BuildModeCaption) is left alone (Lazarus's macros for the
+    # mode, ide/buildmanager.pas; the plan's $(BuildModeName) is not one). Otherwise a folder named like the copied mode
+    # becomes Debug-gdb, or Debug-gdb is added (the target's folder, the unit path's last one).
+    pd = co.find("PathDelim")
+    delim = "\\" if pd is not None and pd.get("Value") == "\\" else "/"
+
+    def own_folder(path, target):
+        if re.search(r"\$\(BuildMode(Caption)?\)", path, re.I):
+            return None
+        parts = [x for x in re.split(r"[\\/]", path) if x != ""] if path else []
+        for i in range(len(parts) - 1 if target else len(parts)):
+            if parts[i].lower() == src_name.lower():
+                parts[i] = GDB_MODE
+                return delim.join(parts)
+        return delim.join(parts[:-1] + [GDB_MODE, parts[-1]]) if target else delim.join(parts + [GDB_MODE])
+
+    moved = []
+    t = co.find("Target/Filename")
+    if t is not None and t.get("Value"):
+        tpath = t.get("Value")
+    else:   # no target in the .lpi: the default one, as lazbuild has it, relative to the project
+        tpath = os.path.relpath(target_of(src_name)[0], pdir).replace("/", delim)
+    new_t = own_folder(tpath, True)
+    if new_t is not None:
+        sub(sub(co, "Target"), "Filename").set("Value", new_t)
+        moved.append("target %s" % new_t)
+    u = co.find("SearchPaths/UnitOutputDirectory")
+    new_u = own_folder(u.get("Value", "") if u is not None else "", False)
+    if new_u is not None:
+        sub(sub(co, "SearchPaths"), "UnitOutputDirectory").set("Value", new_u)
+        moved.append("units %s" % new_u)
+    cust = co.find("Other/CustomOptions")
+    if cust is not None and re.search(r"(^|\s)-g[wsl]?\d?(\s|$)", cust.get("Value", "")):
+        note("%s's custom options (%s) set debug info themselves, and Debug-gdb copies them: check Project Options >"
+             " Custom Options in Debug-gdb." % (src_name, cust.get("Value")))
+    bm = root.find("ProjectOptions/BuildModes")
+    legacy = bm is not None and bm.get("Count") is not None
+    if bm is None:   # an old project with no build modes: the default one has to be listed first
+        po_ver = root.find("ProjectOptions/Version")
+        legacy = po_ver is None or int(po_ver.get("Value", "0") or 0) <= 11
+    item = ET.Element("Item%d" % (len(items(bm)) + 1 if bm is not None else 2) if legacy else "Item")
+    item.set("Name", GDB_MODE)
+    item.append(co)
+
+    def snippet(elem, indent):
+        ET.indent(elem, space="  ")
+        s = ET.tostring(elem, encoding="unicode").replace(" />", "/>")
+        return "".join(indent + l + "\n" for l in s.splitlines())
+
+    m = re.search(r"^([ \t]*)</BuildModes>", text, re.M)
+    if bm is not None and m:
+        new = text[:m.start()] + snippet(item, m.group(1) + "  ") + text[m.start():]
+        if legacy:   # the item count of a legacy list
+            new = re.sub(r'(<BuildModes\b[^>]*\bCount=")(\d+)(")', lambda c: "%s%d%s" % (c.group(1), int(c.group(2)) + 1, c.group(3)), new, count=1)
+    else:
+        m = re.search(r"^([ \t]*)</ProjectOptions>", text, re.M)
+        if bm is not None or not m:
+            die("could not find where to add the build mode in %s; add a copy of %s named %s in Project Options > Build modes"
+                % (base, src_name, GDB_MODE))
+        ind = m.group(1) + "  "
+        if legacy:
+            head = '%s<BuildModes Count="2">\n%s  <Item1 Name="%s" Default="True"/>\n' % (ind, ind, default_name)
+        else:
+            head = '%s<BuildModes>\n%s  <Item Name="%s" Default="True"/>\n' % (ind, ind, default_name)
+        new = text[:m.start()] + head + snippet(item, ind + "  ") + "%s</BuildModes>\n" % ind + text[m.start():]
+    try:
+        ET.fromstring(new.encode("utf-8"))
+    except ET.ParseError as e:
+        die("the edited project did not parse (%s); %s is unchanged" % (e, base))
+    # Checked by lazbuild before it replaces the original: a hidden copy next to it (relative paths stay right),
+    # built without writing it back.
+    tmp = os.path.join(pdir, ".%s.lazmode.lpi" % name)
+    with open(tmp, "w", encoding="utf-8") as fh:
+        fh.write(new)
+    r = lazbuild("--bm=" + GDB_MODE, "--no-write-project", tmp)
+    for leftover in (tmp, os.path.splitext(tmp)[0] + ".lps"):
+        if leftover != tmp and os.path.exists(leftover):
+            os.remove(leftover)
+    if r.returncode != 0:
+        os.remove(tmp)
+        tail = "\n".join((r.stdout + r.stderr).strip().splitlines()[-12:])
+        die("lazbuild --bm=%s failed on the edited copy, so %s is unchanged (does the project build as it is? lazbuild"
+            " --bm=%s %s):\n%s" % (GDB_MODE, base, src_name, base, tail))
+    bak, made_bak = lpi + ".bak", False
+    if not os.path.exists(bak):   # the original, kept the first time only
+        with open(bak, "wb") as fh:
+            fh.write(raw)
+        made_bak = True
+    st = os.stat(lpi)
+    os.replace(tmp, lpi)
+    os.chmod(lpi, st.st_mode & 0o7777)
+    print("%s: added the %s build mode (a copy of %s on Dwarf 2 with sets, -gw2 -godwarfsets), checked with"
+          " lazbuild --bm=%s%s" % (base, GDB_MODE, src_name, GDB_MODE, "; the original is %s.bak" % base if made_bak else ""))
+    if moved:
+        print("%s: gave %s its own folders (%s's paths don't include $(BuildMode)): %s"
+              % (base, GDB_MODE, src_name, ", ".join(moved)))
+    root = ET.fromstring(new.encode("utf-8"))
+    ms = modes(root)
+
+# --- what each mode's debug info is -----------------------------------------------------------------------------
+on, t = dbginfo(find_mode(ms, dbg_name)[1])
+if not on:
+    note("%s has no debug info (Project Options > Debugging > Generate info for the debugger): FpDebug and gdb cannot stop"
+         " at breakpoints in it." % dbg_name)
+elif t != "dsDwarf3":
+    note("%s is on %s, but FpDebug (VS Code) needs DWARF 3: Project Options > Debugging > Type of debug info > Dwarf 3"
+         " (-gw3), in the %s mode (not changed here)." % (dbg_name, t, dbg_name))
+on, t = dbginfo(find_mode(ms, GDB_MODE)[1])
+if not on:
+    note("%s has no debug info: gdb cannot stop at breakpoints in it." % GDB_MODE)
+elif t != "dsDwarf2Set":
+    note("%s is on %s: gdb reads strings only with Dwarf 2 with sets (-gw2 -godwarfsets)." % (GDB_MODE, t))
+
+# --- the executables --------------------------------------------------------------------------------------------
+dbg_exe, how = target_of(dbg_name)
+gdb_exe, _ = target_of(GDB_MODE)
+print("Targets (from lazbuild, %s): %s %s, %s %s" % (how, dbg_name, dbg_exe, GDB_MODE, gdb_exe))
+if dbg_exe == gdb_exe:
+    note("%s and %s build the same file (%s): its path does not include $(BuildMode), so each launch's build step"
+         " rebuilds it for its own debugger." % (dbg_name, GDB_MODE, os.path.relpath(dbg_exe, pdir)))
+
+
+def ws(p):   # a path for the .vscode files: relative to the project folder when inside it
+    rel = os.path.relpath(p, pdir)
+    return p if rel.startswith("..") else "${workspaceFolder}/" + rel
+
+
+# The program's arguments: the project's own run parameters, else -r for a daemon (LazDaemon), which -r runs.
+params = ""
+for f in (lpi, os.path.splitext(lpi)[0] + ".lps"):
+    try:
+        e = ET.parse(f).getroot().find(".//RunParams//CommandLineParams")
+    except (OSError, ET.ParseError):
+        e = None
+    if e is not None and e.get("Value"):
+        params = e.get("Value")
+        break
+if not params and any((p.get("Value") or "").lower() == "lazdaemon" for p in root.iter("PackageName")):
+    params = "-r"
+
+# --- the .vscode files ------------------------------------------------------------------------------------------
+matcher = []
+for sev, words in (("error", "Error|Fatal"), ("warning", "Warning"), ("info", "Note|Hint")):
+    matcher.append({"owner": "fpc", "source": "fpc", "severity": sev, "fileLocation": ["autoDetect", "${workspaceFolder}"],
+                    "pattern": {"regexp": r"^(.+?)\((\d+)(?:,(\d+))?\)\s+(?:%s):\s+(?:\(\d+\)\s+)?(.*)$" % words,
+                                "file": 1, "line": 2, "column": 3, "message": 4}})
+
+
+def task(mode, clean, default=False):
+    t = {"label": "lazbuild (%s)%s" % (mode, ", clean" if clean else ""), "type": "process", "command": "lazbuild",
+         "args": ["--pcp=" + pcp, "--bm=" + mode] + (["-B"] if clean else []) + [base],
+         "options": {"cwd": "${workspaceFolder}"}, "group": {"kind": "build", "isDefault": True} if default else "build",
+         "presentation": {"clear": True}, "problemMatcher": matcher}
+    return t
+
+
+tasks = {"version": "2.0.0", "tasks": [task(dbg_name, False, True), task(GDB_MODE, False),
+                                       task(dbg_name, True), task(GDB_MODE, True)]}
+launch_comment = """// Written by 'lazmode vscode' (dev-setup v96); kept on later runs unless --force.
+// Two debuggers, one configuration for each editor:
+//   (FpDebug), for VS Code: Lazarus's own debugger (extension CNOC.fpdebug, on VS Code's marketplace only). It builds
+//     %(dbg)s (DWARF 3): strings, objects and Self readable in Variables and Watch, watches in Pascal.
+//   (gdb), for Devin and Cursor: gdb through Native Debug (webfreak.debug, on Open VSX). It builds %(gdb)s (Dwarf 2
+//     with sets): breakpoints, stepping, threads and the call stack work; print with 'p NAME' in the Debug Console
+//     (names in capitals; Self is 'this', fields 'this.FIELD'). Expanding a string in Variables fails (Native Debug
+//     builds C expressions) and file variables stay <unknown>: open the project in the Lazarus IDE for those.
+""" % {"dbg": dbg_name, "gdb": GDB_MODE}
+launch = {"version": "0.2.0", "configurations": [
+    {"name": "%s (FpDebug), for VS Code" % name, "type": "fpDebug", "request": "launch", "program": ws(dbg_exe),
+     "workingdirectory": "${workspaceFolder}", "parameters": shlex.split(params), "preLaunchTask": "lazbuild (%s)" % dbg_name},
+    {"name": "%s (gdb), for Devin and Cursor" % name, "type": "gdb", "request": "launch", "target": ws(gdb_exe),
+     "cwd": "${workspaceFolder}", "arguments": params, "valuesFormatting": "parseText",
+     "preLaunchTask": "lazbuild (%s)" % GDB_MODE}]}
+extensions = {"recommendations": ["alefragnani.pascal", "webfreak.debug", "CNOC.fpdebug"]}
+tagfiles = {"**/GTAGS": True, "**/GRTAGS": True, "**/GPATH": True}
+settings = {"pascal.codeNavigation": "workspace", "pascal.tags.autoGenerate": True,
+            "files.exclude": tagfiles, "search.exclude": tagfiles}
+
+vs = os.path.join(pdir, ".vscode")
+os.makedirs(vs, exist_ok=True)
+wrote, kept = [], []
+for fname, doc, head in (("tasks.json", tasks, ""), ("launch.json", launch, launch_comment),
+                         ("extensions.json", extensions, ""), ("settings.json", settings, "")):
+    path = os.path.join(vs, fname)
+    if os.path.exists(path) and not force:
+        kept.append(fname)
+        continue
+    with open(path + ".new", "w", encoding="utf-8") as fh:
+        fh.write(head + json.dumps(doc, indent=2) + "\n")
+    os.replace(path + ".new", path)
+    wrote.append(fname)
+if wrote:
+    print("Wrote .vscode/%s in %s" % (", .vscode/".join(wrote), pdir))
+if kept:
+    note("kept your .vscode/%s ('lazmode vscode --force' rewrites them)." % ", .vscode/".join(kept))
+print("Profile: %s (lazbuild --pcp=%s). Arguments for the program: %s." % (os.path.basename(pcp), pcp, params or "none"))
+print("Open the folder in an editor: code %s | cursor %s | devin-desktop %s" % ((shlex.quote(pdir),) * 3))
+print("  Ctrl+Shift+B builds %s; F5 picks the configuration: '(FpDebug), for VS Code' or '(gdb), for Devin and Cursor'." % dbg_name)
+VSCODE_PY
+}
+
 mkdir -p "$LOGDIR" 2> /dev/null && [ -w "$LOGDIR" ] || LOGDIR="$HOME/.cache/lazmode"
 mkdir -p "$LOGDIR"
 case "${1:-status}" in
@@ -1826,6 +3020,7 @@ case "${1:-status}" in
     rebuild) shift; cmd_rebuild "$@" ;;
     theme) command -v qt5ct > /dev/null || die "qt5ct is not installed: run dev-setup with install-lazarus"
            QT_QPA_PLATFORMTHEME=qt5ct exec qt5ct ;;
+    vscode) shift; cmd_vscode "$@" ;;
     help|-h|--help) usage ;;
     *) usage; exit 1 ;;
 esac
@@ -1868,14 +3063,20 @@ LAZMODE_EOF
         # this version and from the current install list (not stale after packages installed from the IDE), the
         # active bin/lazarus one of them, no docking class in the floating build, and the list following the active
         # layout. It also adopts an IDE-made build first. (v94 tested the binaries, the version and the list here.)
-        LAZ_OK=1
-        LAZ_ST=$("$HOME/.local/bin/lazmode" status --profile "$LAZ_P" --check 2>&1) || LAZ_OK=0
-        printf '%s\n' "$LAZ_ST" | grep -E 'adopted|kept aside' || true
+        # v96: and it sets the IDE's own build profiles to Qt5 (lazmode's ide_target), so a profile whose builds are
+        # already current is brought into line too, without a rebuild.
+        # v96: exit 2 means the builds are in order and only the IDE's docking option is off while docked is active
+        # (multi window picked at a first start): no rebuild fixes that, and the answer is yours, so a NOTICE.
+        LAZ_OK=1; LAZ_RC=0
+        LAZ_ST=$("$HOME/.local/bin/lazmode" status --profile "$LAZ_P" --check 2>&1) || LAZ_RC=$?
+        [ "$LAZ_RC" = 0 ] || [ "$LAZ_RC" = 2 ] || LAZ_OK=0
+        printf '%s\n' "$LAZ_ST" | grep -E 'adopted|kept aside|now target Qt5|rebuilds target gtk2|docking turned on|docking in the IDE' || true   # v96: and ide_target, dock_options
+        printf '%s\n' "$LAZ_ST" | sed -n "s/^  IDE docking  *\(off (multi window), so.*\|not set: .*\)/NOTICE: Lazarus $LAZ_P profile: docking in the IDE's options is \1/p"
         [ -d "$LAZ_PD/bin" ] || LAZ_OK=0
         if [ "$LAZ_OK" = 1 ]; then
             echo "Lazarus $LAZ_P profile: Qt5 builds for $LAZ_VER already in place and current ($(printf '%s\n' "$LAZ_ST" | sed -n 's/^  active layout *//p'))."
         else
-            [ -d "$LAZ_PD/bin" ] && printf '%s\n' "$LAZ_ST" | grep -E 'stale|missing|but docked|contains' | sed "s/^ */Lazarus $LAZ_P profile: /" | sort -u
+            [ -d "$LAZ_PD/bin" ] && printf '%s\n' "$LAZ_ST" | grep -E 'stale|missing|but docked|contains|targets gtk2' | sed "s/^ */Lazarus $LAZ_P profile: /" | sort -u
             LAZ_TODO+=("$LAZ_P")
         fi
     done
@@ -7756,6 +8957,11 @@ EOF_DBX
 #   delphi N launcher        point Delphi's own launcher entries at 'delphi N'
 #   delphi N ini save        keep the IDE's options (HKCU\Software\Borland in the prefix's registry) in
 #                            ~/.config/dev-retro/delphiN.reg; 'delphi N setup' restores them
+#   delphi N build PROJECT.dpr [OPTION...]
+#                            v96: compile with that version's dcc32.exe, console only, from the project's folder
+#                            (it reads the .cfg the IDE writes); Wine's drive paths in its messages become Linux paths
+#   delphi N vscode [DIR|PROJECT.dpr] [--force]
+#                            v96: .vscode/tasks.json (build, run) for VS Code, Cursor and Devin; no debugging there
 #   Settings per prefix: the Windows version Wine reports (3: win95, 4: win98, 5: win2k, 6: win2k, 7: winxp), black
 #   desktop, TEMP=C:\TEMP, MS Sans Serif -> Tahoma, corefonts + tahoma, fontsmooth=rgb. The integrated
 #   debugger stays on: 'delphi N help' notes what was found with each version.
@@ -8910,6 +10116,106 @@ EOF
         rm -f "$apps/dev-retro-delphi$DN.desktop"
     fi
 }
+# v96: build Delphi 3-7 projects outside the IDE, and from VS Code, Cursor or Devin (plan v96 item 5, asked Oct 26 2026).
+# dcc32.exe runs under Wine and reads the project's .dpr plus the .cfg the IDE writes next to it (search paths,
+# defines), so it builds what the IDE would. Console only, no virtual desktop. No debugging from the editors: Delphi
+# writes Borland's own debug format, which gdb and lldb can't read, and Wine's debugger is minimal.
+dn_dcc32() { find "$DN_PREFIX/drive_c" -maxdepth 6 -type f -ipath '*/delphi*/bin/dcc32.exe' 2> /dev/null | sort | head -n 1; }
+dn_unpath() {   # Wine drive paths at the start of dcc32's messages back to Linux ones (Z: is /, C: the prefix's drive_c)
+    awk -v c="$DN_PREFIX/drive_c" '
+        match($0, /^[A-Za-z]:\\[^(]*\(/) {
+            p = substr($0, 1, RLENGTH - 1); rest = substr($0, RLENGTH); d = tolower(substr(p, 1, 1))
+            p = substr(p, 3); gsub(/\\/, "/", p)
+            if (d == "c") p = c p; else if (d != "z") { print; next }
+            print p rest; next }
+        { print }'
+}
+dn_build() {   # dn_build PROJECT.dpr [DCC32 OPTION...]: dcc32 in the prefix, from the project's folder (so it reads the .cfg)
+    local dpr=${1:-} dcc dir rc
+    [ -n "$dpr" ] || die "usage: delphi $DN build PROJECT.dpr [dcc32 options]"
+    [ -f "$dpr" ] || die "no such file: $dpr"
+    case "$(lc "$dpr")" in *.dpr) ;; *) die "delphi $DN build takes a project file (.dpr), not $dpr" ;; esac
+    command -v wine > /dev/null || die "Wine is missing: rerun dev-setup with install-retro (it pulls in install-com)."
+    dcc=$(dn_dcc32)
+    [ -n "$dcc" ] || die "no dcc32.exe for $DN_TITLE in $DN_PREFIX: 'delphi $DN setup' installs Delphi with its command-line compiler."
+    dir=$(dirname "$(readlink -f "$dpr")")
+    cd "$dir" || exit 1
+    echo "dcc32 ($DN_TITLE): $(basename "$dpr") in $dir"
+    # Output keeps dcc32's own 'FILE(LINE) Error: ...' form; only Wine's drive paths become Linux paths.
+    WINEDEBUG=-all dn_wine wine "$dcc" "${@:2}" "$(basename "$dpr")" 2>&1 < /dev/null | tr -d '\r' | dn_unpath
+    rc=${PIPESTATUS[0]}
+    WINEPREFIX="$DN_PREFIX" timeout 30 wineserver -w 2> /dev/null
+    return "$rc"
+}
+dn_vscode() {   # dn_vscode [DIR|PROJECT.dpr] [--force]: .vscode/tasks.json (build, run) and extensions.json
+    local target="" force=0 dpr pick dprs=()
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --force) force=1 ;;
+            -*) die "delphi $DN vscode: unknown option '$1'" ;;
+            *) [ -z "$target" ] || die "delphi $DN vscode: one folder or .dpr at a time"; target=$1 ;;
+        esac
+        shift
+    done
+    target=${target:-.}
+    if [ -f "$target" ]; then
+        case "$(lc "$target")" in *.dpr) dpr=$(readlink -f "$target") ;; *) die "not a Delphi project file (.dpr): $target" ;; esac
+    elif [ -d "$target" ]; then
+        mapfile -t dprs < <(find "$(readlink -f "$target")" -maxdepth 1 -type f -iname '*.dpr' | sort)
+        case ${#dprs[@]} in
+            0) die "no .dpr in $(readlink -f "$target")" ;;
+            1) dpr=${dprs[0]} ;;
+            *) [ -t 0 ] || die "several projects in $(readlink -f "$target") (${dprs[*]##*/}): name the .dpr"
+               echo "Several projects here: which one?"
+               select pick in "${dprs[@]##*/}"; do [ -n "$pick" ] && break; done
+               [ -n "$pick" ] || exit 1
+               dpr="$(readlink -f "$target")/$pick" ;;
+        esac
+    else
+        die "no such folder or .dpr: $target"
+    fi
+    [ -n "$(dn_dcc32)" ] || echo "NOTE: no dcc32.exe in $DN_PREFIX yet ('delphi $DN setup'): the build task needs it."
+    python3 - "$dpr" "$DN" "$HOME/.local/bin/delphi" "$force" << 'DNVSCODE_PY'
+import json, os, sys
+dpr, n, cmd, force = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4] == "1"
+pdir, base = os.path.dirname(dpr), os.path.basename(dpr)
+exe = os.path.splitext(base)[0] + ".exe"
+matcher = []
+for sev, words in (("error", "Error|Fatal"), ("warning", "Warning"), ("info", "Hint")):
+    matcher.append({"owner": "dcc32", "source": "dcc32", "severity": sev, "fileLocation": ["autoDetect", "${workspaceFolder}"],
+                    "pattern": {"regexp": r"^(.+?)\((\d+)\)\s+(?:%s):\s+(?:[EFWH]\d+\s+)?(.*)$" % words,
+                                "file": 1, "line": 2, "message": 3}})
+tasks = {"version": "2.0.0", "tasks": [
+    {"label": "delphi %s build" % n, "type": "process", "command": cmd, "args": [n, "build", base],
+     "options": {"cwd": "${workspaceFolder}"}, "group": {"kind": "build", "isDefault": True},
+     "presentation": {"clear": True}, "problemMatcher": matcher},
+    {"label": "delphi %s run" % n, "type": "process", "command": cmd, "args": [n, "run", exe],
+     "options": {"cwd": "${workspaceFolder}"}, "problemMatcher": []}]}
+head = """// Written by 'delphi %(n)s vscode' (dev-setup v96); kept on later runs unless --force.
+// Ctrl+Shift+B builds with Delphi %(n)s's dcc32.exe under Wine (it reads %(base)s and the .cfg the IDE writes next to
+// it); the run task starts %(exe)s in the Delphi %(n)s desktop. There is no launch.json on purpose: Delphi writes
+// Borland's own debug format, which gdb and lldb can't read, and Wine's debugger is minimal, so debugging stays in
+// the Delphi IDE ('delphi %(n)s') or a real Windows guest (dev-demo's retro/matrix, STEPS-delphi.md).
+""" % {"n": n, "base": base, "exe": exe}
+vs = os.path.join(pdir, ".vscode")
+os.makedirs(vs, exist_ok=True)
+wrote, kept = [], []
+for fname, doc, h in (("tasks.json", tasks, head), ("extensions.json", {"recommendations": ["alefragnani.pascal"]}, "")):
+    path = os.path.join(vs, fname)
+    if os.path.exists(path) and not force:
+        kept.append(fname)
+        continue
+    with open(path + ".new", "w", encoding="utf-8") as fh:
+        fh.write(h + json.dumps(doc, indent=2) + "\n")
+    os.replace(path + ".new", path)
+    wrote.append(fname)
+if wrote:
+    print("Wrote .vscode/%s in %s" % (", .vscode/".join(wrote), pdir))
+if kept:
+    print("NOTE: kept your .vscode/%s ('delphi %s vscode --force' rewrites them)." % (", .vscode/".join(kept), n))
+print("Ctrl+Shift+B: 'delphi %s build %s'; the 'delphi %s run' task starts %s. No debugging from the editor." % (n, base, n, exe))
+DNVSCODE_PY
+}
 dn_list() {   # 'delphi' alone: every version's state
     local n media
     printf '%-9s %-15s %-14s %s\n' VERSION WINDOWS STATE "MEDIA (~/delphi/install/N)"
@@ -8923,7 +10229,7 @@ dn_list() {   # 'delphi' alone: every version's state
     done
     echo "'delphi N setup' installs one, 'delphi N' starts it; Delphi 1: 'delphi1'. Real Windows guests: STEPS-delphi.md (dev-demo retro/matrix)."
 }
-delphi_n_cmd() {   # delphi [N [setup|run|launcher|ini|where|status|help] ...]
+delphi_n_cmd() {   # delphi [N [setup|run|build|vscode|launcher|ini|where|status|help] ...]
     local a
     case "${1:-}" in
         ""|list) dn_list; return ;;
@@ -8937,6 +10243,8 @@ delphi_n_cmd() {   # delphi [N [setup|run|launcher|ini|where|status|help] ...]
             dn_desktop "$(basename "$(dn_ide)")" ;;
         setup) shift; dn_setup "${1:-}" ;;
         run) shift; [ -f "${1:-}" ] || die "usage: delphi $DN run PROGRAM.EXE"; dn_desktop "$(readlink -f "$1")" "${@:2}" ;;
+        build) shift; dn_build "$@" ;;
+        vscode) shift; dn_vscode "$@" ;;
         launcher) dn_launcher ;;
         where) where_cmd "delphi$DN" ;;
         status) status_cmd "delphi$DN" ;;
@@ -9534,7 +10842,7 @@ echo "Cleaning up system packages..."
 sudo apt autoremove -y
 
 echo "================================================================="
-echo "Setup Version 95 complete! 🎉"
+echo "Setup Version 96 complete! 🎉"
 echo "NEXT, in this order:"
 echo "  a. source ~/.bashrc                      (or open a new terminal)"
 echo "  b. ./dev-init-chromebook.sh <flags>  applies ~/.config/dev-init/secrets.env: GitHub, Hugging Face,"

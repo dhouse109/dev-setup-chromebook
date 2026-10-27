@@ -1,5 +1,5 @@
 #!/bin/bash
-# dev-test-chromebook - Version 95
+# dev-test-chromebook - Version 96
 # Version history: CHANGELOG.md, next to this script in the bundle
 # (one section per script, newest version first).
 #
@@ -423,7 +423,7 @@ info()  { printf '  %-62s %s\n' "$1" "${DIM}INFO${RST} $2"; echo "--- $1: INFO $
 # v92: a check that cannot run because an earlier one already failed for the same cause (counted as SKIP).
 skipped() { printf '  %-62s %s\n' "$1" "${DIM}SKIP${RST} $2"; SKIP=$((SKIP + 1)); LAST=skip; echo "--- $1: SKIP $2" >> "$LOG"; }
 
-echo "Testing Chromebook Linux provisioning (Version 95)... log: $LOG"
+echo "Testing Chromebook Linux provisioning (Version 96)... log: $LOG"
 [ "$QUICK" = 1 ] && echo "(quick mode: slow functional tests will be skipped)"
 
 # v68: say so when dev-init has not applied the secrets file yet. Filling in secrets.env logs
@@ -510,6 +510,77 @@ hint  "rerun the installer (any flags): v68 replaces the bare brew shellenv line
 # already contains Homebrew and would hide exactly this kind of ordering problem.
 check "a new interactive shell starts without errors"      'e=$(timeout 30 setsid -w env -i HOME="$HOME" USER="$USER" LOGNAME="$USER" SHELL=/bin/bash TERM=xterm-256color PATH=/usr/local/bin:/usr/bin:/bin bash -ic true < /dev/null 2>&1 > /dev/null | grep -v -e "cannot set terminal process group" -e "no job control in this shell"); [ -z "$e" ] || { echo "$e" | head -n 5; exit 1; }' 60
 hint  "these lines come from ~/.bashrc; 'command not found' there usually means a line needs a tool whose PATH entry comes later in the file"
+# v96: how long a new LOGIN shell takes (Oct 26 2026: Devin Desktop's first launcher-started log said "Unable to
+# resolve your shell environment in a reasonable time"). VS Code-based editors started from a launcher icon run
+# '$SHELL -i -l' to read its environment and give up after 10 s; the editor, its terminal tasks and its extensions
+# then run without the PATH ~/.bashrc builds, and nothing says why. Devin skips that step since v96 (its launcher
+# goes through /usr/bin/devin-desktop, which sets VSCODE_CLI); VS Code's and Cursor's icons still run it. The v74
+# check above is about errors, this one about time: three runs under the same harness, the median in the label
+# (and so in the log), WARN from 5 s, FAIL from 10 s. On WARN or FAIL one more run traces itself (PS4 with
+# $EPOCHREALTIME and the file:line, bash -x) into the scratch folder, and the hint lists the five slowest lines.
+cat > "$WORK/login_time.sh" << 'LOGIN_EOF'
+export LC_ALL=C   # $EPOCHREALTIME's decimal point follows the locale
+run_login() {   # run_login [bash option...]: one new login shell, as an editor starts it (v74's harness)
+    local extra=()
+    [ -n "${PS4_SET:-}" ] && extra=(PS4="$PS4_SET")
+    # -k 5: an interactive bash ignores SIGTERM, so a hung one needs the KILL that follows.
+    timeout -k 5 30 setsid -w env -i HOME="$HOME" USER="$USER" LOGNAME="$USER" SHELL=/bin/bash TERM=xterm-256color \
+        PATH=/usr/local/bin:/usr/bin:/bin "${extra[@]}" bash "$@" -i -l -c true < /dev/null
+}
+case "$1" in
+    measure)   # the median of three runs in ms, or "timeout" when one ran past 30 s
+        t=()
+        for i in 1 2 3; do
+            s=$EPOCHREALTIME; run_login > /dev/null 2>&1; rc=$?; e=$EPOCHREALTIME
+            [ "$rc" -eq 124 ] || [ "$rc" -eq 137 ] && { echo timeout; exit 0; }
+            t+=("$(awk -v s="$s" -v e="$e" 'BEGIN { printf "%d", (e - s) * 1000 }')")
+        done
+        printf '%s\n' "${t[@]}" | sort -n | sed -n 2p ;;
+    slow)   # the five slowest traced lines (time to the next trace line), or where a hung shell stopped
+        tr="$WORK/login-trace.txt"
+        # PS4 in single quotes: the traced shell expands it at each line.
+        PS4_SET='+ $EPOCHREALTIME ${BASH_SOURCE:-?}:$LINENO ' run_login -x > /dev/null 2> "$tr"; rc=$?; e=$EPOCHREALTIME
+        lines() {   # SECONDS<TAB>FILE:LINE<TAB>TRACED TEXT, in trace order
+            awk -v end="$e" '
+                /^\++ [0-9]+[.,][0-9]+ / { ts = $2; sub(",", ".", ts)
+                    if (n) d[n] = ts - t[n]
+                    n++; t[n] = ts; loc[n] = $3; x = $0; sub(/^\++ [^ ]+ [^ ]+ ?/, "", x); txt[n] = x; next }
+                END { if (n) d[n] = end - t[n]; for (i = 1; i <= n; i++) printf "%.2f\t%s\t%s\n", d[i], loc[i], txt[i] }' "$tr"
+        }
+        show() {   # one line: seconds, file:line with ~ for $HOME, and the source line (the traced text if unreadable)
+            local sec=$1 loc=$2 txt=$3 f n src=""
+            f=${loc%:*}; n=${loc##*:}
+            [ -f "$f" ] && [ "$n" -gt 0 ] 2> /dev/null && src=$(sed -n "${n}{s/^[[:space:]]*//;p}" "$f")
+            printf '        %8s  %s  %s\n' "$sec" "${loc/#$HOME/\~}" "$(printf '%s' "${src:-$txt}" | cut -c1-100)"
+        }
+        if [ "$rc" -eq 124 ] || [ "$rc" -eq 137 ]; then
+            echo "        the traced shell was still running after 30 s; the last line it traced:"
+            lines | tail -n 1 | while IFS=$'\t' read -r _ loc txt; do show "hung" "$loc" "$txt"; done
+        elif [ ! -s "$tr" ]; then
+            echo "        no trace came back (the shell printed nothing on stderr with -x)"
+        else
+            echo "        the five slowest lines of one traced run (trace: $tr):"
+            lines | sort -t $'\t' -k1,1 -rn | head -n 5 | while IFS=$'\t' read -r sec loc txt; do show "$sec s" "$loc" "$txt"; done
+        fi ;;
+esac
+LOGIN_EOF
+LOGIN_MS=$(bash "$WORK/login_time.sh" measure 2> /dev/null)
+case "$LOGIN_MS" in
+    timeout) LOGIN_S="over 30 s" ;;
+    ''|*[!0-9]*) LOGIN_MS=""; LOGIN_S="not measured" ;;
+    *) LOGIN_S="$(awk -v m="$LOGIN_MS" 'BEGIN { printf "%.1f s", m / 1000 }')" ;;
+esac
+echo "--- login shell (bash -i -l), median of 3 runs: $LOGIN_S" >> "$LOG"
+if [ -n "$LOGIN_MS" ] && [ "$LOGIN_MS" != timeout ] && [ "$LOGIN_MS" -lt 10000 ]; then
+    warn  "a new login shell starts in under 5 s ($LOGIN_S)" "echo \"median of 3 runs: $LOGIN_S (WARN from 5 s; VS Code's limit is 10 s)\"; [ $LOGIN_MS -lt 5000 ]" 60
+else
+    LOGIN_WHAT="median of 3 runs: $LOGIN_S"; [ "$LOGIN_MS" = timeout ] && LOGIN_WHAT="a run was still going after 30 s"
+    check "a new login shell starts in under 5 s ($LOGIN_S)" "echo \"$LOGIN_WHAT; past 10 s an editor started from its icon (VS Code, Cursor) runs without your PATH\"; exit 1" 60
+fi
+hint  "~/.bashrc (or ~/.profile) is slow to start; the lines below took longest in one traced run ('bash -x -i -l -c true' shows the rest)"
+if [ "$LAST" = warn ] || [ "$LAST" = fail ]; then
+    bash "$WORK/login_time.sh" slow 2>&1 | tee -a "$LOG"
+fi
 check "an interactive shell has /usr/bin ahead of Homebrew" 'p=$(timeout 30 setsid -w bash -ic "echo \"\$PATH\"" < /dev/null 2> /dev/null | tail -n 1); [ -n "$p" ] || { echo "could not read PATH from an interactive shell"; exit 1; }; echo "$p" | tr ":" "\n" | grep -n -x -e /usr/bin -e /home/linuxbrew/.linuxbrew/bin; u=$(echo "$p" | tr ":" "\n" | grep -n -x /usr/bin | head -n 1 | cut -d: -f1); b=$(echo "$p" | tr ":" "\n" | grep -n -x /home/linuxbrew/.linuxbrew/bin | head -n 1 | cut -d: -f1); [ -n "$u" ] && [ -n "$b" ] && [ "$u" -lt "$b" ]' 60
 hint  "something later in ~/.bashrc puts Homebrew back in front; look for a second brew shellenv line"
 check "python3 on PATH is Debian's"                        'p=$(command -v python3); echo "$p -> $(python3 --version)"; [ "$p" = /usr/bin/python3 ]'
@@ -528,6 +599,94 @@ check "mkcert installed and local CA present"              'mkcert -CAROOT && [ 
 check "mkcert issues a localhost cert"                     'mkcert -cert-file t.pem -key-file t-key.pem localhost 2>&1 && [ -s t.pem ]'
 check "Google Chrome"                                      'google-chrome-stable --version'
 slow  "Chrome headless renders a page"                     'google-chrome-stable --headless=new --disable-gpu --no-sandbox --dump-dom "data:text/html,<title>ok</title>" | grep -q "<title>ok</title>"' 90
+# v96: devmem, the memory report (Oct 26 2026: ChromeOS had taken ~2.5 GB back from Linux while Devin froze).
+cat > "$WORK/devmem_check.sh" << 'DEVMEM_EOF'
+case "$1" in
+    sections)   # exits 0, with every section
+        o=$(devmem) || { echo "devmem exited $?"; exit 1; }
+        for s in '^Memory: ' '^Where "used" is:' '^Top programs by memory:' '^Verdict:'; do
+            grep -q "$s" <<< "$o" || { echo "no section matching $s"; exit 1; }
+        done
+        echo "$o" | head -n 1 ;;
+    brief)   # the memory line and the verdict: a handful of lines
+        o=$(devmem --brief) || { echo "devmem --brief exited $?"; exit 1; }
+        n=$(grep -c . <<< "$o"); echo "$n lines"
+        grep -q '^Memory: ' <<< "$o" && grep -q '^Verdict:' <<< "$o" && [ "$n" -le 10 ] ;;
+    taken)   # "taken back by ChromeOS" is a size between 0 and the total
+        o=$(devmem) || exit 1
+        t=$(sed -n 's/^Memory: \([0-9.]* [MG]B\) total.*/\1/p' <<< "$o")
+        c=$(sed -n 's/^  taken back by ChromeOS (estimate) *\([0-9.]* [MG]B\).*/\1/p' <<< "$o")
+        echo "taken back by ChromeOS: ${c:-?} of ${t:-?}"
+        [ -n "$t" ] && [ -n "$c" ] || exit 1
+        awk -v t="$t" -v c="$c" 'function mb(x, a) { split(x, a, " "); return a[2] == "GB" ? a[1] * 1024 : a[1] }
+            BEGIN { exit !(mb(c) >= 0 && mb(c) <= mb(t)) }' ;;
+esac
+DEVMEM_EOF
+check "devmem: Memory, Where, Top programs and Verdict"     'bash devmem_check.sh sections'
+hint  "rerun setup (any flags): v96 writes ~/.local/bin/devmem"
+check "devmem --brief prints a few lines"                  'bash devmem_check.sh brief'
+check "devmem: 'taken back by ChromeOS' is between 0 and the total" 'bash devmem_check.sh taken'
+# v96 (plan item 8): devclean, the disk cleanup. Its report must change nothing: the caches it would clear and DDEV's
+# state files are listed (names, sizes, times) before and after a plain 'devclean'. --run isn't run here (it clears
+# your caches); its hand check is in the v96 plan.
+cat > "$WORK/devclean_check.sh" << 'DEVCLEAN_EOF'
+snap() {   # the first cache folder there, and DDEV's state files
+    local d
+    for d in "$HOME/.npm/_cacache" "${XDG_CACHE_HOME:-$HOME/.cache}/go-build" "$HOME/.cache/pip" "$HOME/.cache/composer" "$HOME/.cache/uv"; do
+        [ -d "$d" ] && { echo "$d"; find "$d" -printf '%P %s %T@\n' 2> /dev/null | sort; break; }
+    done
+    for d in "$HOME/.ddev/.state.yaml" "$HOME/.ddev/.update"; do [ -e "$d" ] && stat -c '%n %s %Y' "$d"; done
+}
+case "$1" in
+    report)   # runs, exits 0, and changes nothing
+        a=$(snap); o=$(devclean) || { echo "devclean exited $?"; exit 1; }
+        b=$(snap)
+        printf '%s\n' "$o" | grep -E '^(Free space|  Total)'
+        # v96: the first line by expansion, not 'printf | head -n 1': head exits after one line and printf, still
+        # writing a large snapshot, logged "printf: write error: Broken pipe" (Oct 26 2026, a passing run).
+        f=${a%%$'\n'*}
+        [ "$a" = "$b" ] || { echo "the report changed $f"; exit 1; }
+        echo "unchanged: ${f/#$HOME/\~}" ;;
+    help)   # the never-touch list, with each entry
+        h=$(devclean --help) || exit 1
+        for w in 'docker system prune' 'Docker volumes' 'ms-playwright' 'Hugging Face' 'Ollama models' '~/dev-demo' 'DDEV projects'; do
+            grep -qF "$w" <<< "$h" || { echo "--help does not name: $w"; exit 1; }
+        done
+        echo "all seven named" ;;
+esac
+DEVCLEAN_EOF
+check "devclean: the report runs and changes nothing"             'bash devclean_check.sh report' 300
+hint  "rerun setup (any flags): v96 writes ~/.local/bin/devclean"
+check "devclean --help names what it never touches"                'bash devclean_check.sh help'
+# v96: DDEV's router on 8080/8443, since ChromeOS passes high ports to Linux but not 80 and 443 (Oct 26 2026:
+# ERR_CONNECTION_REFUSED on https://ddev-test.ddev.site, fine on :8443). Setup sets them unless you set others:
+# missing (or DDEV's own 80/443, which it writes into the file on every save) is a FAIL, ports of your own a WARN.
+if [ "$DEV_ON_CHROMEOS" = 1 ]; then
+    DDEV_HP=$(sed -n 's/^router_http_port:[[:space:]]*"\{0,1\}\([0-9]*\)"\{0,1\}.*/\1/p' ~/.ddev/global_config.yaml 2> /dev/null | head -n 1)
+    DDEV_SP=$(sed -n 's/^router_https_port:[[:space:]]*"\{0,1\}\([0-9]*\)"\{0,1\}.*/\1/p' ~/.ddev/global_config.yaml 2> /dev/null | head -n 1)
+    if [ "${DDEV_HP:-80}" = 80 ] && [ "${DDEV_SP:-443}" = 443 ]; then
+        check "DDEV's router on 8080/8443 (ChromeOS passes no 80/443)" "echo \"router_http_port ${DDEV_HP:-unset}, router_https_port ${DDEV_SP:-unset} in ~/.ddev/global_config.yaml\"; exit 1"
+        hint  "rerun setup (any flags; v96 runs 'ddev config global --router-http-port=8080 --router-https-port=8443'), then 'ddev poweroff'"
+    else
+        warn  "DDEV's router on 8080/8443 (ChromeOS passes no 80/443)" "echo \"router ports $DDEV_HP/$DDEV_SP\"; [ \"$DDEV_HP\" = 8080 ] && [ \"$DDEV_SP\" = 8443 ]"
+        hint  "ports you set yourself: sites are https://<site>.ddev.site:$DDEV_SP; ChromeOS's browser can't reach 80 or 443 in Linux"
+    fi
+fi
+# v96: DDEV's usage telemetry, moved here from install-drupal with setup's step (DDEV is base; Oct 27 2026, a machine
+# without install-drupal was asked about usage statistics on its first 'ddev start'). Setup's opt-out also marks the
+# installed version as started; a later version asks again on its first start (Enter opts in) unless
+# DDEV_NO_INSTRUMENTATION is set.
+check "DDEV usage telemetry is off"                                 'grep "^instrumentation_opt_in:" ~/.ddev/global_config.yaml; grep -q "^instrumentation_opt_in: false" ~/.ddev/global_config.yaml'
+hint  "rerun setup (any flags), or: ddev config global --instrumentation-opt-in=false"
+check "DDEV_NO_INSTRUMENTATION in ~/.bashrc (no usage-statistics question)" 'grep -E "^export DDEV_NO_INSTRUMENTATION=(true|1)([[:space:]]|$)" ~/.bashrc'
+hint  "rerun setup (any flags): without it each new DDEV version asks on its first 'ddev start', and Enter opts in"
+# v96: links from Linux open in ChromeOS's browser (Oct 26 2026: Linux Google Chrome had registered itself, and
+# Devin's sign-in opened there, inside the VM's memory). A WARN, since the handler is yours to change. No live open:
+# it would open browser tabs.
+if [ -f /usr/share/applications/garcon_host_browser.desktop ]; then
+    warn  "web links open in ChromeOS's browser (xdg-mime)"  'r=0; for t in x-scheme-handler/https x-scheme-handler/http text/html; do d=$(xdg-mime query default "$t" 2> /dev/null); echo "$t: ${d:-none}"; [ "$d" = garcon_host_browser.desktop ] || r=1; done; exit $r'
+    hint  "Linux Chrome may have taken them back (its \"make Chrome your default browser\" prompt): rerun setup, or xdg-mime default garcon_host_browser.desktop x-scheme-handler/https x-scheme-handler/http text/html"
+fi
 
 # =================================================================
 # CONDITIONAL SECTIONS (same order as the installer)
@@ -684,8 +843,6 @@ if has install-drupal; then
     hint  "terminus self:plugin:install pantheon-systems/terminus-rsync-plugin (needs Composer and packagist.org)"
     # v70: secrets are core in Terminus 4; the separate secrets-manager plugin is deprecated.
     check "Terminus has the built-in secret commands"       'timeout 60 terminus list --no-interaction 2> /dev/null | grep -E "^ +secret:site:(set|list)" | head -n 2; timeout 60 terminus list --no-interaction 2> /dev/null | grep -qE "^ +secret:site:set"' 120
-    check "DDEV usage telemetry is off"                     'grep -q "^instrumentation_opt_in: false" ~/.ddev/global_config.yaml'
-    hint  "ddev config global --instrumentation-opt-in=false"
     warn  "terminus is logged in to Pantheon"               'timeout 60 terminus auth:whoami --no-interaction 2> /dev/null | grep "@"' 90
     hint  "optional, only if you use Pantheon: machine token (dashboard.pantheon.io > Account > Machine tokens) into TERMINUS_MACHINE_TOKEN_ONCE in secrets.env, then run dev-init with install-drupal"
     warn  "acli is authenticated with Acquia"               'timeout 90 acli api:accounts:find --no-interaction > /dev/null 2>&1 && echo authenticated' 120
@@ -1153,11 +1310,50 @@ if has install-cursor; then
 
 fi
 
-# Windsurf
+# Windsurf, now Devin Desktop
 if has install-windsurf; then
-    section "Windsurf (install-windsurf)"
-    check "windsurf"                                       'windsurf --version'
+    section "Devin Desktop / Windsurf (install-windsurf)"
+    # v96: Devin Desktop (the windsurf package is now a transitional one) runs on X11, from its own launcher entry
+    # and a terminal wrapper, both through /usr/bin/devin-desktop (Oct 26 2026: it froze or closed on ChromeOS's
+    # Wayland, and an icon that ran the Electron binary directly crashed within 5 s). No GUI launch here: the
+    # Chromebook run is the hand check.
+    cat > "$WORK/devin_check.sh" << 'DEVIN_EOF'
+W="$HOME/.local/bin/devin-desktop"
+A="$HOME/.local/share/applications"
+case "$1" in
+    x11)   # "Devin (X11)": every Exec= runs the wrapper, and it is not hidden
+        f="$A/devin-desktop-x11.desktop"
+        [ -f "$f" ] || { echo "missing: $f"; exit 1; }
+        grep -m1 '^Name=' "$f"
+        n=$(grep -c '^Exec=' "$f"); bad=$(grep '^Exec=' "$f" | grep -cv "^Exec=$W\( \|$\)")
+        echo "$n Exec= line(s), $bad not running $W"
+        [ "$n" -gt 0 ] && [ "$bad" -eq 0 ] || exit 1
+        ! grep -q '^NoDisplay=true' "$f" || { echo "it has NoDisplay=true"; exit 1; } ;;
+    wrapper)   # runs /usr/bin/devin-desktop with --ozone-platform=x11
+        [ -x "$W" ] || { echo "missing: $W"; exit 1; }
+        grep -v '^#' "$W" | grep -q '/usr/bin/devin-desktop --ozone-platform=x11' || { echo "$W does not run /usr/bin/devin-desktop --ozone-platform=x11"; exit 1; }
+        echo "$W -> /usr/bin/devin-desktop --ozone-platform=x11" ;;
+    stock)   # the stock entry overridden with NoDisplay=true
+        f="$A/devin-desktop.desktop"
+        [ -f "$f" ] || { echo "no override: $f"; exit 1; }
+        awk '/^\[/ { m = ($0 == "[Desktop Entry]") } m && $0 == "NoDisplay=true" { f = 1 } END { exit !f }' "$f" || { echo "$f has no NoDisplay=true"; exit 1; }
+        echo "$f: NoDisplay=true" ;;
+    path)   # a terminal's devin-desktop is the wrapper (a login shell, as a new terminal has it)
+        p=$(bash -lc 'command -v devin-desktop' 2> /dev/null | tail -n 1)
+        echo "devin-desktop on PATH: ${p:-none}"
+        [ "$p" = "$W" ] ;;
+esac
+DEVIN_EOF
+    check "devin-desktop --version (through the X11 wrapper)"  '"$HOME/.local/bin/devin-desktop" --version | head -n 1'
+    hint  "rerun setup with install-windsurf (v96 installs devin-desktop and writes ~/.local/bin/devin-desktop)"
     check "Windsurf apt source"                            '[ -f /etc/apt/sources.list.d/windsurf.list ]'
+    check "Devin (X11) launcher entry runs the wrapper"    'bash devin_check.sh x11'
+    hint  "rerun setup with install-windsurf (it regenerates ~/.local/share/applications/devin-desktop-x11.desktop), then shut Linux down once"
+    check "the wrapper runs /usr/bin/devin-desktop --ozone-platform=x11" 'bash devin_check.sh wrapper'
+    warn  "stock Devin entry hidden (NoDisplay=true)"      'bash devin_check.sh stock'
+    hint  "cosmetic: the stock icon starts Devin on Wayland; rerun setup with install-windsurf"
+    check "devin-desktop in a terminal is the wrapper"     'bash devin_check.sh path'
+    hint  "~/.local/bin must come before /usr/bin on PATH (Debian's ~/.profile puts it first when the folder exists)"
 fi
 
 # Lazarus
@@ -1202,6 +1398,19 @@ else:
 LIST_PY
 }
 case "$1" in
+    fpccfg)   # v96: fpc reads only the first config it finds, so ~/.fpc.cfg must #INCLUDE the system one (or set -Fu)
+        f="$HOME/.fpc.cfg"
+        [ -f "$f" ] || { echo "no ~/.fpc.cfg"; exit 1; }
+        grep -qiE '^[[:space:]]*-dUseCThreads([[:space:]]|$)' "$f" || { echo "~/.fpc.cfg does not define UseCThreads"; exit 1; }
+        if inc=$(grep -m1 -iE '^#INCLUDE[[:space:]]' "$f"); then
+            inc=$(printf '%s' "${inc#* }" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+            [ -f "$inc" ] || { echo "~/.fpc.cfg includes $inc, which is missing"; exit 1; }
+            echo "-dUseCThreads; #INCLUDE $inc"
+        elif grep -qE '^[[:space:]]*-Fu' "$f"; then
+            echo "-dUseCThreads; its own -Fu unit paths"
+        else
+            echo "~/.fpc.cfg neither #INCLUDEs a system config nor sets -Fu unit paths"; exit 1
+        fi ;;
     builds)   # all three binaries there and on Qt5
         for b in lazarus-floating lazarus-docked lazarus; do
             [ -x "$P/bin/$b" ] || { echo "missing: $P/bin/$b"; exit 1; }
@@ -1230,6 +1439,33 @@ case "$1" in
         if cmp -s "$P/bin/lazarus" "$P/bin/lazarus-docked"; then echo "docked"
         elif cmp -s "$P/bin/lazarus" "$P/bin/lazarus-floating"; then echo "floating"
         else echo "bin/lazarus matches neither build"; exit 1; fi ;;
+    target)   # v96: the widgetset of each IDE build profile, which the IDE's own rebuild uses (exit 1: gtk2, 2: yours)
+        python3 - "$P/miscellaneousoptions.xml" << 'TARGET_PY'
+import html, re, sys
+try:
+    text = open(sys.argv[1], encoding="utf-8").read()
+except FileNotFoundError:
+    sys.exit(print("no miscellaneousoptions.xml: no build profiles saved, so the IDE rebuilds for what it runs on") or 0)
+pm = re.search(r'<Profiles(?:\s[^>]*)?(?<!/)>.*?</Profiles>', text, re.S)
+prof = re.compile(r'<Profile(\d+)((?:\s[^>]*?)?)(?:/>|>(.*?)</Profile\1>)', re.S)
+got = []
+for m in prof.finditer(pm.group(0) if pm else ""):
+    n = re.search(r'Name="([^"]*)"', m.group(2))
+    w = re.search(r'<LCLPlatform\s+Value="([^"]*)"', m.group(3) or "")
+    got.append((html.unescape(n.group(1)) if n else "Profile" + m.group(1), w.group(1) if w else ""))
+if not got:
+    sys.exit(print("no build profiles saved: the IDE rebuilds for the widgetset it runs on") or 0)
+bad = [f"'{n}' targets {w}" for n, w in got if w not in ("qt5", "")]
+print("; ".join(bad) if bad else f"qt5 in all {len(got)} build profiles")
+sys.exit(1 if any(w == "gtk2" for n, w in got) else 2 if bad else 0)
+TARGET_PY
+        ;;
+    dockopt)   # v96: the docked build docks only when the IDE's own options say so (EnableAnchorDock in anchordockingoptions.xml)
+        f="$P/anchordockingoptions.xml"
+        cmp -s "$P/bin/lazarus" "$P/bin/lazarus-docked" || { echo "floating is active: the docking option isn't used"; exit 0; }
+        [ -f "$f" ] || { echo "docked is active, but $f is missing: the IDE asks single or multi window at its next start"; exit 1; }
+        if grep -qiE '<EnableAnchorDock[[:space:]]+Value="true"' "$f"; then echo "docked is active, docking on (EnableAnchorDock True)"
+        else echo "docked is active, but docking is off in $f (multi window): the docked build opens undocked"; exit 1; fi ;;
     unitsdir)
         d="$LAZ_DIR/units/x86_64-linux/qt5"
         [ -d "$d" ] || { echo "missing: $d"; exit 1; }
@@ -1251,6 +1487,37 @@ case "$1" in
         echo "${s:-Fusion}, palette $(basename "$p" .conf)" ;;
 esac
 LAZ_EOF
+    # v96: -dUseCThreads in ~/.fpc.cfg (Oct 26 2026: TDaemon stopped with runtime error 232, "no thread support
+    # compiled in"). The program below has the same guard as Lazarus's templates and TDaemon, and starts a thread.
+    cat > "$WORK/thr.pas" << 'THR_EOF'
+program thr;
+{$mode objfpc}
+uses
+{$IFDEF UNIX}{$IFDEF UseCThreads}
+  cthreads,
+{$ENDIF}{$ENDIF}
+  Classes;
+type
+  TWorker = class(TThread)
+  protected
+    procedure Execute; override;
+  end;
+procedure TWorker.Execute;
+begin
+  writeln('hello from a thread');
+end;
+var
+  w: TWorker;
+begin
+  w := TWorker.Create(False);
+  w.WaitFor;
+  w.Free;
+end.
+THR_EOF
+    check "~/.fpc.cfg defines UseCThreads, keeps the system unit paths" 'bash lazarus_check.sh fpccfg'
+    hint  "rerun setup with install-lazarus (v96 writes ~/.fpc.cfg: '#INCLUDE <system fpc.cfg>', then -dUseCThreads)"
+    check "a program with the UseCThreads guard runs a thread"         'fpc thr.pas > /dev/null && ./thr | grep -q "hello from a thread"'
+    hint  "runtime error 232 is back: ~/.fpc.cfg needs -dUseCThreads (rerun setup with install-lazarus)"
     check "Qt5 packages for the IDE (libqt5pas-dev, qt5ct)"  'dpkg_has libqt5pas-dev && dpkg_has qt5ct'
     hint  "rerun setup with install-lazarus (v94 adds them)"
     check "Qt5 units folder in the Lazarus tree is yours"         'bash lazarus_check.sh unitsdir'
@@ -1267,6 +1534,21 @@ LAZ_EOF
         hint  "'lazmode dock on' or 'lazmode dock off' (whichever is active) sets the list; otherwise the IDE's own rebuild switches layout"
         check "$LAZ_P profile: bin/lazarus is one of the two builds"         "bash lazarus_check.sh active $LAZ_P"
         hint  "'lazmode dock on' (or off) puts a build back; the IDE's own Tools > Build Lazarus replaces bin/lazarus, possibly with GTK2"
+        # v96: with docked active, docking must be on in the IDE's own options, or the docked build opens undocked
+        # (Oct 27 2026: multi window picked at the light profile's first start; lazmode said docked, the test passed).
+        check "$LAZ_P profile: docking on in the IDE's options while docked is active" "bash lazarus_check.sh dockopt $LAZ_P"
+        hint  "'lazmode dock on --profile $LAZ_P' turns it on (Lazarus closed), or 'lazmode dock off --profile $LAZ_P' to keep multi window with the floating build"
+        # v96: lazbuild saves the IDE's build profiles with gtk2 (its default; --ws doesn't reach the file), so the
+        # IDE's first rebuild of its own, installing a package, came out GTK2 (Oct 27 2026, the dark profile with
+        # lazdaemon). Setup's 'lazmode status' sets them to Qt5: gtk2 is a FAIL, a widgetset you chose a WARN.
+        bash "$WORK/lazarus_check.sh" target "$LAZ_P" > /dev/null 2>&1; LAZ_TGR=$?
+        if [ "$LAZ_TGR" = 2 ]; then
+            warn  "$LAZ_P profile: the IDE's own rebuilds target Qt5"          "bash lazarus_check.sh target $LAZ_P"
+            hint  "a widgetset you set in Tools > Configure Build Lazarus: lazmode keeps a build that is not Qt5 aside"
+        else
+            check "$LAZ_P profile: the IDE's own rebuilds target Qt5"          "bash lazarus_check.sh target $LAZ_P"
+            hint  "'lazmode status --profile $LAZ_P' with Lazarus closed sets them (or rerun setup with install-lazarus); else installing a package from the IDE rebuilds it on GTK2"
+        fi
     done
     check "Lazarus (Dark) launcher: qt5ct and --pcp=~/.lazarus-dark"   'bash lazarus_check.sh launcher'
     hint  "rerun setup with install-lazarus (it writes ~/.local/share/applications/lazarus-dark.desktop)"
@@ -1281,6 +1563,102 @@ LAZ_EOF
     check "lazmode status"                                             'lazmode status'
     hint  "rerun setup with install-lazarus (it writes ~/.local/bin/lazmode)"
     check "lazbuild with the dark profile (--pcp=~/.lazarus-dark)"     'lazbuild --pcp="$HOME/.lazarus-dark" --version'
+    # v96: building and debugging Lazarus projects in VS Code, Cursor and Devin ('lazmode vscode'), on a copy of
+    # Lazarus's own TDaemon (the Oct 26 2026 project: a console daemon whose Debug mode is on DWARF 3). FpDebug itself
+    # isn't run here (it needs VS Code); gdb is.
+    check "gdb (Devin's and Cursor's debugger for Lazarus projects)"   'gdb --version | head -n 1'
+    hint  "rerun setup with install-lazarus (v96 adds gdb)"
+    # v96: Global's built-in parsers don't read Pascal, so setup sends Pascal files to Universal Ctags through ~/.globalrc;
+    # the proof is a definition found in TDaemon. Skipped only where apt has no universal-ctags (setup skips it too).
+    if dpkg_has universal-ctags || apt-cache policy universal-ctags 2> /dev/null | grep -q 'Candidate: [0-9]'; then
+        check "GNU Global finds a Pascal definition (gtags, then global -x LogToFile)" 'global --version | head -n 1 && d=$(ls -d /usr/share/lazarus/*/examples/TDaemon 2> /dev/null | sort -V | tail -n 1) && cp -r "$d" gtags-test && cd gtags-test && gtags && global -x LogToFile | grep -q "daemonunit.pas"'
+        hint  "rerun setup with install-lazarus (v96: GNU Global, Universal Ctags and the Pascal block in ~/.globalrc; a 'default' label of your own there wins)"
+    else
+        skipped "GNU Global finds a Pascal definition"                 "(no universal-ctags package in the apt sources; setup skipped Pascal navigation)"
+    fi
+    cat > "$WORK/lazvs_check.sh" << 'LAZVS_EOF'
+# lazvs_check.sh setup|mode|json|tasks|dwarf|gdb, in $WORK/lazvs (a copy of TDaemon)
+P="$WORK/lazvs"; L="$P/TestDaemon.lpi"
+jsonc() { python3 -c 'import json, sys; json.loads("".join(l for l in open(sys.argv[1]) if not l.lstrip().startswith("//")))' "$1"; }
+task_cmd() {   # task_cmd LABEL: the task's command and args, one per line, as tasks.json has them
+    python3 - "$P/.vscode/tasks.json" "$1" << 'PY'
+import json, sys
+t = next(t for t in json.load(open(sys.argv[1]))["tasks"] if t["label"] == sys.argv[2])
+print("\n".join([t["command"]] + t["args"]))
+PY
+}
+run_task() { local c=(); mapfile -t c < <(task_cmd "$1"); [ ${#c[@]} -gt 0 ] || { echo "no task '$1'"; return 1; }; (cd "$P" && "${c[@]}") > "$WORK/lazvs-$2.log" 2>&1; }
+cfg() {   # cfg TYPE KEY: a launch configuration's value, ${workspaceFolder} filled in
+    python3 - "$P/.vscode/launch.json" "$1" "$2" "$P" << 'PY'
+import json, sys
+doc = json.loads("".join(l for l in open(sys.argv[1]) if not l.lstrip().startswith("//")))
+c = next(c for c in doc["configurations"] if c["type"] == sys.argv[2])
+print(c[sys.argv[3]].replace("${workspaceFolder}", sys.argv[4]))
+PY
+}
+dwarf() {   # dwarf FILE: the DWARF versions of the project's own units (those whose source is in the project folder)
+    readelf --debug-dump=info "$1" 2> /dev/null | awk -v dir="$P" '
+        /^ +Version: +[0-9]+/ { v = $2; next }
+        /DW_AT_name/ && v != "" { n = $NF; sub(/.*\//, "", n); f = dir "/" n
+            if ((getline x < f) >= 0 && n ~ /\.(lpr|pas|pp)$/) seen[v] = 1; close(f); v = "" }
+        END { for (k in seen) printf "%s ", k }'
+}
+case "$1" in
+    setup)   # a fresh copy, then lazmode vscode on it
+        d=$(ls -d /usr/share/lazarus/*/examples/TDaemon 2> /dev/null | sort -V | tail -n 1)
+        [ -n "$d" ] || { echo "no TDaemon in /usr/share/lazarus/*/examples"; exit 1; }
+        rm -rf "$P"; cp -r "$d" "$P" && cd "$P" && lazmode vscode ;;
+    mode)   # the .lpi parses, has Debug-gdb on Dwarf 2 with sets, and lazbuild builds it
+        python3 - "$L" << 'PY' || exit 1
+import sys, xml.etree.ElementTree as ET
+r = ET.parse(sys.argv[1]).getroot()
+it = [i for i in r.find("ProjectOptions/BuildModes") if i.get("Name") == "Debug-gdb"]
+assert it, "no Debug-gdb build mode"
+t = it[0].find("CompilerOptions/Linking/Debugging/DebugInfoType")
+assert t is not None and t.get("Value") == "dsDwarf2Set", "Debug-gdb is not on dsDwarf2Set"
+print("Debug-gdb: dsDwarf2Set")
+PY
+        lazbuild --get-build-modes "$L" | tail -n 3 | tr '\n' ' '
+        cd "$P" && lazbuild --bm=Debug-gdb "$L" > "$WORK/lazvs-mode.log" 2>&1 || { tail -n 5 "$WORK/lazvs-mode.log"; exit 1; } ;;
+    json)   # tasks, launch and extensions parse (launch.json has // comments, as VS Code allows); one fpDebug and one gdb
+        for f in tasks launch extensions settings; do jsonc "$P/.vscode/$f.json" || { echo "$f.json does not parse"; exit 1; }; done
+        python3 - "$P/.vscode/launch.json" << 'PY'
+import json, sys
+doc = json.loads("".join(l for l in open(sys.argv[1]) if not l.lstrip().startswith("//")))
+types = sorted(c["type"] for c in doc["configurations"])
+print("configurations:", ", ".join(c["name"] for c in doc["configurations"]))
+sys.exit(0 if types == ["fpDebug", "gdb"] else 1)
+PY
+        ;;
+    tasks)   # both build tasks, run as written
+        run_task "lazbuild (Debug)" debug || { echo "lazbuild (Debug) failed"; tail -n 5 "$WORK/lazvs-debug.log"; exit 1; }
+        run_task "lazbuild (Debug-gdb)" gdb || { echo "lazbuild (Debug-gdb) failed"; tail -n 5 "$WORK/lazvs-gdb.log"; exit 1; }
+        echo "both build" ;;
+    dwarf)   # both built, side by side (v96: Debug-gdb gets its own folders), Debug's (or its .dbg) DWARF 3, Debug-gdb's 2
+        run_task "lazbuild (Debug)" debug && run_task "lazbuild (Debug-gdb)" gdb || exit 1
+        p=$(cfg fpDebug program); t=$(cfg gdb target)
+        [ "$p" != "$t" ] || { echo "Debug and Debug-gdb build the same file: ${p#"$P"/}"; exit 1; }
+        [ -f "$p" ] && [ -f "$t" ] || { echo "missing: $( [ -f "$p" ] || echo "${p#"$P"/}") $( [ -f "$t" ] || echo "${t#"$P"/}")"; exit 1; }
+        f=$p; [ -f "$f.dbg" ] && f="$f.dbg"
+        g=$t; [ -f "$g.dbg" ] && g="$g.dbg"
+        a=$(dwarf "$f"); b=$(dwarf "$g")
+        echo "Debug: ${f#"$P"/}, DWARF ${a:-none}; Debug-gdb: ${g#"$P"/}, DWARF ${b:-none}"
+        [ "$a" = "3 " ] && [ "$b" = "2 " ] ;;
+    gdb)   # gdb runs the Debug-gdb program to its exit (TDaemon without arguments prints its usage)
+        run_task "lazbuild (Debug-gdb)" gdb || exit 1
+        o=$(cd "$P" && timeout 60 gdb -q -batch -ex run "$(cfg gdb target)" < /dev/null 2>&1)
+        printf '%s\n' "$o" | grep -o -m1 '\[Inferior 1 (process [0-9]*) exited[^]]*'
+        printf '%s\n' "$o" | grep -q '\[Inferior 1 (process [0-9]*) exited' ;;
+esac
+LAZVS_EOF
+    check "lazmode vscode on a copy of TDaemon"                        'bash lazvs_check.sh setup' 300
+    hint  "its output above says what failed; 'lazmode vscode' needs lazbuild and python3"
+    check "lazmode vscode: a Debug-gdb build mode, and lazbuild builds it" 'bash lazvs_check.sh mode' 300
+    check "lazmode vscode: .vscode JSON parses, an fpDebug and a gdb launch" 'bash lazvs_check.sh json'
+    check "lazmode vscode: both build tasks, run as written, build"    'bash lazvs_check.sh tasks' 300
+    check "lazmode vscode: Debug (DWARF 3) and Debug-gdb (2) side by side" 'bash lazvs_check.sh dwarf' 300
+    hint  "FpDebug needs DWARF 3 (Debug), gdb reads strings only with Dwarf 2 with sets (Debug-gdb)"
+    check "gdb runs the Debug-gdb build to its exit"                   'bash lazvs_check.sh gdb' 300
 fi
 
 # Flatpak & media tools
@@ -4813,6 +5191,19 @@ DN_EOF
             info  "delphi $DN" "media in ~/delphi/install/$DN, not set up yet: 'delphi $DN setup'"
         fi
     done
+    # v96: 'delphi N build' (dcc32 under Wine, from the project's folder) and 'delphi N vscode', for each Delphi 3-7
+    # whose prefix has dcc32.exe; a one-line console program, built and then run by wine.
+    DN_DCC=0
+    for DN in 3 4 5 6 7; do
+        [ -n "$(find "$HOME/.local/share/wine/delphi$DN/drive_c" -maxdepth 6 -type f -ipath '*/delphi*/bin/dcc32.exe' 2> /dev/null | head -n 1)" ] || continue
+        DN_DCC=1
+        mkdir -p "$WORK/dcc$DN"
+        printf 'program hello;\r\n{$APPTYPE CONSOLE}\r\nbegin Writeln(%s); end.\r\n' "'hello from dcc32'" > "$WORK/dcc$DN/hello.dpr"
+        check "delphi $DN build: dcc32 compiles a console .dpr, wine runs it" "cd dcc$DN && delphi $DN build hello.dpr && WINEPREFIX=\"\$HOME/.local/share/wine/delphi$DN\" WINEARCH=win32 WINEDEBUG=-all wine hello.exe < /dev/null 2> /dev/null | tr -d '\\r' | grep -q 'hello from dcc32'" 300
+        hint  "'delphi $DN build' prints dcc32's own messages; the compiler is part of Delphi's own install ('delphi $DN setup')"
+        check "delphi $DN vscode: .vscode/tasks.json and extensions.json parse" "cd dcc$DN && delphi $DN vscode --force . && for f in tasks extensions; do python3 -c 'import json, sys; json.loads(\"\".join(l for l in open(sys.argv[1]) if not l.lstrip().startswith(\"//\")))' .vscode/\$f.json || exit 1; done"
+    done
+    [ "$DN_DCC" = 1 ] || skipped "delphi N build / vscode (dcc32 under Wine)" "(no Delphi 3-7 prefix with dcc32.exe yet: 'delphi N setup')"
     timeout 60 wineserver -w 2> /dev/null || wineserver -k 2> /dev/null || true
     cd "$WORK" || true
 fi
@@ -5059,21 +5450,24 @@ if ! has nodisk; then
     dpaths base "Homebrew formulae: gcc, ddev, gh, mkcert"   "$CELLAR/gcc" "$CELLAR/ddev" "$CELLAR/gh" "$CELLAR/mkcert"
     dpaths base "pipx and uv"                                "$HOME/.local/share/pipx/venvs/uv" "$HOME/.local/share/pipx/shared"
     has install-vscode   && dapt   editors "VS Code"         code
-    has install-windsurf && dapt   editors "Windsurf"        windsurf
+    # v96: Devin Desktop is the real package; windsurf is a few KB of transitional package.
+    has install-windsurf && dapt   editors "Devin Desktop (Windsurf)" devin-desktop windsurf
     has install-cursor   && dpaths editors "Cursor AppImage" "$HOME/.local/bin/cursor"
     has install-herdr    && dpaths herdr "herdr (binary and config)" "$HOME/.local/bin/herdr" "$HOME/.config/herdr"
     # v94: plus the Qt5 IDE builds and their units in both profiles, the qt5 units folder setup makes in the
     # system tree, and the two Qt5 packages: the debs alone left out most of what Lazarus takes.
     if has install-lazarus; then
         LAZ_U=$(ls -d /usr/share/lazarus/*/units/x86_64-linux/qt5 2> /dev/null | tr '\n' ' ')
-        LAZ_A=$(_apt_bytes fpc-laz fpc-src lazarus-project libqt5pas-dev qt5ct)
+        # v96: plus GNU Global and Universal Ctags (and gdb when install-cpp, whose line counts it, is not there)
+        LAZ_PK=(fpc-laz fpc-src lazarus-project libqt5pas-dev qt5ct global universal-ctags); has install-cpp || LAZ_PK+=(gdb)
+        LAZ_A=$(_apt_bytes "${LAZ_PK[@]}")
         # shellcheck disable=SC2086   # LAZ_U: folder names without spaces, one per installed version
         LAZ_D=$(_disk_bytes "$HOME/.lazarus/bin" "$HOME/.lazarus/units" "$HOME/.lazarus/lib" \
             "$HOME/.lazarus-dark/bin" "$HOME/.lazarus-dark/units" "$HOME/.lazarus-dark/lib" $LAZ_U)
         [[ "$LAZ_A" =~ ^[0-9]+$ ]] || LAZ_A=0
         [[ "$LAZ_D" =~ ^[0-9]+$ ]] || LAZ_D=0
         _disk_report editors "Lazarus + Free Pascal (debs, Qt5 IDE builds in ~/.lazarus and ~/.lazarus-dark)" "$((LAZ_A + LAZ_D))" \
-            "apt: fpc-laz fpc-src lazarus-project libqt5pas-dev qt5ct; du: ~/.lazarus{,-dark}/{bin,units,lib} $LAZ_U"
+            "apt: ${LAZ_PK[*]}; du: ~/.lazarus{,-dark}/{bin,units,lib} $LAZ_U"
     fi
     has install-rust     && dpaths rust "rustup toolchains + cargo (incl. wasm and Android targets)" "$HOME/.rustup" "$HOME/.cargo"
     if has install-node; then
@@ -5264,7 +5658,7 @@ fi
 # =================================================================
 echo
 echo "================================================================="
-echo "Test Version 95 complete: ${GRN}PASS $PASS${RST}   ${RED}FAIL $FAIL${RST}   ${YEL}WARN $WARN${RST}   SKIP $SKIP"
+echo "Test Version 96 complete: ${GRN}PASS $PASS${RST}   ${RED}FAIL $FAIL${RST}   ${YEL}WARN $WARN${RST}   SKIP $SKIP"
 if [ ${#FAILED[@]} -gt 0 ]; then
     echo
     echo "Failed (must fix to get started):"

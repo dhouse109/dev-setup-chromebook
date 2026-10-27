@@ -1,5 +1,5 @@
 #!/bin/bash
-# dev-init-chromebook - Version 95
+# dev-init-chromebook - Version 96
 # Version history: CHANGELOG.md, next to this script in the bundle
 # (one section per script, newest version first).
 #
@@ -1717,13 +1717,20 @@ if has install-lazarus; then
     else
         # v95: configured also means neither layout is stale (built before packages were installed from the IDE)
         # and the install list follows the active layout: 'lazmode status --check', per profile.
-        LAZ_STALE=""
+        # v96: exit 2 is docking off in the IDE's own options while docked is active (multi window picked at a
+        # first start, Oct 27 2026): its own todo, since 'lazmode dock on' (or 'dock off') fixes it, not a rebuild.
+        LAZ_STALE=""; LAZ_UNDOCK=""
         for LAZ_P in light dark; do
-            command -v lazmode > /dev/null 2>&1 && lazmode status --profile "$LAZ_P" --check > /dev/null 2>&1 || LAZ_STALE="$LAZ_STALE $LAZ_P"
+            LAZ_RC=0
+            if command -v lazmode > /dev/null 2>&1; then lazmode status --profile "$LAZ_P" --check > /dev/null 2>&1 || LAZ_RC=$?; else LAZ_RC=1; fi
+            case "$LAZ_RC" in 0) ;; 2) LAZ_UNDOCK="$LAZ_UNDOCK $LAZ_P" ;; *) LAZ_STALE="$LAZ_STALE $LAZ_P" ;; esac
         done
-        if [ -z "$LAZ_STALE" ]; then
+        for LAZ_P in $LAZ_UNDOCK; do
+            todo "Lazarus $LAZ_P: docked is active but docking is off (multi window) or not set in the IDE's options, so it opens undocked or asks: 'lazmode dock on --profile $LAZ_P', or 'lazmode dock off --profile $LAZ_P' to keep multi window"
+        done
+        if [ -z "$LAZ_STALE" ] && [ -z "$LAZ_UNDOCK" ]; then
             already "Lazarus configured: Qt5 IDE built docked and floating in ~/.lazarus (light) and ~/.lazarus-dark (dark), both current, 'Lazarus (Dark)' launcher; 'lazmode status' shows the layouts"
-        else
+        elif [ -n "$LAZ_STALE" ]; then
             todo "Lazarus:$LAZ_STALE not up to date (a layout stale after packages were installed, or the install list not following the layout; 'lazmode status' says which): 'lazmode rebuild --profile <light|dark>', or 'lazmode dock on|off', which rebuilds a stale layout first"
         fi
     fi
@@ -2521,9 +2528,9 @@ fi
 echo
 echo "================================================================="
 if [ ${#TODO[@]} -eq 0 ]; then
-    echo "Init Version 95 complete: nothing left to do. 🎉"
+    echo "Init Version 96 complete: nothing left to do. 🎉"
 else
-    echo "Init Version 95 complete. Still manual (${#TODO[@]}):"
+    echo "Init Version 96 complete. Still manual (${#TODO[@]}):"
     printf '  - %s\n' "${TODO[@]}"
 fi
 echo

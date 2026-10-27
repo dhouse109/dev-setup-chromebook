@@ -16,6 +16,15 @@ to see it in context; the comment above each fix usually tells the story.
 - **Android Studio's window dims while it has focus** (`install-android-native`). This happens under
   ChromeOS's Wayland, with the IDE's JetBrains runtime.
   **Fix:** `-Dawt.toolkit.name=XToolkit` in its VM options.
+- **Devin Desktop (Windsurf) freezes or closes under Wayland** (`install-windsurf`, v96). On ChromeOS's Wayland
+  its window froze at sign-in (62 s of silence, then `Fatal Wayland communication error: Broken pipe`) or
+  vanished ("clean-exit"), with or without extensions (Oct 26 2026). **Fix:** `--ozone-platform=x11`
+  (XWayland), through a wrapper, `~/.local/bin/devin-desktop`, and its own launcher entry, "Devin (X11)".
+  Two launcher traps: the ChromeOS launcher ignored an edited copy of `devin-desktop.desktop` with the same
+  file name in `~/.local/share/applications` (the icon still started it on Wayland), so the fix is a
+  separately named entry; and the entry must run `/usr/bin/devin-desktop` (the CLI script, which sets
+  `VSCODE_CLI`), not the Electron binary the stock entry runs, which resolved the shell environment itself
+  and crashed within 5 s every time. The freezes that came back on X11 were memory (see Memory and disk).
 - **GTK2 dialogs in Lazarus draw blank and freeze** (`install-lazarus`, v94). The SourceForge IDE is built on
   GTK2. Under Crostini some of its modal dialogs (Run Parameters, New Project) drew blank until resized and
   never took keyboard focus, while Tools → Options worked. Removing `gtk2-engines-pixbuf` didn't help, and
@@ -28,7 +37,15 @@ to see it in context; the comment above each fix usually tells the story.
   the docking packages out of it, and since v95 the list names them exactly while docked is active, so the
   IDE's own rebuild (Package → Install/Uninstall Packages, or a project's install prompt) keeps its layout
   and `lazmode` adopts the result. On Oct 25 2026 that rebuild stayed on Qt5; should one come out GTK2,
-  `lazmode` keeps it aside and puts the Qt5 layout back. The dark look comes from qt5ct
+  `lazmode` keeps it aside and puts the Qt5 layout back.
+  **The IDE's own rebuild came out GTK2 on a fresh profile** (v96). On Oct 27 2026 the dark docked IDE,
+  set up by v96, installed lazdaemon for TDaemon, rebuilt itself and came back light with a blank white
+  dialog. The IDE's own rebuild uses the widgetset of its build profile (Tools → Configure Build Lazarus,
+  `LCLPlatform` under `BuildLazarusOptions/Profiles` in `miscellaneousoptions.xml`). lazbuild's `--ws=qt5`
+  sets that only in memory, and its `--add-package` saves the profiles with Lazarus's defaults: gtk2 in
+  all four, on Linux. **Fix:** `lazmode` changes gtk2 to qt5 in every build profile after its builds and
+  in `lazmode status`, which setup runs for both profiles. A widgetset you chose yourself is left alone,
+  and nothing is changed while Lazarus runs, because the IDE saves its options on exit. The dark look comes from qt5ct
   (`QT_QPA_PLATFORMTHEME=qt5ct`); ChromeOS draws the title bars, so no Linux theme changes them.
   `startlazarus` buffers its output, so `--debug-log` and `tee` logs are cut off when a hung IDE is killed
   and don't help diagnose a hang.
@@ -45,6 +62,20 @@ to see it in context; the comment above each fix usually tells the story.
 - **Tailscale starts in userspace mode** (`install-lan`). In this VM `tailscaled` picked userspace
   networking by itself, so there was no `tailscale0` interface and Linux tools couldn't reach the 100.x
   addresses. **Fix:** `FLAGS="--tun=tailscale0"` in `/etc/default/tailscaled`.
+- **Links from Linux open in Linux Chrome** (setup base, v96). The base install's Google Chrome registers
+  itself as Linux's handler for web links, so a sign-in page or a dev server's `--open` started a second
+  Chrome inside the VM's memory, without your ChromeOS sign-ins (Devin Desktop's Login did, Oct 26 2026).
+  `xdg-settings set default-web-browser` refuses ("$BROWSER is set": ChromeOS sets
+  `BROWSER=/usr/bin/garcon-url-handler`), and `xdg-open` checks the MIME registration first anyway.
+  **Fix:** `xdg-mime default garcon_host_browser.desktop x-scheme-handler/https x-scheme-handler/http
+  text/html`. `localhost` and `127.0.0.1` still reach Linux from ChromeOS's browser, so dev servers and
+  localhost sign-in callbacks work.
+- **ChromeOS doesn't pass ports 80 and 443 to Linux** (setup base, v96). High ports reach Linux from
+  ChromeOS's browser, 80 and 443 don't: a DDEV site on the default router ports gave
+  `ERR_CONNECTION_REFUSED`, while its direct port and the router on 8080/8443 opened (Oct 26 2026).
+  **Fix:** `ddev config global --router-http-port=8080 --router-https-port=8443`, then `ddev poweroff`;
+  sites are `https://<site>.ddev.site:8443`. mkcert's CA is trusted in Linux only, so ChromeOS's browser
+  warns until the CA is imported there by hand (the init checklist has the steps).
 - **Ollama answers 403 to a plain hostname** (`install-lan`). Ollama refuses a `Host:` it doesn't
   recognise. **Fix:** the address book also writes `NAME.internal` names, which it accepts.
 - **The GitHub API rate-limits anonymous calls** (many flags). It allows 60 calls an hour per IP, then
@@ -57,11 +88,30 @@ to see it in context; the comment above each fix usually tells the story.
   running, and Solr, OpenSearch, Elasticsearch, Milvus and Atlas Local hold 1–3 GB. **Fix:** setup creates
   them stopped. `mssql up`, `oracle up` and `devsvc up` stop the other heavy engines first and check a
   memory budget (`DEVSVC_RAM_MB`).
+- **ChromeOS takes memory back from Linux** (setup base, v96). The Linux VM's "used" memory includes what
+  ChromeOS has reclaimed from it for itself: on Oct 26 2026 Linux showed 4.9 GB of 6.4 GB used, but its
+  processes held only 2.2 GB (Devin Desktop 1.65 GB of it) and slab plus shmem about 0.2 GB, so ChromeOS had
+  taken about 2.5 GB. There is no swap, so when a 2 GB Electron IDE runs out it freezes or closes instead of
+  slowing down. To tell: add up the processes (`ps`, or better PSS from `/proc/*/smaps_rollup`) and compare
+  with `free`. **Fix:** `devmem` does that arithmetic ("taken back by ChromeOS (estimate)"), names the top
+  programs and the bundle's running containers, and says what to close; `devmem --watch` follows it while
+  something misbehaves. What helps: keep ChromeOS's tabs and Android apps light while a heavy Linux app is
+  open (Search + Esc shows them), close Linux's Google Chrome, run one heavy engine at a time.
 - **`vm.max_map_count` can't be raised from inside the container** (`install-search`). OpenSearch and
   Elasticsearch normally insist on it. **Fix:** `node.store.allow_mmap=false`, so they don't need it, and
   their disk watermarks are off, so a nearly full disk doesn't turn an index read-only.
 - **`/tmp` is RAM-backed.** Large downloads and the test script's scratch space live on disk instead
   (`./assets`, and the test's own work folder).
+- **Disk: caches fill it, and a full disk breaks DDEV** (setup base, v96). On Oct 26 2026 DDEV's image pull ran
+  dragonair's 38 GB disk out of space twice. The full disk left `~/.ddev/.state.yaml` and `~/.ddev/.update` at
+  0 bytes, and every later `ddev start` panicked ("assignment to entry in nil map" in `remoteconfig`) until the two
+  files were moved aside (DDEV rewrites them). What had filled the disk was mostly caches: npm 2.3 GB, Docker's
+  build cache 2.7 GB (which `docker system df` called only 16 kB reclaimable; `docker builder prune -af` freed
+  it), uv 641 MB, Homebrew 264 MB, Linux Chrome's cache 189 MB, pnpm 172 MB, Go's build cache 133 MB, Composer
+  61 MB, plus apt. DDEV's images want about 3 GB free. **Fix:** `devclean` reports what each cache would free and
+  changes nothing; `devclean --run` clears them and moves 0-byte DDEV state files aside; `--images` also removes
+  Docker images no container uses. Never `docker system prune`: the bundle's services are containers created
+  stopped, and it deletes them.
 - **kind works in Crostini's Docker** (`install-k8s`). A cluster takes about 2 GB, so the test unloads
   Ollama's models first.
 
@@ -83,6 +133,14 @@ to see it in context; the comment above each fix usually tells the story.
 - **Firebird's embedded lock directory** (`install-db`). If another user created `/tmp/firebird` first,
   every embedded open fails. **Fix:** setup probes once and, only if needed, sets a private
   `FIREBIRD_LOCK`.
+- **An editor started from its icon can miss your PATH** (dev-test base, v96). VS Code-based editors
+  started from a launcher icon run your login shell (`bash -i -l`) to read its environment and give up
+  after 10 s, with "Unable to resolve your shell environment in a reasonable time" in the log (Devin
+  Desktop, Oct 26 2026). The editor, its terminal tasks and extensions then run without what `~/.bashrc`
+  adds to PATH (`~/.local/bin`, nvm's Node, `~/.cargo/bin` and the rest), and nothing says why. VS Code
+  and Cursor still do this from their icons; Devin's icon goes through `/usr/bin/devin-desktop` since v96,
+  which skips the step. **Fix:** keep a new login shell fast. dev-test times it (median of three runs,
+  WARN from 5 s, FAIL from 10 s) and on a WARN or FAIL lists the five slowest lines of a traced run.
 - **The docker group isn't active in the run that adds you to it.** Group changes apply to new logins, so
   setup's own Docker calls go through `sudo`, and the helper commands fall back to `sudo -n docker`.
 
@@ -102,6 +160,24 @@ to see it in context; the comment above each fix usually tells the story.
   starts it before registration.
 - **InterBase's `isql -q` exits 1 even when `CREATE DATABASE` worked** (`install-interbase`).
   **Fix:** the test drops `-q`.
+
+## Lazarus and Free Pascal
+
+- **"This binary has no thread support compiled in", runtime error 232** (`install-lazarus`, v96). Not
+  Crostini-specific (any Linux does it), but this is where it bit: Lazarus's TDaemon example stopped on
+  `sudo ./TestDaemon -r` (Oct 26 2026). On Linux the RTL has no thread manager until `cthreads` is the first
+  unit loaded, and Lazarus's templates and examples load it only behind `{$IFDEF UseCThreads}`.
+  **Fix:** `-dUseCThreads` in `~/.fpc.cfg`, which must `#INCLUDE` the system `fpc.cfg` (fpc reads only the
+  first config it finds); rebuild an older project once with Run → Clean up and Build.
+- **The docked build opened undocked** (`install-lazarus`, v96). Not Crostini-specific: Lazarus 4's
+  AnchorDockingDsgn docks the IDE only when `<profile>/anchordockingoptions.xml` says
+  `EnableAnchorDock=True`. Until `DoneAskUserEnableAnchorDock` is True, the first start asks single
+  window or multi window and saves the answer there; both default to False. On Oct 27 2026 multi window was
+  picked at the light profile's first start, so its docked build opened undocked while `lazmode status`
+  said docked and dev-test passed.
+  **Fix:** `lazmode` writes the file with both True when it's missing (setup, both profiles), and
+  `lazmode dock on` turns docking on. Status, init and dev-test report docked-but-off, and
+  `lazmode dock off` keeps multi window with the floating build.
 
 ## Retro
 
