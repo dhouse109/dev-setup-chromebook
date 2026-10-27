@@ -749,7 +749,13 @@ want() {
     return 1
 }
 # The tools as a new terminal has them: nvm's npm, Go, Homebrew last (as ~/.bashrc puts them).
-[ -s "$HOME/.nvm/nvm.sh" ] && ! command -v npm > /dev/null 2>&1 && . "$HOME/.nvm/nvm.sh" > /dev/null 2>&1
+# v97: nvm from $NVM_DIR, then ~/.config/nvm (where the bundle's nvm lives), then ~/.nvm (found while building v97:
+# v96 looked only in ~/.nvm, so without ~/.bashrc's PATH the npm step was skipped).
+if ! command -v npm > /dev/null 2>&1; then
+    for d in "${NVM_DIR:-}" "$HOME/.config/nvm" "$HOME/.nvm"; do
+        [ -n "$d" ] && [ -s "$d/nvm.sh" ] && { export NVM_DIR="$d"; . "$d/nvm.sh" > /dev/null 2>&1; break; }
+    done
+fi
 for d in "$HOME/.local/bin" /usr/local/go/bin "$HOME/go/bin"; do
     [ -d "$d" ] && case ":$PATH:" in *":$d:"*) ;; *) PATH="$PATH:$d" ;; esac
 done
