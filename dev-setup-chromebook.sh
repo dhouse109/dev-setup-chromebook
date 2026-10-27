@@ -2191,8 +2191,9 @@ restore_lists() {   # restore_lists PROFILE_DIR: put back the list files of a v9
     done
     rm -rf "$s"
 }
-settle() {   # settle PROFILE LAYOUT: that layout active, and the install list following it
-    activate "$(pdir "$1")" "$2" && list_follow "$1" "$2"
+settle() {   # settle PROFILE LAYOUT: that layout active, the install list following it, the IDE's rebuilds on Qt5
+    activate "$(pdir "$1")" "$2" && list_follow "$1" "$2" || return 1
+    ide_target "$1" || true   # reported; never fails a switch
 }
 # Ctrl-C during a build: the layout that was active stays active, with its list.
 trap '[ -n "$ACTIVE" ] && settle "${ACTIVE% *}" "${ACTIVE##* }"; exit 130' INT TERM
@@ -2200,7 +2201,9 @@ trap '[ -n "$ACTIVE" ] && settle "${ACTIVE% *}" "${ACTIVE##* }"; exit 130' INT T
 # empty or missing items skipped). names: the packages other than the docking ones, sorted, one line; docking:
 # exit 0 when a docking package is listed; remove: delete the docking items (the IDE skips a missing ItemN, so
 # the rest of the list is untouched; its next save writes the list out renumbered). v96: version: the file's
-# MiscellaneousOptions/Version (0 when the file or the key is missing, as the IDE reads it).
+# MiscellaneousOptions/Version (0 when the file or the key is missing, as the IDE reads it). v96: targets: the
+# IDE's build profiles (Tools > Configure Build Lazarus), one "NAME<tab>WIDGETSET" line each (empty: none saved);
+# qt5: those that say gtk2 say qt5 instead, and the number changed is printed.
 listtool() {
     python3 - "$@" << 'LIST_PY'
 import re, sys
@@ -2214,6 +2217,22 @@ except FileNotFoundError:
 if act == "version":
     v = re.search(r'<MiscellaneousOptions(?:\s[^>]*)?>.*?<Version\s+Value="(\d+)"', text, re.S)
     print(v.group(1) if v else 0)
+    sys.exit(0)
+if act in ("targets", "qt5"):
+    import html
+    pm = re.search(r'<Profiles(?:\s[^>]*)?(?<!/)>.*?</Profiles>', text, re.S)
+    if act == "targets":
+        prof = re.compile(r'<Profile(\d+)((?:\s[^>]*?)?)(?:/>|>(.*?)</Profile\1>)', re.S)
+        for m in prof.finditer(pm.group(0) if pm else ""):
+            n = re.search(r'Name="([^"]*)"', m.group(2))
+            w = re.search(r'<LCLPlatform\s+Value="([^"]*)"', m.group(3) or "")
+            print(html.unescape(n.group(1)) if n else "Profile" + m.group(1), w.group(1) if w else "", sep="\t")
+    else:
+        new, k = re.subn(r'<LCLPlatform\s+Value="gtk2"\s*/>', '<LCLPlatform Value="qt5"/>', pm.group(0) if pm else "")
+        if k:
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(text[:pm.start()] + new + text[pm.end():])
+        print(k)
     sys.exit(0)
 block = re.compile(r'<StaticAutoInstallPackages(?:\s[^>]*)?(?<!/)>.*?</StaticAutoInstallPackages>', re.S)
 names = []
@@ -2279,6 +2298,28 @@ list_materialize() {   # list_materialize PROFILE: the install list on disk at v
     scrub_docking "$d" "$1" quiet && add_docking "$1" || return 1
     echo "$1: install list written out with Lazarus's defaults: [$(list_names "$d")]"
 }
+# v96: the IDE's own rebuild (installing a package, Tools > Build Lazarus) builds for the widgetset its current build
+# profile names (Profile.TargetPlatform -> LCL_PLATFORM, ide/buildlazdialog.pas), and lazbuild saves the profiles
+# with gtk2 in all four: --ws only overrides the target in memory (lazbuild.lpr BuildLazarusIDE), so a save by
+# --add-package (list_materialize, the docked build) writes Lazarus's defaults, gtk2 on Linux, and nothing writes
+# Qt5. So the first package installed from the IDE rebuilt it on GTK2 (Oct 27 2026: the dark docked IDE, installing
+# lazdaemon for TDaemon, restarted light with a blank white dialog; adopt kept the build aside). The IDE reads an
+# explicit LCLPlatform only: missing means the widgetset it runs on. So gtk2, lazbuild's default, becomes qt5 in
+# every build profile; a widgetset you chose yourself (qt6, gtk3...) is left alone and shown by 'lazmode status'.
+# Not while Lazarus runs: the IDE saves its options on exit and would write gtk2 back.
+ide_target() {   # ide_target PROFILE: gtk2 in the IDE's build profiles becomes qt5
+    local d f n
+    d=$(pdir "$1"); f="$d/miscellaneousoptions.xml"
+    listtool targets "$f" | cut -f2 | grep -qx gtk2 || return 0
+    if running; then
+        echo "$1: the IDE's own rebuilds target gtk2 (Configure Build Lazarus); 'lazmode status' sets Qt5 once Lazarus is closed"
+        return 0
+    fi
+    cp -p "$f" "$LOGDIR/miscellaneousoptions-$1-$(date +%Y%m%d-%H%M%S).xml"
+    n=$(listtool qt5 "$f") || return 1
+    if listtool targets "$f" | cut -f2 | grep -qx gtk2; then echo "$1: could not set the IDE's build profiles to Qt5 in $f"; return 1; fi
+    echo "$1: the IDE's own rebuilds now target Qt5 ($n of its build profiles said gtk2, lazbuild's default; the old file is in $LOGDIR)"
+}
 list_follow() {   # list_follow PROFILE LAYOUT: the install list names the docking packages exactly while docked is active
     local d; d=$(pdir "$1")
     if [ "$2" = docked ]; then add_docking "$1"; else scrub_docking "$d" "$1" quiet; fi
@@ -2336,10 +2377,11 @@ adopt() {   # adopt PROFILE
 }
 
 cmd_status() {
-    local p d b f had now bad=0 ws
+    local p d b f had now bad=0 ws tg
     for p in "${PROFILES[@]}"; do
         d=$(pdir "$p"); b="$d/bin"
         adopt "$p"
+        ide_target "$p"
         now=$(list_names "$d")
         echo "$p profile ($d)"
         echo "  active layout   $(layout "$d")"
@@ -2373,6 +2415,19 @@ cmd_status() {
             [ "$(layout "$d")" != docked ] || bad=1
         fi
         [ -s "$d/lazmode-packages" ] && printf '  %-15s %s\n' "extra packages" "$(tr '\n' ' ' < "$d/lazmode-packages")"
+        # v96: the widgetset the IDE's own rebuilds target (see ide_target)
+        tg=$(listtool targets "$d/miscellaneousoptions.xml")
+        if [ -z "$tg" ]; then
+            printf '  %-15s %s\n' "IDE rebuilds" "the widgetset the IDE runs on (no build profiles saved yet)"
+        elif ! printf '%s\n' "$tg" | cut -f2 | grep -qvx 'qt5\|'; then
+            printf '  %-15s %s\n' "IDE rebuilds" "qt5 (all $(printf '%s\n' "$tg" | wc -l) build profiles, Tools > Configure Build Lazarus)"
+        else
+            printf '%s\n' "$tg" | while IFS=$'\t' read -r n w; do
+                case "$w" in qt5|'') ;; gtk2) printf '  %-15s %s\n' "IDE rebuilds" "'$n' targets gtk2: the IDE's own rebuild comes out GTK2 ('lazmode status' with Lazarus closed sets Qt5)" ;;
+                    *) printf '  %-15s %s\n' "IDE rebuilds" "'$n' targets $w (yours; lazmode keeps a build that is not Qt5 aside)" ;; esac
+            done
+            printf '%s\n' "$tg" | cut -f2 | grep -qx gtk2 && bad=1
+        fi
     done
     if [ -f "$DARK_DESKTOP" ]; then
         echo "dark launcher   $(grep -m1 '^Exec=' "$DARK_DESKTOP")"
@@ -2933,14 +2988,16 @@ LAZMODE_EOF
         # this version and from the current install list (not stale after packages installed from the IDE), the
         # active bin/lazarus one of them, no docking class in the floating build, and the list following the active
         # layout. It also adopts an IDE-made build first. (v94 tested the binaries, the version and the list here.)
+        # v96: and it sets the IDE's own build profiles to Qt5 (lazmode's ide_target), so a profile whose builds are
+        # already current is brought into line too, without a rebuild.
         LAZ_OK=1
         LAZ_ST=$("$HOME/.local/bin/lazmode" status --profile "$LAZ_P" --check 2>&1) || LAZ_OK=0
-        printf '%s\n' "$LAZ_ST" | grep -E 'adopted|kept aside' || true
+        printf '%s\n' "$LAZ_ST" | grep -E 'adopted|kept aside|now target Qt5|rebuilds target gtk2' || true   # v96: and ide_target
         [ -d "$LAZ_PD/bin" ] || LAZ_OK=0
         if [ "$LAZ_OK" = 1 ]; then
             echo "Lazarus $LAZ_P profile: Qt5 builds for $LAZ_VER already in place and current ($(printf '%s\n' "$LAZ_ST" | sed -n 's/^  active layout *//p'))."
         else
-            [ -d "$LAZ_PD/bin" ] && printf '%s\n' "$LAZ_ST" | grep -E 'stale|missing|but docked|contains' | sed "s/^ */Lazarus $LAZ_P profile: /" | sort -u
+            [ -d "$LAZ_PD/bin" ] && printf '%s\n' "$LAZ_ST" | grep -E 'stale|missing|but docked|contains|targets gtk2' | sed "s/^ */Lazarus $LAZ_P profile: /" | sort -u
             LAZ_TODO+=("$LAZ_P")
         fi
     done

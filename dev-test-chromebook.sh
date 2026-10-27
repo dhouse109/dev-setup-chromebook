@@ -1439,6 +1439,27 @@ case "$1" in
         if cmp -s "$P/bin/lazarus" "$P/bin/lazarus-docked"; then echo "docked"
         elif cmp -s "$P/bin/lazarus" "$P/bin/lazarus-floating"; then echo "floating"
         else echo "bin/lazarus matches neither build"; exit 1; fi ;;
+    target)   # v96: the widgetset of each IDE build profile, which the IDE's own rebuild uses (exit 1: gtk2, 2: yours)
+        python3 - "$P/miscellaneousoptions.xml" << 'TARGET_PY'
+import html, re, sys
+try:
+    text = open(sys.argv[1], encoding="utf-8").read()
+except FileNotFoundError:
+    sys.exit(print("no miscellaneousoptions.xml: no build profiles saved, so the IDE rebuilds for what it runs on") or 0)
+pm = re.search(r'<Profiles(?:\s[^>]*)?(?<!/)>.*?</Profiles>', text, re.S)
+prof = re.compile(r'<Profile(\d+)((?:\s[^>]*?)?)(?:/>|>(.*?)</Profile\1>)', re.S)
+got = []
+for m in prof.finditer(pm.group(0) if pm else ""):
+    n = re.search(r'Name="([^"]*)"', m.group(2))
+    w = re.search(r'<LCLPlatform\s+Value="([^"]*)"', m.group(3) or "")
+    got.append((html.unescape(n.group(1)) if n else "Profile" + m.group(1), w.group(1) if w else ""))
+if not got:
+    sys.exit(print("no build profiles saved: the IDE rebuilds for the widgetset it runs on") or 0)
+bad = [f"'{n}' targets {w}" for n, w in got if w not in ("qt5", "")]
+print("; ".join(bad) if bad else f"qt5 in all {len(got)} build profiles")
+sys.exit(1 if any(w == "gtk2" for n, w in got) else 2 if bad else 0)
+TARGET_PY
+        ;;
     unitsdir)
         d="$LAZ_DIR/units/x86_64-linux/qt5"
         [ -d "$d" ] || { echo "missing: $d"; exit 1; }
@@ -1507,6 +1528,17 @@ THR_EOF
         hint  "'lazmode dock on' or 'lazmode dock off' (whichever is active) sets the list; otherwise the IDE's own rebuild switches layout"
         check "$LAZ_P profile: bin/lazarus is one of the two builds"         "bash lazarus_check.sh active $LAZ_P"
         hint  "'lazmode dock on' (or off) puts a build back; the IDE's own Tools > Build Lazarus replaces bin/lazarus, possibly with GTK2"
+        # v96: lazbuild saves the IDE's build profiles with gtk2 (its default; --ws doesn't reach the file), so the
+        # IDE's first rebuild of its own, installing a package, came out GTK2 (Oct 27 2026, the dark profile with
+        # lazdaemon). Setup's 'lazmode status' sets them to Qt5: gtk2 is a FAIL, a widgetset you chose a WARN.
+        bash "$WORK/lazarus_check.sh" target "$LAZ_P" > /dev/null 2>&1; LAZ_TGR=$?
+        if [ "$LAZ_TGR" = 2 ]; then
+            warn  "$LAZ_P profile: the IDE's own rebuilds target Qt5"          "bash lazarus_check.sh target $LAZ_P"
+            hint  "a widgetset you set in Tools > Configure Build Lazarus: lazmode keeps a build that is not Qt5 aside"
+        else
+            check "$LAZ_P profile: the IDE's own rebuilds target Qt5"          "bash lazarus_check.sh target $LAZ_P"
+            hint  "'lazmode status --profile $LAZ_P' with Lazarus closed sets them (or rerun setup with install-lazarus); else installing a package from the IDE rebuilds it on GTK2"
+        fi
     done
     check "Lazarus (Dark) launcher: qt5ct and --pcp=~/.lazarus-dark"   'bash lazarus_check.sh launcher'
     hint  "rerun setup with install-lazarus (it writes ~/.local/share/applications/lazarus-dark.desktop)"

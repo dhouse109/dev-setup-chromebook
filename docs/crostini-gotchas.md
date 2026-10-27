@@ -37,7 +37,15 @@ to see it in context; the comment above each fix usually tells the story.
   the docking packages out of it, and since v95 the list names them exactly while docked is active, so the
   IDE's own rebuild (Package → Install/Uninstall Packages, or a project's install prompt) keeps its layout
   and `lazmode` adopts the result. On Oct 25 2026 that rebuild stayed on Qt5; should one come out GTK2,
-  `lazmode` keeps it aside and puts the Qt5 layout back. The dark look comes from qt5ct
+  `lazmode` keeps it aside and puts the Qt5 layout back.
+  **The IDE's own rebuild came out GTK2 on a fresh profile** (v96). On Oct 27 2026 the dark docked IDE,
+  set up by v96, installed lazdaemon for TDaemon, rebuilt itself and came back light with a blank white
+  dialog. The IDE's own rebuild uses the widgetset of its build profile (Tools → Configure Build Lazarus,
+  `LCLPlatform` under `BuildLazarusOptions/Profiles` in `miscellaneousoptions.xml`). lazbuild's `--ws=qt5`
+  sets that only in memory, and its `--add-package` saves the profiles with Lazarus's defaults: gtk2 in
+  all four, on Linux. **Fix:** `lazmode` changes gtk2 to qt5 in every build profile after its builds and
+  in `lazmode status`, which setup runs for both profiles. A widgetset you chose yourself is left alone,
+  and nothing is changed while Lazarus runs, because the IDE saves its options on exit. The dark look comes from qt5ct
   (`QT_QPA_PLATFORMTHEME=qt5ct`); ChromeOS draws the title bars, so no Linux theme changes them.
   `startlazarus` buffers its output, so `--debug-log` and `tee` logs are cut off when a hung IDE is killed
   and don't help diagnose a hang.
