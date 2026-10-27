@@ -124,6 +124,13 @@ to see it in context; the comment above each fix usually tells the story.
   And Docker's build cache can't be freed in full while images built from it share its layers: a 2.7 GB cache,
   emptied, freed less. **Fix:** `devclean --where` reads both folders (with `sudo -n` when allowed) and shows
   `docker system df`; `devclean`'s build-cache line says "up to".
+- **Deleted space comes back late, and hard links hide what is in use** (v97, found in the v97 Chromebook run,
+  Oct 27 2026). The Linux disk is btrfs, which releases deleted space at its next transaction commit, so `df`
+  read right after an `rm` misses part of it (`devclean --run` credited npm with 553 MB of 668 MB and Composer
+  with 218 MB of 49 MB). And uv (`UV_LINK_MODE` defaults to hardlink) and pnpm hard-link files from their caches
+  into environments and `node_modules`, so `du` on the cache counts files still in use: uv's showed 548 MB and
+  `uv cache prune` freed 0 B. **Fix:** `devclean` runs `sync` before each `df` reading, and measures uv's cache
+  and pnpm's store by files with no other link (`find -links 1`). By hand: `sync; df -h ~`.
 - **kind works in Crostini's Docker** (`install-k8s`). A cluster takes about 2 GB, so the test unloads
   Ollama's models first.
 

@@ -634,6 +634,8 @@ check "devmem: 'taken back by ChromeOS' is between 0 and the total" 'bash devmem
 # changes nothing; --run removes the cached download, the old extension version and the Cache folder, and keeps the
 # installed version, a version only a profile uses, an extension with no other version, the User folder and the
 # profile's own files. devclean --where runs on the scratch home, names its largest folder and changes nothing.
+# Found in the v97 Chromebook run (Oct 27 2026), also checked: after --run the Chrome line stays at 0 B, and a cache file
+# hard-linked elsewhere (uv into an environment, pnpm into node_modules) counts as 0 in the report.
 cat > "$WORK/devclean_check.sh" << 'DEVCLEAN_EOF'
 scratch() {   # a scratch home: VS Code with a cached VSIX and an old Pub.ext, a Chrome profile with a Cache folder
     S="$WORK/devclean-home"; rm -rf "$S"
@@ -696,6 +698,25 @@ case "$1" in
             [ -e "$S/$p" ] || { echo "--run removed $p"; exit 1; }
         done
         grep -c '^.* \.\.\. done, freed ' <<< "$o" | sed 's/$/ steps done, each with what it freed/'
+        # v97 (the v97 Chromebook run, Oct 27 2026): the Chrome line stays, at 0 B, once its folders are gone
+        o=$(HOME=$S DEVCLEAN_ONLY='chrome-profile' devclean) || exit 1
+        grep -q "^  Linux Chrome's profile caches  *0 B " <<< "$o" || { echo "after --run, no 0 B line for Linux Chrome's profile caches"; printf '%s\n' "$o"; exit 1; }
+        rm -rf "$S" ;;
+    links)   # v97: a cache file hard-linked into an environment (uv) or node_modules (pnpm) counts as 0
+        S="$WORK/devclean-links"; rm -rf "$S"
+        mkdir -p "$S/.cache/uv" "$S/env" "$S/.local/share/pnpm/store" "$S/proj/node_modules"
+        head -c 1048576 /dev/zero > "$S/.cache/uv/linked"; ln "$S/.cache/uv/linked" "$S/env/linked"
+        head -c 2097152 /dev/zero > "$S/.cache/uv/own"
+        head -c 1048576 /dev/zero > "$S/.local/share/pnpm/store/linked"; ln "$S/.local/share/pnpm/store/linked" "$S/proj/node_modules/linked"
+        head -c 3145728 /dev/zero > "$S/.local/share/pnpm/store/own"
+        o=$(HOME=$S UV_CACHE_DIR="$S/.cache/uv" DEVCLEAN_ONLY='uv pnpm' devclean) || { echo "devclean exited $?"; exit 1; }
+        want=("pnpm's store and cache|3.0 MB")
+        command -v uv > /dev/null 2>&1 && want+=("uv's cache|2.0 MB")
+        for w in "${want[@]}"; do
+            l=$(grep -F "  ${w%%|*} " <<< "$o")
+            grep -q " ${w#*|} " <<< "$l" || { echo "${w%%|*}: expected ${w#*|} (the hard-linked 1 MB counts as 0), got: ${l:-no line}"; exit 1; }
+            echo "${w%%|*}: ${w#*|}, the hard-linked file not counted"
+        done
         rm -rf "$S" ;;
     where)   # devclean --where names the scratch home's largest folder and changes nothing
         scratch; a=$(tree)
@@ -714,6 +735,7 @@ check "devclean --help names what it never touches"                'bash devclea
 check "devclean: editors' downloads, old versions, Chrome caches (scratch home)" 'bash devclean_check.sh editors' 120
 hint  "rerun setup (any flags): v97 adds the editors' steps to ~/.local/bin/devclean"
 check "devclean --where names the largest folders, changes nothing"  'bash devclean_check.sh where' 120
+check "devclean: hard-linked uv and pnpm cache files count as 0"     'bash devclean_check.sh links' 120
 # v96: DDEV's router on 8080/8443, since ChromeOS passes high ports to Linux but not 80 and 443 (Oct 26 2026:
 # ERR_CONNECTION_REFUSED on https://ddev-test.ddev.site, fine on :8443). Setup sets them unless you set others:
 # missing (or DDEV's own 80/443, which it writes into the file on every save) is a FAIL, ports of your own a WARN.

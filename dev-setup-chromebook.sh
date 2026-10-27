@@ -781,7 +781,16 @@ to_bytes() {   # to_bytes "2.7GB" / "16.38kB" / "264.1MB" / "1.2GiB": a size as 
         m = (u == "K") ? k : (u == "M") ? k ^ 2 : (u == "G") ? k ^ 3 : (u == "T") ? k ^ 4 : 1
         printf "%.0f\n", n * m }'
 }
-free_bytes() { df -B1 --output=avail "$HOME" 2> /dev/null | tail -n 1 | tr -d ' '; }
+dub1() {   # dub1 PATH...: bytes of the files under the paths that have no other hard link (what removing them frees)
+    local p have=()
+    for p in "$@"; do [ -e "$p" ] && have+=("$p"); done
+    [ ${#have[@]} -gt 0 ] || { echo 0; return; }
+    find "${have[@]}" -type f -links 1 -printf '%s\n' 2> /dev/null | awk '{ s += $1 } END { printf "%.0f\n", s }'
+}
+# v97: sync first (found in the v97 Chromebook run, Oct 27 2026): Crostini's disk is btrfs, which gives deleted space
+# back at its next transaction commit, so df read right after a step missed part of it and the next step got the
+# credit (npm "freed 553 MB" of 668 MB measured, then Composer "218 MB" of 49 MB).
+free_bytes() { sync -f "$HOME" 2> /dev/null || sync; df -B1 --output=avail "$HOME" 2> /dev/null | tail -n 1 | tr -d ' '; }
 disk_line() { df -B1 --output=avail,size,target "$HOME" 2> /dev/null | tail -n 1 | awk '{ printf "%s %s %s\n", $1, $2, $3 }'; }
 
 DOCKER=()
@@ -926,7 +935,7 @@ for name in sorted(os.listdir(ext)):
 OLDEXT_PY
 }
 size_of() {
-    local b d out
+    local b d out n x dirs
     case "$1" in
         npm) has npm || return; d=$(npm_cache); printf '%s\tdu %s\n' "$(dub "$d/_cacache")" "$d/_cacache" ;;
         docker-build)
@@ -948,21 +957,28 @@ size_of() {
             out=$(timeout 120 brew cleanup -s --dry-run 2>&1 | grep -o 'would free approximately [0-9.]*[KMGT]*B' | grep -o '[0-9.]*[KMGT]*B$')
             if [ -n "$out" ]; then printf '%s\tbrew cleanup -s --dry-run\n' "$(to_bytes "$out")"
             else printf '0\tbrew cleanup -s --dry-run (nothing to remove)\n'; fi ;;
-        uv) has uv || return; d=$(uv cache dir 2> /dev/null); printf '%s\tdu %s, up to (prune keeps what is in use)\n' "$(dub "${d:-$HOME/.cache/uv}")" "${d:-$HOME/.cache/uv}" ;;
+        # v97 (found in the v97 Chromebook run, Oct 27 2026): uv hard-links files from its cache into environments
+        # (UV_LINK_MODE defaults to hardlink on Linux), so du counted 548 MB that aider's tool env and others still
+        # used, and --run freed 0 B. Only files with no other link count: what removing them would free.
+        uv) has uv || return; d=$(uv cache dir 2> /dev/null); printf '%s\tfiles in %s no environment links to, up to (prune keeps what is in use)\n' "$(dub1 "${d:-$HOME/.cache/uv}")" "${d:-$HOME/.cache/uv}" ;;
         go) has go || return; d=$(go_cache); printf '%s\tdu %s\n' "$(dub "$d")" "$d" ;;
         composer) has composer || return; d=$(COMPOSER_NO_INTERACTION=1 composer config --global cache-dir 2> /dev/null | tail -n 1); printf '%s\tdu %s\n' "$(dub "${d:-$HOME/.cache/composer}")" "${d:-$HOME/.cache/composer}" ;;
         pnpm)
-            # The content store (pnpm store prune keeps what a project still links) and the metadata cache.
+            # The content store (pnpm store prune keeps what a project still links) and the metadata cache. v97: like
+            # uv's, the store hard-links into node_modules, so only files with no other link count.
             d="$HOME/.local/share/pnpm/store"
             [ -d "$d" ] || [ -d "$HOME/.cache/pnpm" ] || return
-            printf '%s\tdu %s, ~/.cache/pnpm, up to\n' "$(dub "$d" "$HOME/.cache/pnpm")" "${d/#$HOME/\~}" ;;
+            printf '%s\tfiles in %s, ~/.cache/pnpm no node_modules links to, up to\n' "$(dub1 "$d" "$HOME/.cache/pnpm")" "${d/#$HOME/\~}" ;;
         pip) [ -n "$(pip_cmd)" ] || return; d=$($(pip_cmd) cache dir 2> /dev/null); printf '%s\tdu %s\n' "$(dub "${d:-$HOME/.cache/pip}")" "${d:-$HOME/.cache/pip}" ;;
         chrome) [ -d "$HOME/.cache/google-chrome" ] || return
             printf '%s\tdu ~/.cache/google-chrome\n' "$(dub "$HOME/.cache/google-chrome")" ;;
         chrome-profile)
+            # v97: the line stays at 0 B once --run has cleared the folders (found in the v97 Chromebook run, Oct 27
+            # 2026: it dropped out of the report), as the other lines do.
+            [ -d "$HOME/.config/google-chrome" ] || return
             mapfile -d '' -t dirs < <(chrome_caches)
-            [ ${#dirs[@]} -gt 0 ] || return
-            printf '%s\tdu Cache, Code Cache, GPUCache, Service Worker in %d profile(s) in ~/.config/google-chrome\n' "$(dub "${dirs[@]}")" "$(printf '%s\n' "${dirs[@]%/*}" | sort -u | wc -l)" ;;
+            n=0; [ ${#dirs[@]} -gt 0 ] && n=$(printf '%s\n' "${dirs[@]%/*}" | sort -u | wc -l)
+            printf '%s\tdu Cache, Code Cache, GPUCache, Service Worker in %d profile(s) in ~/.config/google-chrome\n' "$(dub "${dirs[@]}")" "$n" ;;
         vsix:*) d="$HOME/.config/${1#*:}/CachedExtensionVSIXs"
             printf '%s\tdu %s\n' "$(dub "$d")" "$d" ;;
         oldext:*)
@@ -1115,10 +1131,10 @@ if [ "$RUN" = 0 ]; then
     exit 0
 fi
 
-BEFORE=$AVAIL
+BEFORE=$(free_bytes)   # v97: after a sync, like every reading below
 ddev_repair
-# v97: each step says what it freed (free space before and after it) next to what the report measured, so a gap
-# between the two shows (v96 printed only the total).
+# v97: each step says what it freed (free space before and after it, each read after a sync) next to what the report
+# measured, so a gap between the two shows (v96 printed only the total).
 for c in "${CATS[@]}"; do
     line=$(size_of "$c") || true
     [ -n "$line" ] || continue
