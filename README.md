@@ -203,7 +203,9 @@ Read [what they change](#what-they-change-on-your-system) before you run them.
   - marked blocks in `~/.bashrc`, rewritten in place on each run
   - commands in `~/.local/bin` (`devsvc`, `mssql`, `oracle`, `ldap`, `lan`, `lazmode`, `herdr`, `devmem` (a memory report), `devclean` (a disk cleanup; `devclean --where` shows where the space is), the retro guests…)
   - settings in `~/.config/dev-*`, `devsvc`, `devldap` and `devdb`
-  - downloads and logs in `./assets` next to the scripts
+  - downloads and logs in `./assets` next to the scripts; each setup and test run also saves what the screen showed,
+    as plain text, in `assets/logs/dev-setup-<date-time>.output` or `dev-test-<date-time>.output` (v97; next to the
+    test's `.log` and disk-report `.tsv`)
 - **Docker:** containers and named volumes called `devdb-*`, `devsvc-*` and `devldap-*`.
 - **Telemetry:** switched off wherever a tool has a switch for it.
 

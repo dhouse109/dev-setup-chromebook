@@ -26,6 +26,50 @@ if ! grep -Eqs '^ID="?debian"?$' /etc/os-release && [ "${DEV_BUNDLE_ANY_HOST:-0}
 fi
 # <<< dev-bundle host guard <<<
 
+# >>> dev-bundle screen output >>>
+# v97: the run's screen output is also saved, as plain text, in assets/logs/<script>-<date-time>.output next to
+# the scripts (asked Oct 27 2026: until then 'dev-test-chromebook.sh ... 2>&1 | tee FILE' by hand). The script
+# starts itself again inside a recorder, so the file holds everything from the first line to the summary, and on
+# Ctrl-C what was printed so far. From a terminal the recorder is util-linux's 'script', which gives the run a
+# terminal of its own: colors, progress bars and every tool's own "am I on a terminal?" check come out as they
+# did before. Otherwise (piped into tee, or no 'script') it is a pipe, which is what the run had anyway. The copy
+# loses colors and carriage-return redraws, keeping the last state of each line. DEV_SCREEN_OUTPUT names the file
+# for the run; DEV_SCREEN_SAVE=0 turns this off.
+if [ -z "${DEV_SCREEN_OUTPUT:-}" ] && [ "${DEV_SCREEN_SAVE:-1}" != 0 ]; then
+    _sd="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2> /dev/null && pwd || true)"; [ -n "$_sd" ] || _sd="$PWD"
+    _sn=$(basename "$0"); _sn=${_sn%%-chromebook*}
+    if mkdir -p "$_sd/assets/logs" 2> /dev/null; then
+        export DEV_RUN_STAMP; DEV_RUN_STAMP=$(date +%Y%m%d-%H%M%S)
+        export DEV_SCREEN_OUTPUT="$_sd/assets/logs/$_sn-$DEV_RUN_STAMP.output"
+        # Plain text: no script(1) header or footer, no CR line ends, the last redraw of a line, no escape codes.
+        _plain() {
+            sed -u -e '/^Script started on .*\[COMMAND=/d' -e '/^Script done on .*\[COMMAND_EXIT_CODE=/d' \
+                -e 's/\r$//' -e 's/.*\r//' -e 's/\x1b\[[0-9;?]*[ -\/]*[@-~]//g' \
+                -e 's/\x1b\][^\x07\x1b]*\(\x07\|\x1b\\\)//g' -e 's/\x1b[()][0-9A-Za-z]//g' -e 's/\x1b[=>78]//g' -e 's/\x00//g'
+        }
+        # Recorders ignore Ctrl-C, so they keep writing until the run itself has stopped. If the file can't be
+        # written (a full disk), the copy just drains its input: the run never stops because of it.
+        _copy() { trap '' INT TERM; _plain > "$DEV_SCREEN_OUTPUT" 2> /dev/null || cat > /dev/null; }
+        if [ -t 0 ] && [ -t 1 ] && command -v script > /dev/null 2>&1; then
+            # script(1) runs its command with $SHELL -c: bash here, and the run gets your SHELL back.
+            _cmd="SHELL=$(printf '%q' "${SHELL:-/bin/bash}") exec $(printf '%q ' "$BASH" "$0" "$@")"
+            SHELL=/bin/bash script -qfec "$_cmd" >(_copy)
+            _rc=$?
+            wait $! 2> /dev/null   # the copy's last lines
+        else
+            [ -t 1 ] && export DEV_SCREEN_TTY=1   # decided before the pipe: dev-test keeps its colors on a terminal
+            "$BASH" "$0" "$@" 2>&1 | (trap '' INT TERM; tee -p >(_copy); wait $! 2> /dev/null)
+            _rc=${PIPESTATUS[0]}
+        fi
+        sed -i -e :a -e '/^\n*$/{$d;N;ba' -e '}' "$DEV_SCREEN_OUTPUT" 2> /dev/null   # no trailing blank lines
+        # The run ends with its summary block, its last line a row of '='. Anything else: it stopped early.
+        if grep -q ' Version [0-9]* complete' "$DEV_SCREEN_OUTPUT" 2> /dev/null && tail -n 1 "$DEV_SCREEN_OUTPUT" | grep -q '^=\{20,\}$'; then :
+        else echo "Screen output (stopped before the summary): $DEV_SCREEN_OUTPUT" >&2; fi
+        exit "$_rc"
+    fi
+fi
+# <<< dev-bundle screen output <<<
+
 # Exit script immediately on any error
 set -e
 
@@ -947,7 +991,13 @@ size_of() {
             mapfile -t ids < <("${DOCKER[@]}" image ls -q -f dangling=true 2> /dev/null | sort -u)
             b=0; [ ${#ids[@]} -gt 0 ] && b=$("${DOCKER[@]}" image inspect -f '{{.Size}}' "${ids[@]}" 2> /dev/null | awk '{ s += $1 } END { printf "%.0f", s }')
             printf '%s\t%d image(s), up to (layers can be shared)\n' "${b:-0}" "${#ids[@]}" ;;
-        apt) has apt-get || return; printf '%s\tdu /var/cache/apt/archives\n' "$(dub /var/cache/apt/archives/*.deb /var/cache/apt/archives/partial)" ;;
+        # v97 (found in the v97 Chromebook hand checks, Oct 27 2026): the report said 0 B and --run freed 90.4 MB.
+        # 'apt-get clean' also removes /var/cache/apt/pkgcache.bin and srcpkgcache.bin (apt rebuilds them) and what
+        # is in archives/partial, which is _apt's and unreadable without sudo. Measured with sudo -n where allowed.
+        apt) has apt-get || return
+            b=$(sudo -n sh -c 'du -sbc /var/cache/apt/archives/*.deb /var/cache/apt/archives/partial/* /var/cache/apt/*.bin 2> /dev/null | tail -n 1 | cut -f1' 2> /dev/null)
+            if [[ "$b" =~ ^[0-9]+$ ]]; then printf '%s\tdu /var/cache/apt: archives, archives/partial, *.bin (sudo -n)\n' "$b"
+            else printf '%s\tdu /var/cache/apt: archives, *.bin; archives/partial needs sudo\n' "$(dub /var/cache/apt/archives/*.deb /var/cache/apt/*.bin)"; fi ;;
         brew)
             has brew || return
             out=$(timeout 120 brew cleanup -s --dry-run 2>&1 | grep -o 'would free approximately [0-9.]*[KMGT]*B' | grep -o '[0-9.]*[KMGT]*B$')
@@ -11095,6 +11145,7 @@ sudo apt autoremove -y
 
 echo "================================================================="
 echo "Setup Version 97 complete! 🎉"
+[ -n "${DEV_SCREEN_OUTPUT:-}" ] && echo "Screen output: $DEV_SCREEN_OUTPUT"
 echo "NEXT, in this order:"
 echo "  a. source ~/.bashrc                      (or open a new terminal)"
 echo "  b. ./dev-init-chromebook.sh <flags>  applies ~/.config/dev-init/secrets.env: GitHub, Hugging Face,"

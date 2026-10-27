@@ -103,6 +103,50 @@ if ! grep -Eqs '^ID="?debian"?$' /etc/os-release && [ "${DEV_BUNDLE_ANY_HOST:-0}
 fi
 # <<< dev-bundle host guard <<<
 
+# >>> dev-bundle screen output >>>
+# v97: the run's screen output is also saved, as plain text, in assets/logs/<script>-<date-time>.output next to
+# the scripts (asked Oct 27 2026: until then 'dev-test-chromebook.sh ... 2>&1 | tee FILE' by hand). The script
+# starts itself again inside a recorder, so the file holds everything from the first line to the summary, and on
+# Ctrl-C what was printed so far. From a terminal the recorder is util-linux's 'script', which gives the run a
+# terminal of its own: colors, progress bars and every tool's own "am I on a terminal?" check come out as they
+# did before. Otherwise (piped into tee, or no 'script') it is a pipe, which is what the run had anyway. The copy
+# loses colors and carriage-return redraws, keeping the last state of each line. DEV_SCREEN_OUTPUT names the file
+# for the run; DEV_SCREEN_SAVE=0 turns this off.
+if [ -z "${DEV_SCREEN_OUTPUT:-}" ] && [ "${DEV_SCREEN_SAVE:-1}" != 0 ]; then
+    _sd="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2> /dev/null && pwd || true)"; [ -n "$_sd" ] || _sd="$PWD"
+    _sn=$(basename "$0"); _sn=${_sn%%-chromebook*}
+    if mkdir -p "$_sd/assets/logs" 2> /dev/null; then
+        export DEV_RUN_STAMP; DEV_RUN_STAMP=$(date +%Y%m%d-%H%M%S)
+        export DEV_SCREEN_OUTPUT="$_sd/assets/logs/$_sn-$DEV_RUN_STAMP.output"
+        # Plain text: no script(1) header or footer, no CR line ends, the last redraw of a line, no escape codes.
+        _plain() {
+            sed -u -e '/^Script started on .*\[COMMAND=/d' -e '/^Script done on .*\[COMMAND_EXIT_CODE=/d' \
+                -e 's/\r$//' -e 's/.*\r//' -e 's/\x1b\[[0-9;?]*[ -\/]*[@-~]//g' \
+                -e 's/\x1b\][^\x07\x1b]*\(\x07\|\x1b\\\)//g' -e 's/\x1b[()][0-9A-Za-z]//g' -e 's/\x1b[=>78]//g' -e 's/\x00//g'
+        }
+        # Recorders ignore Ctrl-C, so they keep writing until the run itself has stopped. If the file can't be
+        # written (a full disk), the copy just drains its input: the run never stops because of it.
+        _copy() { trap '' INT TERM; _plain > "$DEV_SCREEN_OUTPUT" 2> /dev/null || cat > /dev/null; }
+        if [ -t 0 ] && [ -t 1 ] && command -v script > /dev/null 2>&1; then
+            # script(1) runs its command with $SHELL -c: bash here, and the run gets your SHELL back.
+            _cmd="SHELL=$(printf '%q' "${SHELL:-/bin/bash}") exec $(printf '%q ' "$BASH" "$0" "$@")"
+            SHELL=/bin/bash script -qfec "$_cmd" >(_copy)
+            _rc=$?
+            wait $! 2> /dev/null   # the copy's last lines
+        else
+            [ -t 1 ] && export DEV_SCREEN_TTY=1   # decided before the pipe: dev-test keeps its colors on a terminal
+            "$BASH" "$0" "$@" 2>&1 | (trap '' INT TERM; tee -p >(_copy); wait $! 2> /dev/null)
+            _rc=${PIPESTATUS[0]}
+        fi
+        sed -i -e :a -e '/^\n*$/{$d;N;ba' -e '}' "$DEV_SCREEN_OUTPUT" 2> /dev/null   # no trailing blank lines
+        # The run ends with its summary block, its last line a row of '='. Anything else: it stopped early.
+        if grep -q ' Version [0-9]* complete' "$DEV_SCREEN_OUTPUT" 2> /dev/null && tail -n 1 "$DEV_SCREEN_OUTPUT" | grep -q '^=\{20,\}$'; then :
+        else echo "Screen output (stopped before the summary): $DEV_SCREEN_OUTPUT" >&2; fi
+        exit "$_rc"
+    fi
+fi
+# <<< dev-bundle screen output <<<
+
 # Deliberately NO 'set -e': a failing check must be recorded, not abort the run.
 
 # =================================================================
@@ -354,7 +398,7 @@ mkdir -p "$ASSETS/logs" "$ASSETS/downloads"
 for old_log in "$HOME"/dev-test-*.log "$HOME"/dev-test-*.output; do
     [ -e "$old_log" ] && mv "$old_log" "$ASSETS/logs/" && echo "moved $(basename "$old_log") from ~ to $ASSETS/logs/"
 done
-LOG="$ASSETS/logs/dev-test-$(date +%Y%m%d-%H%M%S).log"
+LOG="$ASSETS/logs/dev-test-${DEV_RUN_STAMP:-$(date +%Y%m%d-%H%M%S)}.log"   # v97: the same date-time as the .output
 # v72: on disk, not in /tmp: Debian 13 mounts /tmp as tmpfs, so scratch there is held in RAM. Not
 # under ./assets either: that folder has a '#' in its path, which Vite and other tools mishandle.
 mkdir -p "$HOME/.cache/dev-test"
@@ -363,7 +407,7 @@ rm -rf "$HOME"/.hermes/.dev-test-* 2> /dev/null      # v86: the same for the Her
 export WORK; WORK=$(mktemp -d "$HOME/.cache/dev-test/run.XXXXXX")
 trap 'rm -rf "$WORK"' EXIT
 
-if [ -t 1 ]; then GRN=$'\e[32m' RED=$'\e[31m' YEL=$'\e[33m' DIM=$'\e[2m' RST=$'\e[0m'; else GRN=; RED=; YEL=; DIM=; RST=; fi
+if [ -t 1 ] || [ "${DEV_SCREEN_TTY:-}" = 1 ]; then GRN=$'\e[32m' RED=$'\e[31m' YEL=$'\e[33m' DIM=$'\e[2m' RST=$'\e[0m'; else GRN=; RED=; YEL=; DIM=; RST=; fi
 
 section() { echo; echo "== $* =="; echo; echo "== $* ==" >> "$LOG"; }
 
@@ -476,6 +520,15 @@ hint  "rerun setup (v93 prefers IPv4 when IPv6 does not get out), or by hand: ec
 check "t64-renamed libs (libfuse2, libmagic1, libasound2, ...)" 'm=""; for p in libfuse2 libmagic1 libasound2 libcups2 libatk1.0-0 libatk-bridge2.0-0; do dpkg_has "${p}t64" "$p" || m="$m $p/${p}t64"; done; /sbin/ldconfig -p | grep -q "libasound.so.2 (libc6,x86-64)" || m="$m libasound.so.2(x86-64)"; [ -z "$m" ] || { echo "missing:$m"; exit 1; }; echo "all there (amd64)"'
 # v65: nothing these scripts generate should sit loose in the home directory any more.
 warn  "no script-generated files loose in ~"           '! ls ~/gemma_client.py ~/dev-test-*.log ~/google-chrome-stable_current_amd64.deb ~/packages.microsoft.gpg ~/windsurf-stable.gpg ~/fpc-laz_*.deb ~/fpc-src_*.deb ~/lazarus-project_*.deb 2> /dev/null | grep .'
+# v97: the screen output saved as plain text next to the log (the start of this run, written so far): from the first
+# line, no color codes, no carriage returns. That it ends with the summary is checked by the run itself once the
+# summary is out ("Screen output (stopped before the summary)" on the terminal otherwise).
+if [ -n "${DEV_SCREEN_OUTPUT:-}" ]; then
+    check "screen output saved as plain text ($(basename "$DEV_SCREEN_OUTPUT"))" 'f=$DEV_SCREEN_OUTPUT; [ -s "$f" ] || { echo "no $f"; exit 1; }; head -n 1 "$f"; head -n 1 "$f" | grep -q "^Active Test Flags:" || { echo "does not start with the Active Test Flags line"; exit 1; }; ! grep -q $'"'"'[\e\r]'"'"' "$f" || { echo "has color codes or carriage returns"; exit 1; }'
+    hint  "the run starts itself again inside util-linux 'script' (from a terminal) or a pipe; DEV_SCREEN_SAVE=0 turns it off"
+else
+    skipped "screen output saved as plain text" "(DEV_SCREEN_SAVE=0)"
+fi
 hint  "~/gemma_client.py goes away when setup (v65 or later) runs with install-gemma; the rest can simply be deleted"
 check "gcc compiles and runs a C program"                  'printf "#include <stdio.h>\nint main(){puts(\"hello from gcc\");return 0;}\n" > hello.c && gcc hello.c -o hello_c && ./hello_c | grep -q "hello from gcc"'
 check "php-cli runs"                                       'php -r "echo PHP_VERSION;"'
@@ -724,6 +777,16 @@ case "$1" in
         [ -z "$(find "$S/cache" -type f ! -name '*.lock' ! -name CACHEDIR.TAG ! -name .gitignore 2> /dev/null)" ] || { echo "--run left files in the uv cache:"; find "$S/cache" -type f; exit 1; }
         echo "uv's cache: 3.0 MB reported, emptied by --run"
         rm -rf "$S" ;;
+    apt)   # v97 (hand checks): apt's line counts what 'apt-get clean' removes, /var/cache/apt/*.bin included
+        b=$(stat -c %s /var/cache/apt/pkgcache.bin 2> /dev/null)
+        [ -n "$b" ] && [ "$b" -gt 0 ] || { echo "no /var/cache/apt/pkgcache.bin: nothing to check"; exit 0; }
+        o=$(DEVCLEAN_ONLY=apt devclean) || { echo "devclean exited $?"; exit 1; }
+        l=$(grep -F "  apt's downloaded packages " <<< "$o"); echo "${l#  }"
+        # the line's size back to bytes (human() prints powers of 1024, one decimal place at most)
+        m=$(awk '{ for (i = 1; i < NF; i++) if ($(i + 1) ~ /^(B|KB|MB|GB|TB)$/) {
+                u = $(i + 1); f = (u == "KB") ? 1024 : (u == "MB") ? 1048576 : (u == "GB") ? 1073741824 : (u == "TB") ? 1099511627776 : 1
+                printf "%.0f\n", $i * f; exit } }' <<< "$l")
+        [ -n "$m" ] && [ "$m" -ge $((b * 9 / 10)) ] || { echo "apt's line (${m:-?} bytes) is less than pkgcache.bin alone ($b bytes)"; exit 1; } ;;
     ddev)   # v97 (run 2): a 0-byte ~/.ddev/.state.yaml is flagged and moved aside; ~/.ddev/.update (always empty) is not
         S="$WORK/devclean-ddev"; rm -rf "$S"; mkdir -p "$S/.ddev"; : > "$S/.ddev/.state.yaml"; : > "$S/.ddev/.update"
         o=$(HOME=$S DEVCLEAN_ONLY=- devclean) || { echo "devclean exited $?"; exit 1; }
@@ -745,6 +808,7 @@ hint  "rerun setup (any flags): v97 adds the editors' steps to ~/.local/bin/devc
 check "devclean --where names the largest folders, changes nothing"  'bash devclean_check.sh where' 120
 check "devclean: uv's whole cache reported, emptied by uv cache clean (scratch)" 'bash devclean_check.sh uv' 120
 check "devclean: only an empty .state.yaml is moved aside, not .update" 'bash devclean_check.sh ddev'
+check "devclean: apt's line counts what apt-get clean removes (*.bin too)" 'bash devclean_check.sh apt' 60
 # v96: DDEV's router on 8080/8443, since ChromeOS passes high ports to Linux but not 80 and 443 (Oct 26 2026:
 # ERR_CONNECTION_REFUSED on https://ddev-test.ddev.site, fine on :8443). Setup sets them unless you set others:
 # missing (or DDEV's own 80/443, which it writes into the file on every save) is a FAIL, ports of your own a WARN.
@@ -5759,6 +5823,7 @@ if [ ${#WARNED[@]} -gt 0 ]; then
 fi
 echo
 echo "Full output of every check: $LOG"
+[ -n "${DEV_SCREEN_OUTPUT:-}" ] && echo "Screen output:              $DEV_SCREEN_OUTPUT"
 [ -n "${DISK_TSV:-}" ] && echo "Disk usage by stack:        $DISK_TSV"
 echo "================================================================="
 { echo; echo "SUMMARY: PASS $PASS FAIL $FAIL WARN $WARN SKIP $SKIP"; } >> "$LOG"
