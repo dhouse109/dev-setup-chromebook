@@ -642,8 +642,11 @@ case "$1" in
         a=$(snap); o=$(devclean) || { echo "devclean exited $?"; exit 1; }
         b=$(snap)
         printf '%s\n' "$o" | grep -E '^(Free space|  Total)'
-        [ "$a" = "$b" ] || { echo "the report changed $(printf '%s\n' "$a" | head -n 1)"; exit 1; }
-        echo "unchanged: $(printf '%s\n' "$a" | head -n 1 | sed "s|^$HOME|~|")" ;;
+        # v96: the first line by expansion, not 'printf | head -n 1': head exits after one line and printf, still
+        # writing a large snapshot, logged "printf: write error: Broken pipe" (Oct 26 2026, a passing run).
+        f=${a%%$'\n'*}
+        [ "$a" = "$b" ] || { echo "the report changed $f"; exit 1; }
+        echo "unchanged: ${f/#$HOME/\~}" ;;
     help)   # the never-touch list, with each entry
         h=$(devclean --help) || exit 1
         for w in 'docker system prune' 'Docker volumes' 'ms-playwright' 'Hugging Face' 'Ollama models' '~/dev-demo' 'DDEV projects'; do

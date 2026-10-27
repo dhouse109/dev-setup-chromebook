@@ -2175,7 +2175,8 @@ trap '[ -n "$ACTIVE" ] && settle "${ACTIVE% *}" "${ACTIVE##* }"; exit 130' INT T
 # listtool names|docking|remove FILE: the install list as the IDE reads it (LoadStringList: Item1..ItemCount,
 # empty or missing items skipped). names: the packages other than the docking ones, sorted, one line; docking:
 # exit 0 when a docking package is listed; remove: delete the docking items (the IDE skips a missing ItemN, so
-# the rest of the list is untouched; its next save writes the list out renumbered).
+# the rest of the list is untouched; its next save writes the list out renumbered). v96: version: the file's
+# MiscellaneousOptions/Version (0 when the file or the key is missing, as the IDE reads it).
 listtool() {
     python3 - "$@" << 'LIST_PY'
 import re, sys
@@ -2186,6 +2187,10 @@ try:
         text = fh.read()
 except FileNotFoundError:
     text = ""
+if act == "version":
+    v = re.search(r'<MiscellaneousOptions(?:\s[^>]*)?>.*?<Version\s+Value="(\d+)"', text, re.S)
+    print(v.group(1) if v else 0)
+    sys.exit(0)
 block = re.compile(r'<StaticAutoInstallPackages(?:\s[^>]*)?(?<!/)>.*?</StaticAutoInstallPackages>', re.S)
 names = []
 m = block.search(text)
@@ -2232,6 +2237,23 @@ add_docking() {   # add_docking PROFILE NAME: put them in, with lazbuild's own w
       lazbuild ${pcp:+"$pcp"} --add-package "$dir/components/anchordocking/design/anchordockingdsgn.lpk" \
           "$dir/components/dockedformeditor/dockedformeditor.lpk"; } > "$log" 2>&1
     docking_listed "$d" || { echo "$1: could not add the docking packages to the install list (log: $log)"; return 1; }
+}
+# v96: Lazarus adds syneditdsgn to the install list in memory whenever miscellaneousoptions.xml is missing or
+# older than its version 3 (TBuildLazarusProfiles.Load: "if FileVersion<3 then ...Add('syneditdsgn')"), and
+# writes it out only when lazbuild saves the file, which --add-package does and a plain --build-ide does not.
+# So a new profile's floating build compiled SynEditDsgn but was recorded as built from the empty list on disk;
+# the docked build's --add-package then saved the list with syneditdsgn, and floating read as stale (Oct 26 2026:
+# dev-test FAIL "floating is stale: built from [], the list names [syneditdsgn]" on a fresh ~/.lazarus; the
+# floating log compiles allsyneditdsgn.pas). Writing the list out with lazbuild's own writer before any build
+# makes the list on disk the one lazbuild builds from: add the docking packages (that saves the file at
+# version 3 with Lazarus's defaults in it), and the floating build takes them out again as before.
+list_materialize() {   # list_materialize PROFILE: the install list on disk at version 3, as lazbuild reads it
+    local d v
+    d=$(pdir "$1")
+    v=$(listtool version "$d/miscellaneousoptions.xml") || return 1
+    [ "${v:-0}" -ge 3 ] 2> /dev/null && return 0
+    scrub_docking "$d" "$1" quiet && add_docking "$1" || return 1
+    echo "$1: install list written out with Lazarus's defaults: [$(list_names "$d")]"
 }
 list_follow() {   # list_follow PROFILE LAYOUT: the install list names the docking packages exactly while docked is active
     local d; d=$(pdir "$1")
@@ -2399,6 +2421,7 @@ build_layout() {   # build_layout PROFILE LAYOUT: one layout, recorded with the 
     d=$(pdir "$p")
     # The floating build runs with the docking packages out of the list; the docked build adds them itself
     # (--add-package). The caller then makes the list follow the active layout (settle).
+    list_materialize "$p" || return 1
     if [ "$lay" = floating ]; then scrub_docking "$d" "$p" quiet || return 1; fi
     build_one "$p" "$lay" && record_build "$d" "$lay"
 }
@@ -2463,6 +2486,15 @@ cmd_rebuild() {
         # Floating first, then docked; then the active layout is put back with its install list.
         ok=0
         build_layout "$p" floating && build_layout "$p" docked && ok=1
+        # v96: and a layout that a later build made stale (the docked build's --add-package saves the list, see
+        # list_materialize) is rebuilt once, so a rebuild ends with both layouts current or reports that it failed.
+        if [ "$ok" = 1 ]; then
+            for f in floating docked; do
+                is_current "$d" "$f" && continue
+                echo "$p: the $f layout is stale after the rebuild (built from [$(built_from "$d" "$f")], the list names [$(list_names "$d")]): rebuilding it"
+                build_layout "$p" "$f" && is_current "$d" "$f" || { echo "$p: the $f layout is still not current"; ok=0; break; }
+            done
+        fi
         if [ "$ok" = 1 ]; then
             settle "$p" "$was" || fail=1
             echo "$p: both layouts built on Qt5, $was active"
