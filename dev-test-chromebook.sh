@@ -634,8 +634,9 @@ check "devmem: 'taken back by ChromeOS' is between 0 and the total" 'bash devmem
 # changes nothing; --run removes the cached download, the old extension version and the Cache folder, and keeps the
 # installed version, a version only a profile uses, an extension with no other version, the User folder and the
 # profile's own files. devclean --where runs on the scratch home, names its largest folder and changes nothing.
-# Found in the v97 Chromebook run (Oct 27 2026), also checked: after --run the Chrome line stays at 0 B, and a cache file
-# hard-linked elsewhere (uv into an environment, pnpm into node_modules) counts as 0 in the report.
+# Found in the v97 Chromebook runs (Oct 27 2026), also checked: after --run the Chrome line stays at 0 B and still counts
+# the profile; uv's cache is reported whole and emptied by 'uv cache clean' (a scratch UV_CACHE_DIR; run 1's hard-link
+# check is gone, its reading was wrong); DDEV's empty .state.yaml is moved aside and .update, always empty, is not.
 cat > "$WORK/devclean_check.sh" << 'DEVCLEAN_EOF'
 scratch() {   # a scratch home: VS Code with a cached VSIX and an old Pub.ext, a Chrome profile with a Cache folder
     S="$WORK/devclean-home"; rm -rf "$S"
@@ -652,7 +653,7 @@ scratch() {   # a scratch home: VS Code with a cached VSIX and an old Pub.ext, a
     echo '[{"identifier": {"id": "pub.ext"}, "version": "2.0.0", "relativeLocation": "pub.ext-2.0.0"}]' > "$x/extensions.json"
     echo '[{"identifier": {"id": "pub.ext"}, "version": "1.5.0", "relativeLocation": "pub.ext-1.5.0"}]' > "$S/.config/Code/User/profiles/p1/extensions.json"
     head -c 1048576 /dev/zero > "$S/.config/google-chrome/Default/Cache/data_0"
-    echo '{}' > "$S/.config/google-chrome/Default/Bookmarks"
+    echo '{}' > "$S/.config/google-chrome/Default/Bookmarks"; echo '{}' > "$S/.config/google-chrome/Default/Preferences"
 }
 tree() { find "$S/.config" "$S/.vscode" -printf '%P %s %T@\n' 2> /dev/null | sort; }
 snap() {   # the first cache folder there, and DDEV's state files
@@ -694,29 +695,13 @@ case "$1" in
         done
         for p in .config/Code/CachedExtensionVSIXs .vscode/extensions/pub.ext-2.0.0 .vscode/extensions/pub.ext-1.5.0 \
             .vscode/extensions/other.solo-1.0.0 .vscode/extensions/extensions.json .config/Code/User/settings.json \
-            .config/Code/User/globalStorage/state.vscdb .config/google-chrome/Default/Bookmarks; do
+            .config/Code/User/globalStorage/state.vscdb .config/google-chrome/Default/Bookmarks .config/google-chrome/Default/Preferences; do
             [ -e "$S/$p" ] || { echo "--run removed $p"; exit 1; }
         done
         grep -c '^.* \.\.\. done, freed ' <<< "$o" | sed 's/$/ steps done, each with what it freed/'
         # v97 (the v97 Chromebook run, Oct 27 2026): the Chrome line stays, at 0 B, once its folders are gone
         o=$(HOME=$S DEVCLEAN_ONLY='chrome-profile' devclean) || exit 1
-        grep -q "^  Linux Chrome's profile caches  *0 B " <<< "$o" || { echo "after --run, no 0 B line for Linux Chrome's profile caches"; printf '%s\n' "$o"; exit 1; }
-        rm -rf "$S" ;;
-    links)   # v97: a cache file hard-linked into an environment (uv) or node_modules (pnpm) counts as 0
-        S="$WORK/devclean-links"; rm -rf "$S"
-        mkdir -p "$S/.cache/uv" "$S/env" "$S/.local/share/pnpm/store" "$S/proj/node_modules"
-        head -c 1048576 /dev/zero > "$S/.cache/uv/linked"; ln "$S/.cache/uv/linked" "$S/env/linked"
-        head -c 2097152 /dev/zero > "$S/.cache/uv/own"
-        head -c 1048576 /dev/zero > "$S/.local/share/pnpm/store/linked"; ln "$S/.local/share/pnpm/store/linked" "$S/proj/node_modules/linked"
-        head -c 3145728 /dev/zero > "$S/.local/share/pnpm/store/own"
-        o=$(HOME=$S UV_CACHE_DIR="$S/.cache/uv" DEVCLEAN_ONLY='uv pnpm' devclean) || { echo "devclean exited $?"; exit 1; }
-        want=("pnpm's store and cache|3.0 MB")
-        command -v uv > /dev/null 2>&1 && want+=("uv's cache|2.0 MB")
-        for w in "${want[@]}"; do
-            l=$(grep -F "  ${w%%|*} " <<< "$o")
-            grep -q " ${w#*|} " <<< "$l" || { echo "${w%%|*}: expected ${w#*|} (the hard-linked 1 MB counts as 0), got: ${l:-no line}"; exit 1; }
-            echo "${w%%|*}: ${w#*|}, the hard-linked file not counted"
-        done
+        grep -q "^  Linux Chrome's profile caches  *0 B .* in 1 profile(s) " <<< "$o" || { echo "after --run, no 0 B line for Linux Chrome's profile caches in 1 profile"; printf '%s\n' "$o"; exit 1; }
         rm -rf "$S" ;;
     where)   # devclean --where names the scratch home's largest folder and changes nothing
         scratch; a=$(tree)
@@ -727,6 +712,29 @@ case "$1" in
         done
         sed -n '/^Largest in your home folder/{n;p;}' <<< "$o"
         rm -rf "$S" ;;
+    uv)   # v97 (run 2): the report gives uv's whole cache, and --run empties it with 'uv cache clean' (scratch cache)
+        command -v uv > /dev/null 2>&1 || { echo "uv isn't installed: nothing to check"; exit 0; }
+        S="$WORK/devclean-uv"; rm -rf "$S"; mkdir -p "$S/home" "$S/cache/archive-v0/x" "$S/cache/wheels-v5"
+        head -c 2097152 /dev/zero > "$S/cache/archive-v0/x/f"; head -c 1048576 /dev/zero > "$S/cache/wheels-v5/w"
+        o=$(HOME=$S/home UV_CACHE_DIR="$S/cache" DEVCLEAN_ONLY=uv devclean) || { echo "devclean exited $?"; exit 1; }
+        l=$(grep -F "  uv's cache " <<< "$o")
+        grep -q " 3.0 MB " <<< "$l" || { echo "expected uv's cache at 3.0 MB, got: ${l:-no line}"; exit 1; }
+        o=$(HOME=$S/home UV_CACHE_DIR="$S/cache" DEVCLEAN_ONLY=uv devclean --run) || { echo "devclean --run exited $?"; exit 1; }
+        grep -q "^uv's cache \.\.\. done" <<< "$o" || { printf '%s\n' "$o"; exit 1; }
+        [ -z "$(find "$S/cache" -type f ! -name '*.lock' ! -name CACHEDIR.TAG ! -name .gitignore 2> /dev/null)" ] || { echo "--run left files in the uv cache:"; find "$S/cache" -type f; exit 1; }
+        echo "uv's cache: 3.0 MB reported, emptied by --run"
+        rm -rf "$S" ;;
+    ddev)   # v97 (run 2): a 0-byte ~/.ddev/.state.yaml is flagged and moved aside; ~/.ddev/.update (always empty) is not
+        S="$WORK/devclean-ddev"; rm -rf "$S"; mkdir -p "$S/.ddev"; : > "$S/.ddev/.state.yaml"; : > "$S/.ddev/.update"
+        o=$(HOME=$S DEVCLEAN_ONLY=- devclean) || { echo "devclean exited $?"; exit 1; }
+        grep -q '^DDEV: ~/.ddev/.state.yaml is 0 bytes' <<< "$o" || { echo "the report does not flag the empty .state.yaml"; exit 1; }
+        grep -q '\.update' <<< "$o" && { echo "the report flags ~/.ddev/.update, which DDEV always leaves empty"; exit 1; }
+        HOME=$S DEVCLEAN_ONLY=- devclean --run > /dev/null || { echo "devclean --run exited $?"; exit 1; }
+        [ -e "$S/.ddev/.state.yaml" ] && { echo "--run left the empty .state.yaml"; exit 1; }
+        [ -f "$S/.ddev/.state.yaml.bak" ] || { echo "--run did not keep .state.yaml.bak"; exit 1; }
+        [ -f "$S/.ddev/.update" ] && [ ! -e "$S/.ddev/.update.bak" ] || { echo "--run moved ~/.ddev/.update"; exit 1; }
+        echo ".state.yaml moved aside, .update left alone"
+        rm -rf "$S" ;;
 esac
 DEVCLEAN_EOF
 check "devclean: the report runs and changes nothing"             'bash devclean_check.sh report' 300
@@ -735,7 +743,8 @@ check "devclean --help names what it never touches"                'bash devclea
 check "devclean: editors' downloads, old versions, Chrome caches (scratch home)" 'bash devclean_check.sh editors' 120
 hint  "rerun setup (any flags): v97 adds the editors' steps to ~/.local/bin/devclean"
 check "devclean --where names the largest folders, changes nothing"  'bash devclean_check.sh where' 120
-check "devclean: hard-linked uv and pnpm cache files count as 0"     'bash devclean_check.sh links' 120
+check "devclean: uv's whole cache reported, emptied by uv cache clean (scratch)" 'bash devclean_check.sh uv' 120
+check "devclean: only an empty .state.yaml is moved aside, not .update" 'bash devclean_check.sh ddev'
 # v96: DDEV's router on 8080/8443, since ChromeOS passes high ports to Linux but not 80 and 443 (Oct 26 2026:
 # ERR_CONNECTION_REFUSED on https://ddev-test.ddev.site, fine on :8443). Setup sets them unless you set others:
 # missing (or DDEV's own 80/443, which it writes into the file on every save) is a FAIL, ports of your own a WARN.

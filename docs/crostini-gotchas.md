@@ -109,7 +109,8 @@ to see it in context; the comment above each fix usually tells the story.
   build cache 2.7 GB (which `docker system df` called only 16 kB reclaimable; `docker builder prune -af` freed
   it), uv 641 MB, Homebrew 264 MB, Linux Chrome's cache 189 MB, pnpm 172 MB, Go's build cache 133 MB, Composer
   61 MB, plus apt. DDEV's images want about 3 GB free. **Fix:** `devclean` reports what each cache would free and
-  changes nothing; `devclean --run` clears them and moves 0-byte DDEV state files aside; `--images` also removes
+  changes nothing; `devclean --run` clears them and moves a 0-byte `~/.ddev/.state.yaml` aside (the one that
+  panics; `~/.ddev/.update` is always 0 bytes, DDEV reads only its date, so since v97 it is left alone); `--images` also removes
   Docker images no container uses. Never `docker system prune`: the bundle's services are containers created
   stopped, and it deletes them.
 - **Editors keep what they no longer need** (setup base, v97). On Oct 26 2026 a 30 GB disk set up the same morning
@@ -124,13 +125,17 @@ to see it in context; the comment above each fix usually tells the story.
   And Docker's build cache can't be freed in full while images built from it share its layers: a 2.7 GB cache,
   emptied, freed less. **Fix:** `devclean --where` reads both folders (with `sudo -n` when allowed) and shows
   `docker system df`; `devclean`'s build-cache line says "up to".
-- **Deleted space comes back late, and hard links hide what is in use** (v97, found in the v97 Chromebook run,
-  Oct 27 2026). The Linux disk is btrfs, which releases deleted space at its next transaction commit, so `df`
-  read right after an `rm` misses part of it (`devclean --run` credited npm with 553 MB of 668 MB and Composer
-  with 218 MB of 49 MB). And uv (`UV_LINK_MODE` defaults to hardlink) and pnpm hard-link files from their caches
-  into environments and `node_modules`, so `du` on the cache counts files still in use: uv's showed 548 MB and
-  `uv cache prune` freed 0 B. **Fix:** `devclean` runs `sync` before each `df` reading, and measures uv's cache
-  and pnpm's store by files with no other link (`find -links 1`). By hand: `sync; df -h ~`.
+- **Deleted space comes back late** (v97, found in the v97 Chromebook run, Oct 27 2026). The Linux disk is btrfs,
+  which releases deleted space at its next transaction commit, so `df` read right after an `rm` misses part of it
+  (`devclean --run` credited npm with 553 MB of 668 MB and Composer with 218 MB of 49 MB). **Fix:** `devclean`
+  runs `sync` before each `df` reading. By hand: `sync; df -h ~`.
+- **`uv cache prune` keeps nearly everything** (v97, found in the v97 Chromebook runs, Oct 27 2026). It removes
+  only cache entries nothing references, and freed 0 B of a 548 MB cache twice. Hard links weren't the reason
+  (counting only files with one link changed nothing; uv's default link mode on Linux is a copy-on-write clone).
+  **Fix:** `devclean --run` uses `uv cache clean`, which empties the cache; uv's tool environments and Pythons
+  live in `~/.local/share/uv`, so nothing installed breaks, and `uvx`'s throwaway environments come back on
+  their next run. The report gives the cache's whole size, "up to": blocks an environment shares with it as a
+  clone stay in use.
 - **kind works in Crostini's Docker** (`install-k8s`). A cluster takes about 2 GB, so the test unloads
   Ollama's models first.
 
