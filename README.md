@@ -108,7 +108,7 @@ pull in what they need. For example, `install-web` brings `install-node` with it
 |---|---|
 | `install-web` | Angular CLI, corepack, Composer, PHP extensions |
 | `install-tanstack` | TanStack CLI |
-| `install-drupal` | Terminus, Acquia CLI, Upsun CLI, DDEV settings |
+| `install-drupal` | Terminus, Acquia CLI, Upsun CLI, DDEV platform tokens |
 | `install-laravel` | Laravel tooling |
 | `install-symfony` | Symfony tooling |
 | `install-graphql` | Apollo Rover, Router and MCP Server |

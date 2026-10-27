@@ -460,6 +460,30 @@ else
     fi
 fi
 unset -f ddev_gport
+# v96: DDEV's usage telemetry off here, with DDEV itself (base), on every host. Until v96 only install-drupal set it,
+# so a machine set up without that flag was asked "May we send anonymous DDEV usage statistics and errors? [Y/n]"
+# on its first 'ddev start' (Oct 27 2026, install-editors install-web). DDEV asks on the first container start of
+# each new DDEV version while instrumentation_opt_in is false (its default), and an empty answer (Enter, or no
+# terminal) opts in (cmd/ddev/cmd/root.go and util.ConfirmTo, v1.25.5). 'ddev config global
+# --instrumentation-opt-in=false' also records the installed version as started (config-global.go), so it runs on
+# every setup run, even when the file already says false (a fresh file does: DDEV writes its defaults on any save,
+# the router's above included): the installed version never asks. A later version (brew upgrade) would ask again;
+# DDEV_NO_INSTRUMENTATION=true in ~/.bashrc skips the question for every version and keeps telemetry off whatever
+# the file says (DDEV's docs, usage/diagnostics). A line of your own is kept. Checked with DDEV v1.25.5 in a scratch
+# HOME: config global set last_started_version to v1.25.5 and instrumentation_opt_in to false.
+if command -v ddev > /dev/null 2>&1; then
+    grep -q '^export DDEV_NO_INSTRUMENTATION=' ~/.bashrc 2> /dev/null \
+        || echo 'export DDEV_NO_INSTRUMENTATION=true   # DDEV: no usage statistics, and no question about them on a first start' >> ~/.bashrc
+    export DDEV_NO_INSTRUMENTATION=true
+    if timeout 60 ddev config global --instrumentation-opt-in=false < /dev/null > /dev/null 2>&1 \
+        && grep -q '^instrumentation_opt_in: false' "$DDEV_GCFG" 2> /dev/null; then
+        echo "DDEV: usage telemetry off, and no question about it (instrumentation_opt_in: false; DDEV_NO_INSTRUMENTATION=true in ~/.bashrc)."
+    else
+        echo "NOTICE: 'ddev config global --instrumentation-opt-in=false' did not take; run it by hand."
+    fi
+else
+    echo "NOTICE: ddev is not on PATH, so its usage telemetry was not turned off (rerun setup)."
+fi
 # v96: mkcert's CA is trusted in Linux only (mkcert -install above); ChromeOS's browser, which opens Linux's links
 # since v96, has its own certificate store, which Linux can't reach. So *.ddev.site shows "Not secure" there until
 # the CA is imported by hand (Oct 26 2026: https://ddev-test.ddev.site:8443 opened with Chrome's warning).
@@ -1304,8 +1328,8 @@ if [[ "$FLAGS" =~ " install-drupal " ]]; then
         echo "NOTICE: the Terminus rsync plugin did not install. By hand: terminus self:plugin:install pantheon-systems/terminus-rsync-plugin"
     fi
 
-    # DDEV: usage telemetry off, like npm / Angular / .NET / Vercel. Tokens for 'ddev pull' are dev-init's job.
-    ddev config global --instrumentation-opt-in=false < /dev/null > /dev/null 2>&1 || true
+    # DDEV: tokens for 'ddev pull' are dev-init's job. v96: its usage telemetry is turned off in base now, next
+    # to the router ports (DDEV is base; this flag alone left other machines asking on their first 'ddev start').
 
     echo "terminus: $(timeout 60 terminus --version --no-interaction < /dev/null 2>/dev/null | tail -n 1)   acli: $(timeout 60 acli --version --no-interaction < /dev/null 2>/dev/null | tail -n 1)   upsun: $(timeout 60 upsun --version < /dev/null 2>/dev/null | tail -n 1)"
     echo "Log in with dev-init (install-drupal): platform tokens from secrets.env, SSH key upload, DDEV global config."

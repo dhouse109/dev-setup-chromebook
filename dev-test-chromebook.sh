@@ -672,6 +672,14 @@ if [ "$DEV_ON_CHROMEOS" = 1 ]; then
         hint  "ports you set yourself: sites are https://<site>.ddev.site:$DDEV_SP; ChromeOS's browser can't reach 80 or 443 in Linux"
     fi
 fi
+# v96: DDEV's usage telemetry, moved here from install-drupal with setup's step (DDEV is base; Oct 27 2026, a machine
+# without install-drupal was asked about usage statistics on its first 'ddev start'). Setup's opt-out also marks the
+# installed version as started; a later version asks again on its first start (Enter opts in) unless
+# DDEV_NO_INSTRUMENTATION is set.
+check "DDEV usage telemetry is off"                                 'grep "^instrumentation_opt_in:" ~/.ddev/global_config.yaml; grep -q "^instrumentation_opt_in: false" ~/.ddev/global_config.yaml'
+hint  "rerun setup (any flags), or: ddev config global --instrumentation-opt-in=false"
+check "DDEV_NO_INSTRUMENTATION in ~/.bashrc (no usage-statistics question)" 'grep -E "^export DDEV_NO_INSTRUMENTATION=(true|1)([[:space:]]|$)" ~/.bashrc'
+hint  "rerun setup (any flags): without it each new DDEV version asks on its first 'ddev start', and Enter opts in"
 # v96: links from Linux open in ChromeOS's browser (Oct 26 2026: Linux Google Chrome had registered itself, and
 # Devin's sign-in opened there, inside the VM's memory). A WARN, since the handler is yours to change. No live open:
 # it would open browser tabs.
@@ -835,8 +843,6 @@ if has install-drupal; then
     hint  "terminus self:plugin:install pantheon-systems/terminus-rsync-plugin (needs Composer and packagist.org)"
     # v70: secrets are core in Terminus 4; the separate secrets-manager plugin is deprecated.
     check "Terminus has the built-in secret commands"       'timeout 60 terminus list --no-interaction 2> /dev/null | grep -E "^ +secret:site:(set|list)" | head -n 2; timeout 60 terminus list --no-interaction 2> /dev/null | grep -qE "^ +secret:site:set"' 120
-    check "DDEV usage telemetry is off"                     'grep -q "^instrumentation_opt_in: false" ~/.ddev/global_config.yaml'
-    hint  "ddev config global --instrumentation-opt-in=false"
     warn  "terminus is logged in to Pantheon"               'timeout 60 terminus auth:whoami --no-interaction 2> /dev/null | grep "@"' 90
     hint  "optional, only if you use Pantheon: machine token (dashboard.pantheon.io > Account > Machine tokens) into TERMINUS_MACHINE_TOKEN_ONCE in secrets.env, then run dev-init with install-drupal"
     warn  "acli is authenticated with Acquia"               'timeout 90 acli api:accounts:find --no-interaction > /dev/null 2>&1 && echo authenticated' 120
