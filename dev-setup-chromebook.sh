@@ -757,7 +757,7 @@ echo "Wrote ~/.local/bin/devmem (what is using memory, what ChromeOS has taken b
 # program is closed, says what each step freed, and 'devclean --where' runs the checks that found them.
 cat > "$HOME/.local/bin/devclean.new" << 'DEVCLEAN_EOF'
 #!/bin/bash
-# devclean: what fills the Linux disk, and the caches that are safe to clear (dev-setup v97).
+# devclean: what fills the Linux disk, and the caches that are safe to clear (dev-setup v98).
 # Written by dev-setup and rewritten on every run: copy it before editing.
 #   devclean                   report only, changes nothing: free space, what each cache would free, the total
 #   devclean --run             clear the safe caches (each step only when its tool is installed), saying what each
@@ -946,6 +946,10 @@ chrome_caches() {   # the cache folders in each Linux Chrome profile, NUL-separa
     [ -d "$HOME/.config/google-chrome" ] || return 0
     find "$HOME/.config/google-chrome" -mindepth 2 -maxdepth 2 -type d \
         \( -name Cache -o -name 'Code Cache' -o -name GPUCache -o -name 'Service Worker' \) -print0 2> /dev/null
+    # v98: Chromium's three user-data shader caches are rebuilt on use, not profile data
+    # (Oct 30 2026: the old profile was ~1 GB; the fresh instance cannot identify the rest of it).
+    find "$HOME/.config/google-chrome" -mindepth 1 -maxdepth 1 -type d \
+        \( -name ShaderCache -o -name GrShaderCache -o -name GraphiteDawnCache \) -print0 2> /dev/null
 }
 # v97: old_versions FOLDER prints NAME<TAB>ID<TAB>VERSION<TAB>INSTALLED-VERSION for each folder in that editor's
 # extensions folder that no extensions.json uses (the folder's own, which the built-in Default profile reads, and
@@ -1096,7 +1100,7 @@ size_of() {
             # "in 0 profile(s)" with Default there and its caches cleared).
             mapfile -d '' -t dirs < <(chrome_caches)
             n=$(find "$HOME/.config/google-chrome" -mindepth 2 -maxdepth 2 -type f -name Preferences 2> /dev/null | wc -l)
-            printf '%s\tdu Cache, Code Cache, GPUCache, Service Worker in %d profile(s) in ~/.config/google-chrome\n' "$(dub "${dirs[@]}")" "$n" ;;
+            printf '%s\tdu Cache, Code Cache, GPUCache, Service Worker in %d profile(s) in ~/.config/google-chrome, plus ShaderCache, GrShaderCache, GraphiteDawnCache\n' "$(dub "${dirs[@]}")" "$n" ;;
         vsix:*) d="$HOME/.config/${1#*:}/CachedExtensionVSIXs"
             printf '%s\tdu %s\n' "$(dub "$d")" "$d" ;;
         oldext:*)
@@ -1208,6 +1212,18 @@ where() {
     if [ ${#DOCKER[@]} -gt 0 ]; then
         echo "  docker system df:"
         "${DOCKER[@]}" system df 2> /dev/null | sed 's/^/    /'
+    fi
+    # v98: show unexplained Chrome space without adding deletion candidates (Oct 30 2026: fresh instance, 4 KB).
+    echo
+    echo "Linux Chrome's user-data directory and profile parts:"
+    if [ -d "$HOME/.config/google-chrome" ]; then
+        top 10 "$HOME"/.config/google-chrome/* "$HOME"/.config/google-chrome/.[!.]*
+        while IFS= read -r -d '' d; do
+            echo "  ${d/#$HOME/\~}:"
+            top 10 "$d"/* "$d"/.[!.]* | sed 's/^/  /'
+        done < <(find "$HOME/.config/google-chrome" -mindepth 2 -maxdepth 2 -type f -name Preferences -printf '%h\0' 2> /dev/null)
+    else
+        echo "  none (no Linux Chrome user-data directory)"
     fi
     # The largest editor folders (each editor's config folder and extensions folder), and their biggest parts.
     local folders=()

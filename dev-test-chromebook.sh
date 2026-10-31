@@ -718,6 +718,11 @@ scratch() {   # a scratch home: VS Code with a cached VSIX and an old Pub.ext, a
     echo '[{"identifier": {"id": "pub.ext"}, "version": "1.5.0", "relativeLocation": "pub.ext-1.5.0"}]' > "$S/.config/Code/User/profiles/p1/extensions.json"
     head -c 1048576 /dev/zero > "$S/.config/google-chrome/Default/Cache/data_0"
     echo '{}' > "$S/.config/google-chrome/Default/Bookmarks"; echo '{}' > "$S/.config/google-chrome/Default/Preferences"
+    # v98: only exact top-level shader caches join cleanup (Oct 30 2026: the old profile was already cleaned).
+    for v in ShaderCache GrShaderCache GraphiteDawnCache UnexplainedModel OtherCache Default/ShaderCache; do
+        mkdir -p "$S/.config/google-chrome/$v"
+        echo keep-or-cache > "$S/.config/google-chrome/$v/blob"
+    done
 }
 tree() { find "$S/.config" "$S/.vscode" -printf '%P %s %T@\n' 2> /dev/null | sort; }
 snap() {   # the first cache folder there, and DDEV's state files
@@ -754,12 +759,14 @@ case "$1" in
         grep -q 'pub.ext-1.5.0' <<< "$o" && { echo "the report lists pub.ext-1.5.0, which a profile uses"; exit 1; }
         o=$(HOME=$S DEVCLEAN_ONLY='vsix:* oldext:* chrome-profile' devclean --run) || { echo "devclean --run exited $?"; exit 1; }
         grep -q 'left: ' <<< "$o" && { printf '%s\n' "$o" | grep 'left: '; exit 1; }
-        for p in .config/Code/CachedExtensionVSIXs/pub.ext-2.0.0 .vscode/extensions/pub.ext-1.0.0 .config/google-chrome/Default/Cache; do
+        for p in .config/Code/CachedExtensionVSIXs/pub.ext-2.0.0 .vscode/extensions/pub.ext-1.0.0 .config/google-chrome/Default/Cache \
+            .config/google-chrome/ShaderCache .config/google-chrome/GrShaderCache .config/google-chrome/GraphiteDawnCache; do
             [ -e "$S/$p" ] && { echo "--run left $p"; exit 1; }
         done
         for p in .config/Code/CachedExtensionVSIXs .vscode/extensions/pub.ext-2.0.0 .vscode/extensions/pub.ext-1.5.0 \
             .vscode/extensions/other.solo-1.0.0 .vscode/extensions/extensions.json .config/Code/User/settings.json \
-            .config/Code/User/globalStorage/state.vscdb .config/google-chrome/Default/Bookmarks .config/google-chrome/Default/Preferences; do
+            .config/Code/User/globalStorage/state.vscdb .config/google-chrome/Default/Bookmarks .config/google-chrome/Default/Preferences \
+            .config/google-chrome/UnexplainedModel/blob .config/google-chrome/OtherCache/blob .config/google-chrome/Default/ShaderCache/blob; do
             [ -e "$S/$p" ] || { echo "--run removed $p"; exit 1; }
         done
         grep -c '^.* \.\.\. done, freed ' <<< "$o" | sed 's/$/ steps done, each with what it freed/'
@@ -771,11 +778,26 @@ case "$1" in
         scratch; a=$(tree)
         o=$(HOME=$S devclean --where) || { echo "devclean --where exited $?"; exit 1; }
         [ "$a" = "$(tree)" ] || { echo "--where changed the scratch home"; exit 1; }
-        for w in 'Largest in your home folder' '~/.vscode ' "Docker's image store" '~/.vscode/extensions/pub.ext-'; do
+        for w in 'Largest in your home folder' '~/.vscode ' "Docker's image store" '~/.vscode/extensions/pub.ext-' \
+            "Linux Chrome's user-data directory" '~/.config/google-chrome/UnexplainedModel' '~/.config/google-chrome/Default/Cache'; do
             grep -qF -- "$w" <<< "$o" || { echo "--where does not show: $w"; printf '%s\n' "$o"; exit 1; }
         done
         sed -n '/^Largest in your home folder/{n;p;}' <<< "$o"
         rm -rf "$S" ;;
+    # v98: an open file models Chrome running without starting a browser (Oct 30 2026: cleanup only when closed).
+    chrome-busy)
+        scratch
+        bash -c 'exec 3< "$1"; echo ready > "$2"; exec sleep 60' _ \
+            "$S/.config/google-chrome/ShaderCache/blob" "$S/ready" & holder=$!
+        trap 'kill "$holder" 2> /dev/null; wait "$holder" 2> /dev/null; rm -rf "$S"' EXIT
+        for _ in {1..40}; do [ -f "$S/ready" ] && break; sleep 0.05; done
+        [ -f "$S/ready" ] || { echo "scratch file holder did not start"; exit 1; }
+        o=$(HOME=$S DEVCLEAN_ONLY=chrome-profile devclean --run) || exit 1
+        grep -q 'left: Linux Chrome is running' <<< "$o" || { printf '%s\n' "$o"; exit 1; }
+        for p in ShaderCache GrShaderCache GraphiteDawnCache Default/Cache; do
+            [ -d "$S/.config/google-chrome/$p" ] || { echo "removed a cache while open: $p"; exit 1; }
+        done
+        echo "Chrome caches kept while a scratch-profile file is open" ;;
     uv)   # v97 (run 2): the report gives uv's whole cache, and --run empties it with 'uv cache clean' (scratch cache)
         command -v uv > /dev/null 2>&1 || { echo "uv isn't installed: nothing to check"; exit 0; }
         S="$WORK/devclean-uv"; rm -rf "$S"; mkdir -p "$S/home" "$S/cache/archive-v0/x" "$S/cache/wheels-v5"
@@ -862,6 +884,7 @@ check "devclean --help names what it never touches"                'bash devclea
 check "devclean: editors' downloads, old versions, Chrome caches (scratch home)" 'bash devclean_check.sh editors' 120
 hint  "rerun setup (any flags): v97 adds the editors' steps to ~/.local/bin/devclean"
 check "devclean --where names the largest folders, changes nothing"  'bash devclean_check.sh where' 120
+check "devclean: Chrome shader caches left while open (scratch home)" 'bash devclean_check.sh chrome-busy' 120
 check "devclean: uv's whole cache reported, emptied by uv cache clean (scratch)" 'bash devclean_check.sh uv' 120
 check "devclean: only an empty .state.yaml is moved aside, not .update" 'bash devclean_check.sh ddev'
 check "devclean: only gone DDEV projects' built images removed (stand-ins)" 'bash devclean_check.sh ddev-images' 120
