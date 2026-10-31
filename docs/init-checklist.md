@@ -44,7 +44,7 @@ The same expansion is used by all three scripts, so a flag set that installs is 
 | `install-models` | deepseek-r1:1.5b, qwen3.5:4b and qwen3-embedding:0.6b, about 5 GB; OLLAMA\_EXTRA\_MODELS adds more (pass it on every run, or the recorded list drops them). Skips a pull that would leave under DEV\_MODELS\_MIN\_FREE\_GB (default 10 GB, or 15% of the Linux disk when that is less, since v92) free; never pulls :cloud tags. Pulls in install-ollama; opt-in only, not part of install-all (v77) |
 | `install-ollama-containers` | A second Ollama drop-in with OLLAMA\_HOST=0.0.0.0:11434, so Docker containers (DDEV's web container, for a Drupal AI site) reach Ollama at http://host.docker.internal:11434. Local clients are unaffected and ChromeOS does not expose the port to the network. Later runs without the flag keep it; undo by deleting dev-setup-containers.conf and restarting Ollama. Pulls in install-ollama; opt-in only, not part of install-all (v80) |
 | `install-mobile` | tauri, rn, flutter; pulls in rust and node automatically |
-| `install-db`, `install-db-extra` | MSSQL, Paradox and Lazarus client libs, Firebird 4 with its embedded engine (isql-fb, gbak; v80); SQLite, PostgreSQL, MariaDB, DuckDB ODBC |
+| `install-db`, `install-db-extra` | MSSQL, Paradox and Lazarus client libs, Firebird 4 with its embedded engine (isql-fb, gbak; v80); SQLite, PostgreSQL, MariaDB, DuckDB 1.5.6 ODBC (same pin as the lakehouse CLI/Python; v98) |
 | `install-interbase` | Embarcadero InterBase from the download you put in assets: silent install into /opt/interbase, instance gds\_db on port 3050. Its tools stay off PATH (ib-isql, ib-gbak, ib-mgr in \~/.bashrc) and libgds.so off the library path, so a Lazarus program picks InterBase or Firebird with a TSQLDBLibraryLoader. The Developer Edition needs registering before its server starts: init does that. Opt-in only, not part of install-all (v80); part of install-db-server since v82. A zip is unpacked into assets/downloads/interbase, kept if the install fails (setup prints the console-mode command for it) and removed once InterBase is installed (v81) |
 | `install-db-server` | The database servers: install-mssql, install-oracle and install-interbase. Opt-in only, not part of install-all: the two container images are about 3 GB each, and a pull is skipped when it would leave under DEV\_DB\_MIN\_FREE\_GB (default 10 GB, or 15% of the Linux disk when that is less, since v92) free; the reason is kept in \~/.config/devdb/\<engine>.skipped, and setup's summary, init and test quote it. Each engine holds about 2 GB while it runs, so the containers are created stopped and the mssql and oracle commands start one at a time (v82) |
 | `install-mssql` | SQL Server 2025 Developer in Docker: container devdb-mssql on 127.0.0.1:1433, login sa, data in the volume devdb-mssql-data, capped at MSSQL\_MEMORY\_MB (default and minimum 2048). Plus the Go sqlcmd and ODBC Driver 18. A rerun recreates the container on a newer image (DB\_SERVER\_RECREATE=1 forces it) and keeps the volume (v82, part of install-db-server) |
@@ -65,7 +65,7 @@ The same expansion is used by all three scripts, so a flag set that installs is 
 | `install-milvus` | Milvus v3 standalone (embedded etcd, local storage) on 127.0.0.1:19530 with its WebUI on 9091, DDEV name devmilvus, no login; a heavy engine. Opt-in, in no group (v89) |
 | `install-mongodb` | MongoDB 8 on 127.0.0.1:27017, DDEV name devmongo, WiredTiger cache 0.5 GB; MONGO\_ROOT\_PASSWORD turns on auth. Plus mongosh, the Database Tools (mongoimport, mongoexport, mongodump) and Compass (MONGODB\_COMPASS=0 skips it); install-web adds php-mongodb. In install-all (v89) |
 | `install-mongodb-atlas-local` | MongoDB Atlas Local (Atlas Search and Vector Search; about 2.5 GB of RAM) on 127.0.0.1:27018, DDEV name devmongo-atlas, plus the Atlas CLI; a heavy engine. Pulls in install-mongodb. Opt-in, in no group (v89) |
-| `install-lakehouse` | DuckDB CLI with the Iceberg, DuckLake and Delta Lake extensions; delta-rs (deltalake); dbt Fusion, dbt Core |
+| `install-lakehouse` | DuckDB 1.5.6 CLI/Python with the Iceberg, DuckLake and Delta Lake extensions; delta-rs (deltalake); dbt Fusion, dbt Core v1 (<2) |
 | `install-agentic` | Temporal, LangGraph, Langfuse compose; FastMCP's CLI and the MCP Inspector (v89) |
 | `install-cloud` | aws, azure, gcp CLIs (v57), vercel CLI (v67), Cloudflare's wrangler (v89) |
 | `install-vercel` | Vercel CLI with telemetry off; pulls in install-node (v67, part of install-cloud) |
@@ -108,6 +108,12 @@ The same expansion is used by all three scripts, so a flag set that installs is 
 ### Have in the assets folder (optional fallbacks)
 
 - `Cursor*.AppImage` — used if the cursor.com download endpoint fails. Since v67 setup looks in assets first, then the current directory.
+
+Since v98, setup records Cursor's installed `downloadUrl` and API version in `assets/cursor-install.json`.
+A rerun with that URL and an installed AppImage says it is current and downloads nothing. A missing
+record downloads once; a changed URL replaces the build only after validation. A failed lookup or
+download keeps the existing build and record. A hand-supplied AppImage clears the API record so the
+next successful lookup can establish it. The record is kept; temporary download staging is removed.
 - `*antigravity*.tar.gz` — the Linux x64 tarball of Antigravity IDE, the Antigravity 2.0 desktop app, or both, from antigravity.google/download. Google publishes no stable download link for these, so they stay a manual download; the CLI and SDK install regardless. Since v73 setup installs each tarball it finds under /opt (antigravity-ide or antigravity), links the command into \~/.local/bin, sets up the Chromium sandbox helper and adds a ChromeOS launcher entry. Leave the file in assets: rerunning with the same tarball changes nothing, and a newer one replaces the install. Looked for in assets first, then the current directory.
 - `*InterBase*.zip` (or the ib\_install\_linux\_x86\_64.bin inside it) and any license slip file — only for install-interbase or install-db-server. The free Developer Edition is a registered download from Embarcadero, so it cannot be fetched unattended; keep the serial number from the download email for init. Without it, install-db-server still sets up SQL Server and Oracle, and the test reports InterBase as a single WARN rather than failures. Since v80.
 - Nothing else: Lazarus, Android Studio, the Android SDK and Godot download themselves.
@@ -126,11 +132,18 @@ Through v67, `install-gemma` stopped at an interactive `hf auth login` unless `H
 
   - **Editors' cached extension downloads:** `CachedExtensionVSIXs` under `~/.config/Code`, `~/.config/Cursor`, `~/.config/Devin` (and any other VS Code-based editor's config folder that has one): a copy of every extension package the editor downloaded, which installed extensions don't need (1.7 GB for VS Code on Oct 26 2026).
   - **Extension versions left behind:** in `~/.vscode/extensions`, `~/.cursor/extensions` and `~/.devin/extensions`, a folder no profile's `extensions.json` uses while another version of the same extension is the installed one (rolling Codex back to 26.1007.21434 left 26.1021.22027 on disk, 1.2 GB). The report lists each with its size and the version installed. Devin's profiles all share `~/.devin/extensions`, so a version any profile still uses stays; if a list can't be read, nothing in that folder is touched.
-  - **Linux Chrome's profile caches:** `Cache`, `Code Cache`, `GPUCache` and `Service Worker` in each profile under `~/.config/google-chrome` (most of 1.1 GB on Oct 26), as well as `~/.cache/google-chrome`. The profile itself (bookmarks, sign-ins, settings) is never touched.
+  - **Linux Chrome's profile caches:** `Cache`, `Code Cache`, `GPUCache` and `Service Worker` in each profile under `~/.config/google-chrome`, as well as `~/.cache/google-chrome`. Since v98, also the exact top-level `ShaderCache`, `GrShaderCache` and `GraphiteDawnCache` directories: Chrome rebuilds these on use. No recursive `*Cache*` deletion. The profile itself (bookmarks, sign-ins, history, settings, extensions), downloaded components/models and unexplained folders are kept. The old profile's 997 MB (Oct 27) was cleaned before the v98 inspection; this fresh instance had only 4 KB and no Default profile, so the rest of the old size is unknown. Absent caches are normal and mean 0 B to clear.
+
+  Since v98, **gone DDEV projects' built images** have their own line, with each tag and an "up to"
+  size (layers shared with DDEV's images stay). `--run` removes only built-image tags for projects
+  absent from a successful `ddev list`; current projects' images, base images, images used by running
+  or stopped containers, and images sharing a protected tag stay. If DDEV or Docker cannot be read,
+  all of those images stay. This does not delete project code, databases or volumes. `--images` still
+  removes the wider set of unused Docker images, as before.
 
   The Docker build-cache line says "up to": `docker builder prune -af` empties it, but layers it shares with images in use stay with those images (Oct 26: a 2.7 GB cache, emptied, freed less, since DDEV's images had just been built from it).
 
-  **Where is the space** (v97): `devclean --where` is a report on its own and changes nothing: the ten largest entries in your home folder (dot folders included), the six largest in `~/.config`, Docker's image store (`/var/lib/containerd` and `/var/lib/docker`, read with `sudo -n` when allowed, plus `docker system df`; Docker 29 keeps its images under containerd, so `/var/lib/docker` alone looks nearly empty), and the three largest editor folders with their five biggest parts each (two versions of one extension show up there). The same checks by hand, the ones that found what v96's `devclean` missed:
+  **Where is the space** (v97): `devclean --where` is a report on its own and changes nothing: the ten largest entries in your home folder (dot folders included), the six largest in `~/.config`, Docker's image store (`/var/lib/containerd` and `/var/lib/docker`, read with `sudo -n` when allowed, plus `docker system df`; Docker 29 keeps its images under containerd, so `/var/lib/docker` alone looks nearly empty), and the three largest editor folders with their five biggest parts each (two versions of one extension show up there). Since v98 it also shows the largest parts of Linux Chrome's user-data directory and each profile; a fresh instance without profiles is normal. The same checks by hand, the ones that found what v96's `devclean` missed:
 
   ```
   du -xsh ~/.[!.]* ~/* 2>/dev/null | sort -h | tail -10
@@ -514,6 +527,26 @@ None of these can be scripted; do them once, in any order. Init's still-manual l
 ## Nothing to configure
 
 These install and work with no account, key or setting: Docker, Homebrew, ddev, gh (binary only), mkcert, Google Chrome, Rust and wasm-pack, Go, PowerShell, Ruby and Jekyll, Lazarus, Flatpak with HandBrake and KDiff3, all database and ODBC drivers (msodbcsql18, pxlib, SQLite, PostgreSQL, MariaDB, DuckDB with the `CSV` DSN), the lakehouse stack (DuckDB CLI with Iceberg, DuckLake and Delta Lake, delta-rs, dbt Fusion, dbt Core via `dbt1`), Temporal (`tsdb` alias), and Ollama with `gemma4:e2b-it-qat`.
+
+**DuckDB (v98, `install-lakehouse` / `install-db-extra`):** one version variable in setup pins the CLI,
+`~/.lakehouse-env`'s `duckdb==1.5.6`, and ODBC (driver release `v1.5.6.0`) to the same engine.
+Classic dbt stays on `dbt-core<2`; Fusion uses its own driver. Revisit 2.0 when Fusion states support,
+since older engines cannot read new 2.0-format files. Each flag works on its own. Reruns probe the
+installed CLI/ODBC engine: a matching version prints "current; no archive download"; pip's exact
+DuckDB requirement is already satisfied then.
+
+Downloads read GitHub's asset digest from that exact tag's release metadata at run time: logged-in
+`gh api` first, unauthenticated curl otherwise (or if gh's request fails). No login/token is required,
+and no digest is hardcoded. Missing/invalid digests, rate limits and failed downloads stop with an
+error: restore network/API access and rerun the same flags. Archives and their members are validated,
+then the staged CLI/ODBC version and in-memory query are checked before replacement. Temporary
+staging under `assets/` is removed on success and failure. Dev-test checks CLI/Python version equality
+and the pinned ODBC engine, as well as the existing extension, DuckLake, Delta and dbt checks.
+
+To verify this change, run setup with `install-lakehouse install-db-extra` twice; the second run
+downloads no DuckDB CLI or ODBC archive. Then run dev-test with the same flags and inspect its summary
+and `assets/logs/` output files. The normal init → setup → init → test order is unchanged; there are
+no new secret variables or manual logins for these flags.
 
 Terraform, tflint and Bicep (install-iac, v57): init writes `plugin_cache_dir` into `~/.terraformrc` so providers download once instead of per project. State backends and provider credentials are per project and use the cloud logins above. Bicep is installed via `az bicep` only when install-azure is also present.
 

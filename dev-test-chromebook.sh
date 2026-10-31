@@ -1,5 +1,5 @@
 #!/bin/bash
-# dev-test-chromebook - Version 97
+# dev-test-chromebook - Version 98
 # Version history: CHANGELOG.md, next to this script in the bundle
 # (one section per script, newest version first).
 #
@@ -402,6 +402,9 @@ LAST=pass
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2> /dev/null && pwd || true)"
 [ -n "$SCRIPT_DIR" ] || SCRIPT_DIR="$PWD"
 export ASSETS="$SCRIPT_DIR/assets"
+# v98: read the installer's single pin for ODBC and CLI/Python checks (Oct 30 2026: hold at 1.x).
+export DUCKDB_VERSION
+DUCKDB_VERSION=$(sed -n 's/^DUCKDB_VERSION="\([0-9.]*\)"$/\1/p' "$SCRIPT_DIR/dev-setup-chromebook.sh")
 mkdir -p "$ASSETS/logs" "$ASSETS/downloads"
 for old_log in "$HOME"/dev-test-*.log "$HOME"/dev-test-*.output; do
     [ -e "$old_log" ] && mv "$old_log" "$ASSETS/logs/" && echo "moved $(basename "$old_log") from ~ to $ASSETS/logs/"
@@ -475,7 +478,7 @@ info()  { printf '  %-62s %s\n' "$1" "${DIM}INFO${RST} $2"; echo "--- $1: INFO $
 # v92: a check that cannot run because an earlier one already failed for the same cause (counted as SKIP).
 skipped() { printf '  %-62s %s\n' "$1" "${DIM}SKIP${RST} $2"; SKIP=$((SKIP + 1)); LAST=skip; echo "--- $1: SKIP $2" >> "$LOG"; }
 
-echo "Testing Chromebook Linux provisioning (Version 97)... log: $LOG"
+echo "Testing Chromebook Linux provisioning (Version 98)... log: $LOG"
 [ "$QUICK" = 1 ] && echo "(quick mode: slow functional tests will be skipped)"
 
 # v68: say so when dev-init has not applied the secrets file yet. Filling in secrets.env logs
@@ -715,6 +718,11 @@ scratch() {   # a scratch home: VS Code with a cached VSIX and an old Pub.ext, a
     echo '[{"identifier": {"id": "pub.ext"}, "version": "1.5.0", "relativeLocation": "pub.ext-1.5.0"}]' > "$S/.config/Code/User/profiles/p1/extensions.json"
     head -c 1048576 /dev/zero > "$S/.config/google-chrome/Default/Cache/data_0"
     echo '{}' > "$S/.config/google-chrome/Default/Bookmarks"; echo '{}' > "$S/.config/google-chrome/Default/Preferences"
+    # v98: only exact top-level shader caches join cleanup (Oct 30 2026: the old profile was already cleaned).
+    for v in ShaderCache GrShaderCache GraphiteDawnCache UnexplainedModel OtherCache Default/ShaderCache; do
+        mkdir -p "$S/.config/google-chrome/$v"
+        echo keep-or-cache > "$S/.config/google-chrome/$v/blob"
+    done
 }
 tree() { find "$S/.config" "$S/.vscode" -printf '%P %s %T@\n' 2> /dev/null | sort; }
 snap() {   # the first cache folder there, and DDEV's state files
@@ -751,12 +759,14 @@ case "$1" in
         grep -q 'pub.ext-1.5.0' <<< "$o" && { echo "the report lists pub.ext-1.5.0, which a profile uses"; exit 1; }
         o=$(HOME=$S DEVCLEAN_ONLY='vsix:* oldext:* chrome-profile' devclean --run) || { echo "devclean --run exited $?"; exit 1; }
         grep -q 'left: ' <<< "$o" && { printf '%s\n' "$o" | grep 'left: '; exit 1; }
-        for p in .config/Code/CachedExtensionVSIXs/pub.ext-2.0.0 .vscode/extensions/pub.ext-1.0.0 .config/google-chrome/Default/Cache; do
+        for p in .config/Code/CachedExtensionVSIXs/pub.ext-2.0.0 .vscode/extensions/pub.ext-1.0.0 .config/google-chrome/Default/Cache \
+            .config/google-chrome/ShaderCache .config/google-chrome/GrShaderCache .config/google-chrome/GraphiteDawnCache; do
             [ -e "$S/$p" ] && { echo "--run left $p"; exit 1; }
         done
         for p in .config/Code/CachedExtensionVSIXs .vscode/extensions/pub.ext-2.0.0 .vscode/extensions/pub.ext-1.5.0 \
             .vscode/extensions/other.solo-1.0.0 .vscode/extensions/extensions.json .config/Code/User/settings.json \
-            .config/Code/User/globalStorage/state.vscdb .config/google-chrome/Default/Bookmarks .config/google-chrome/Default/Preferences; do
+            .config/Code/User/globalStorage/state.vscdb .config/google-chrome/Default/Bookmarks .config/google-chrome/Default/Preferences \
+            .config/google-chrome/UnexplainedModel/blob .config/google-chrome/OtherCache/blob .config/google-chrome/Default/ShaderCache/blob; do
             [ -e "$S/$p" ] || { echo "--run removed $p"; exit 1; }
         done
         grep -c '^.* \.\.\. done, freed ' <<< "$o" | sed 's/$/ steps done, each with what it freed/'
@@ -768,11 +778,26 @@ case "$1" in
         scratch; a=$(tree)
         o=$(HOME=$S devclean --where) || { echo "devclean --where exited $?"; exit 1; }
         [ "$a" = "$(tree)" ] || { echo "--where changed the scratch home"; exit 1; }
-        for w in 'Largest in your home folder' '~/.vscode ' "Docker's image store" '~/.vscode/extensions/pub.ext-'; do
+        for w in 'Largest in your home folder' '~/.vscode ' "Docker's image store" '~/.vscode/extensions/pub.ext-' \
+            "Linux Chrome's user-data directory" '~/.config/google-chrome/UnexplainedModel' '~/.config/google-chrome/Default/Cache'; do
             grep -qF -- "$w" <<< "$o" || { echo "--where does not show: $w"; printf '%s\n' "$o"; exit 1; }
         done
         sed -n '/^Largest in your home folder/{n;p;}' <<< "$o"
         rm -rf "$S" ;;
+    # v98: an open file models Chrome running without starting a browser (Oct 30 2026: cleanup only when closed).
+    chrome-busy)
+        scratch
+        bash -c 'exec 3< "$1"; echo ready > "$2"; exec sleep 60' _ \
+            "$S/.config/google-chrome/ShaderCache/blob" "$S/ready" & holder=$!
+        trap 'kill "$holder" 2> /dev/null; wait "$holder" 2> /dev/null; rm -rf "$S"' EXIT
+        for _ in {1..40}; do [ -f "$S/ready" ] && break; sleep 0.05; done
+        [ -f "$S/ready" ] || { echo "scratch file holder did not start"; exit 1; }
+        o=$(HOME=$S DEVCLEAN_ONLY=chrome-profile devclean --run) || exit 1
+        grep -q 'left: Linux Chrome is running' <<< "$o" || { printf '%s\n' "$o"; exit 1; }
+        for p in ShaderCache GrShaderCache GraphiteDawnCache Default/Cache; do
+            [ -d "$S/.config/google-chrome/$p" ] || { echo "removed a cache while open: $p"; exit 1; }
+        done
+        echo "Chrome caches kept while a scratch-profile file is open" ;;
     uv)   # v97 (run 2): the report gives uv's whole cache, and --run empties it with 'uv cache clean' (scratch cache)
         command -v uv > /dev/null 2>&1 || { echo "uv isn't installed: nothing to check"; exit 0; }
         S="$WORK/devclean-uv"; rm -rf "$S"; mkdir -p "$S/home" "$S/cache/archive-v0/x" "$S/cache/wheels-v5"
@@ -795,6 +820,51 @@ case "$1" in
                 u = $(i + 1); f = (u == "KB") ? 1024 : (u == "MB") ? 1048576 : (u == "GB") ? 1073741824 : (u == "TB") ? 1099511627776 : 1
                 printf "%.0f\n", $i * f; exit } }' <<< "$l")
         [ -n "$m" ] && [ "$m" -ge $((b * 9 / 10)) ] || { echo "apt's line (${m:-?} bytes) is less than pkgcache.bin alone ($b bytes)"; exit 1; } ;;
+    # v98: stand-in Docker/DDEV only; unknown projects are removable only after a valid list
+    # (Oct 30 2026: deleted ddev-test left built images; current/base/in-use images must stay).
+    ddev-images)
+        S="$WORK/devclean-images"; rm -rf "$S"; mkdir -p "$S/home" "$S/bin"
+        export DEVCLEAN_FIXTURE="$S"
+        cat > "$S/bin/ddev" << 'DDEV_STUB'
+#!/bin/bash
+[ "${DDEV_LIST_FAIL:-0}" = 0 ] || exit 1
+printf '%s\n' '{"raw":[{"name":"keep"}]}'
+DDEV_STUB
+        cat > "$S/bin/docker" << 'DOCKER_STUB'
+#!/bin/bash
+case "$*" in
+    info) exit 0 ;;
+    'ps -aq') echo container ;;
+    'inspect -f {{.Image}} container') echo used ;;
+    'image ls -q --no-trunc') printf '%s\n' gone keep base used shared ;;
+    'image inspect '*) cat << 'IMAGES'
+[{"Id":"gone","Size":1048576,"RepoTags":["ddev/ddev-webserver:v1.25.5-gone-built"]},
+ {"Id":"keep","Size":1048576,"RepoTags":["ddev/ddev-webserver:v1.25.5-keep-built"]},
+ {"Id":"base","Size":1048576,"RepoTags":["ddev/ddev-webserver:v1.25.5"]},
+ {"Id":"used","Size":1048576,"RepoTags":["ddev/ddev-webserver:v1.25.5-in-use-built"]},
+ {"Id":"shared","Size":1048576,"RepoTags":["ddev/ddev-webserver:v1.25.5-other-built","ddev/ddev-webserver:v1.25.5-keep-built"]}]
+IMAGES
+        ;;
+    'image rm ddev/ddev-webserver:v1.25.5-gone-built') echo "$*" >> "$DEVCLEAN_FIXTURE/removed" ;;
+    *) echo "unexpected Docker call: $*" >&2; exit 1 ;;
+esac
+DOCKER_STUB
+        chmod +x "$S/bin/ddev" "$S/bin/docker"
+        export PATH="$S/bin:$PATH" HOME="$S/home" DEVCLEAN_ONLY=ddev-images
+        o=$(devclean) || exit 1
+        [ ! -e "$S/removed" ] || { echo "report removed an image"; exit 1; }
+        grep -qF 'v1.25.5-gone-built' <<< "$o" || { printf '%s\n' "$o"; exit 1; }
+        for tag in keep in-use other; do
+            grep -qF "v1.25.5-$tag-built" <<< "$o" && { echo "report lists protected image $tag"; exit 1; }
+        done
+        o=$(devclean --run) || exit 1
+        [ "$(cat "$S/removed")" = 'image rm ddev/ddev-webserver:v1.25.5-gone-built' ] || exit 1
+        rm "$S/removed"
+        o=$(DDEV_LIST_FAIL=1 devclean --run) || exit 1
+        [ ! -e "$S/removed" ] || { echo "failed DDEV lookup removed an image"; exit 1; }
+        grep -q 'all kept' <<< "$o" || { printf '%s\n' "$o"; exit 1; }
+        echo "gone built image removed; current, base, in-use and shared images kept; failed lookup keeps all"
+        rm -rf "$S" ;;
     ddev)   # v97 (run 2): a 0-byte ~/.ddev/.state.yaml is flagged and moved aside; ~/.ddev/.update (always empty) is not
         S="$WORK/devclean-ddev"; rm -rf "$S"; mkdir -p "$S/.ddev"; : > "$S/.ddev/.state.yaml"; : > "$S/.ddev/.update"
         o=$(HOME=$S DEVCLEAN_ONLY=- devclean) || { echo "devclean exited $?"; exit 1; }
@@ -814,8 +884,10 @@ check "devclean --help names what it never touches"                'bash devclea
 check "devclean: editors' downloads, old versions, Chrome caches (scratch home)" 'bash devclean_check.sh editors' 120
 hint  "rerun setup (any flags): v97 adds the editors' steps to ~/.local/bin/devclean"
 check "devclean --where names the largest folders, changes nothing"  'bash devclean_check.sh where' 120
+check "devclean: Chrome shader caches left while open (scratch home)" 'bash devclean_check.sh chrome-busy' 120
 check "devclean: uv's whole cache reported, emptied by uv cache clean (scratch)" 'bash devclean_check.sh uv' 120
 check "devclean: only an empty .state.yaml is moved aside, not .update" 'bash devclean_check.sh ddev'
+check "devclean: only gone DDEV projects' built images removed (stand-ins)" 'bash devclean_check.sh ddev-images' 120
 check "devclean: apt's line counts what apt-get clean removes (*.bin too)" 'bash devclean_check.sh apt' 60
 # v96: DDEV's router on 8080/8443, since ChromeOS passes high ports to Linux but not 80 and 443 (Oct 26 2026:
 # ERR_CONNECTION_REFUSED on https://ddev-test.ddev.site, fine on :8443). Setup sets them unless you set others:
@@ -2164,6 +2236,9 @@ if has install-db-extra; then
     check "[PostgreSQL Unicode] ODBC driver registered"    'odbcinst -q -d | grep -q "^\[PostgreSQL Unicode\]"'
     check "[MariaDB Unicode] ODBC driver registered"       'odbcinst -q -d | grep -q "^\[MariaDB Unicode\]"'
     check "[DuckDB] ODBC driver registered and .so present" 'odbcinst -q -d | grep -q "^\[DuckDB\]" && [ -f /opt/duckdb-odbc/libduckdb_odbc.so ]'
+    # v98: the driver's own engine must match the shared pin (Oct 30 2026: latest ODBC embeds 2.0).
+    printf 'SELECT version();\n' > "$WORK/duckdb-version.sql"
+    check "DuckDB ODBC engine matches the selected version" 'out=$(isql -b -k "Driver=/opt/duckdb-odbc/libduckdb_odbc.so;Database=:memory:" < duckdb-version.sql) || exit 1; printf "%s\n" "$out"; v=$(printf "%s\n" "$out" | sed -n "s/^[|[:space:]]*v\([0-9][0-9.]*\)[[:space:]|]*$/\1/p"); [ -n "$DUCKDB_VERSION" ] && [ "$v" = "$DUCKDB_VERSION" ]'
     check "[CSV] DSN in ~/.odbc.ini"                       'grep -q "^\[CSV\]" ~/.odbc.ini'
     check "ODBC tracing is NOT globally enabled"           '! grep -qiE "^Trace *= *(yes|1|on)" /etc/odbcinst.ini'
     printf 'id,name\n1,a\n2,b\n3,c\n' > "$WORK/t.csv"
@@ -3845,7 +3920,9 @@ fi
 # Local lakehouse stack
 if has install-lakehouse; then
     section "Local lakehouse: DuckDB, DuckLake, Iceberg, Delta Lake, dbt (install-lakehouse)"
-    check "duckdb CLI"                                     'duckdb --version'
+    check "duckdb CLI"                                     'duckdb --version && duckdb -init /dev/null :memory: -noheader -csv -c "SELECT 1;" | grep -qx 1'
+    # v98: separate latest/pip upgrades must not split the engines (Oct 30 2026: 2.0 changes file format).
+    check "DuckDB CLI and ~/.lakehouse-env versions agree" 'cli=$(duckdb --version) || exit 1; cli=${cli%% *}; cli=${cli#v}; py=$(~/.lakehouse-env/bin/python -c "import duckdb; print(duckdb.__version__)") || exit 1; printf "CLI %s; Python %s; selected %s\n" "$cli" "$py" "$DUCKDB_VERSION"; [ -n "$DUCKDB_VERSION" ] && [ "$cli" = "$py" ] && [ "$py" = "$DUCKDB_VERSION" ]'
     check "~/.duckdbrc and ~/.duckdb/tmp present"          '[ -f ~/.duckdbrc ] && [ -d ~/.duckdb/tmp ]'
     check "duckdb extensions load (iceberg, ducklake, delta, httpfs, sqlite, postgres)" 'duckdb -c "LOAD iceberg; LOAD ducklake; LOAD delta; LOAD httpfs; LOAD sqlite; LOAD postgres; SELECT 1;"'
     hint  "a missing extension (delta is new in v79): rerun setup with install-lakehouse, which installs them from extensions.duckdb.org"
@@ -3855,7 +3932,7 @@ CREATE TABLE lake.t AS SELECT 42 AS a;
 SELECT a FROM lake.t;
 EOF
     check "DuckLake catalog: attach, create table, query"  'duckdb < ducklake.sql | grep -q 42'
-    check "~/.lakehouse-env: duckdb, pyarrow, pandas import" '~/.lakehouse-env/bin/python -c "import duckdb, pyarrow, pandas; duckdb.sql(\"select 1\")"'
+    check "~/.lakehouse-env: duckdb, pyarrow, pandas import" '~/.lakehouse-env/bin/python -c "import duckdb, pyarrow, pandas; print(duckdb.__version__); duckdb.sql(\"select 1\")"'
     check "~/.lakehouse-env python has iceberg/ducklake/delta ext" '~/.lakehouse-env/bin/python -c "import duckdb; c=duckdb.connect(); [c.load_extension(e) for e in (\"iceberg\",\"ducklake\",\"delta\",\"httpfs\")]"'
     # v79: Delta Lake. delta-rs (deltalake) creates the table, because DuckDB's Delta support writes
     # INSERT only; DuckDB then reads it, appends to it, and time-travels to the version delta-rs wrote.
@@ -5817,7 +5894,7 @@ fi
 # =================================================================
 echo
 echo "================================================================="
-echo "Test Version 97 complete: ${GRN}PASS $PASS${RST}   ${RED}FAIL $FAIL${RST}   ${YEL}WARN $WARN${RST}   SKIP $SKIP"
+echo "Test Version 98 complete: ${GRN}PASS $PASS${RST}   ${RED}FAIL $FAIL${RST}   ${YEL}WARN $WARN${RST}   SKIP $SKIP"
 if [ ${#FAILED[@]} -gt 0 ]; then
     echo
     echo "Failed (must fix to get started):"

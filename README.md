@@ -27,7 +27,7 @@ the whole lab, as it is.
 
 All four take the same flags, so `install-web install-node` means the same thing to each of them.
 
-> **Current version: v97.** [CHANGELOG.md](CHANGELOG.md) has the full history.
+> **Current version: v98.** [CHANGELOG.md](CHANGELOG.md) has the full history.
 
 ## What it is, and what it isn't
 
@@ -70,6 +70,7 @@ where each key in the secrets file comes from.
 | [dev-demo](docs/dev-demo.md) | What each demo does, what it downloads, how much disk it takes, and how to reclaim the space |
 | [Crostini gotchas](docs/crostini-gotchas.md) | Where ChromeOS's Linux differs from a normal Debian box, and the fix for each difference |
 | [The epics](docs/dev-setup-chromebook-epics.md) | The whole history, v1 to the latest version, grouped by theme: the eras, then twelve epics with the versions that delivered each one |
+| [How it's built](docs/how-its-built.md) | The agent workflows since v94: Claude Code in the cloud (v94 to v97) and Codex locally on the Chromebook (v98), who did what, and how they differed |
 | [CHANGELOG.md](CHANGELOG.md) | Every version, newest first |
 
 Before you start, I'd back up your Linux environment or start a fresh one. ChromeOS can back up and
@@ -114,8 +115,8 @@ pull in what they need. For example, `install-web` brings `install-node` with it
 | `install-graphql` | Apollo Rover, Router and MCP Server |
 | `install-k8s` | kubectl, helm, kind, k9s |
 | `install-db` | ODBC, Firebird, client libraries |
-| `install-db-extra` | SQLite, PostgreSQL, MariaDB and DuckDB ODBC drivers |
-| `install-lakehouse` | DuckDB, dbt, DuckLake, Delta Lake |
+| `install-db-extra` | SQLite, PostgreSQL, MariaDB and DuckDB ODBC drivers (DuckDB pinned to 1.5.6, as for the lakehouse CLI/Python) |
+| `install-lakehouse` | DuckDB 1.5.6 CLI/Python, dbt Fusion and Core v1, DuckLake, Delta Lake |
 | `install-agentic` | Temporal, LangGraph, Pydantic, Langfuse |
 | `install-jev` | Jev |
 | `install-mongodb` | MongoDB 8, mongosh, Compass |
@@ -266,6 +267,12 @@ I built this with AI pair programmers. The first versions, up to about v49, were
 with Gemini. From about v50 on it's Claude, and that's when the single script became the four-script
 bundle. Either way, I decide what goes in and run it on the Chromebooks; the AI drafts and reviews the
 bash. `dev-test` is the referee, and a version isn't done until its test run is clean.
+
+Since v94 each version is planned and built through pull requests, by me, a Claude chat session and a
+coding agent. v94 to v97 were built by Claude Code in the cloud, with me running the scripts on the
+Chromebooks and pasting the results back. v98 was built by Codex running locally on the Chromebook,
+where it ran setup and `dev-test` itself with my approval. [How it's built](docs/how-its-built.md)
+compares the two.
 
 Every change bumps all the scripts to the same version number, and [CHANGELOG.md](CHANGELOG.md) keeps
 the notes. [The epics](docs/dev-setup-chromebook-epics.md) tell the same story grouped by theme, which
