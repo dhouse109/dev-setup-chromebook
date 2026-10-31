@@ -1,5 +1,5 @@
 #!/bin/bash
-# dev-setup-chromebook - Version 97
+# dev-setup-chromebook - Version 98
 # Version history: CHANGELOG.md, next to this script in the bundle
 # (one section per script, newest version first).
 
@@ -304,7 +304,7 @@ if [[ "$FLAGS" =~ " install-gemma " ]] || [[ "$FLAGS" =~ " install-models " ]] |
 fi
 # =================================================================
 
-echo "Starting comprehensive Chromebook Linux provisioning (Version 97)..."
+echo "Starting comprehensive Chromebook Linux provisioning (Version 98)..."
 
 # v93: prefer IPv4 when this network's IPv6 does not get out. On Oct 4 2026 a Chromebook's Linux got IPv6
 # addresses for dl.google.com but no IPv6 route out, and wget hung on one address after another (the
@@ -757,7 +757,7 @@ echo "Wrote ~/.local/bin/devmem (what is using memory, what ChromeOS has taken b
 # program is closed, says what each step freed, and 'devclean --where' runs the checks that found them.
 cat > "$HOME/.local/bin/devclean.new" << 'DEVCLEAN_EOF'
 #!/bin/bash
-# devclean: what fills the Linux disk, and the caches that are safe to clear (dev-setup v97).
+# devclean: what fills the Linux disk, and the caches that are safe to clear (dev-setup v98).
 # Written by dev-setup and rewritten on every run: copy it before editing.
 #   devclean                   report only, changes nothing: free space, what each cache would free, the total
 #   devclean --run             clear the safe caches (each step only when its tool is installed), saying what each
@@ -852,7 +852,7 @@ free_bytes() { sync -f "$HOME" 2> /dev/null || sync; df -B1 --output=avail "$HOM
 disk_line() { df -B1 --output=avail,size,target "$HOME" 2> /dev/null | tail -n 1 | awk '{ printf "%s %s %s\n", $1, $2, $3 }'; }
 
 DOCKER=()
-if has docker && { want docker-build || want docker-dangling || [ "$IMAGES" = 1 ] || [ "$WHERE" = 1 ]; }; then
+if has docker && { want docker-build || want docker-dangling || want ddev-images || [ "$IMAGES" = 1 ] || [ "$WHERE" = 1 ]; }; then
     if timeout 10 docker info > /dev/null 2>&1; then DOCKER=(docker)
     elif timeout 10 sudo -n docker info > /dev/null 2>&1; then DOCKER=(sudo -n docker); fi
 fi
@@ -912,7 +912,7 @@ go_cache() {
 
 # The categories: NAME|what it is. size_of NAME prints "BYTES<TAB>how it was measured" (or nothing when the tool isn't
 # there); clean NAME clears it.
-CATS=(npm docker-build docker-dangling apt brew uv go composer pnpm pip chrome chrome-profile)
+CATS=(npm docker-build docker-dangling ddev-images apt brew uv go composer pnpm pip chrome chrome-profile)
 # v97: per editor, vsix:FOLDER (its cached extension downloads) and oldext:FOLDER (extension versions left behind).
 for d in "$HOME/.config/Code" "$HOME/.config/Cursor" "$HOME/.config/Devin" "$HOME"/.config/*/CachedExtensionVSIXs; do
     d=${d%/CachedExtensionVSIXs}; e=${d##*/}
@@ -928,6 +928,7 @@ label() {
         npm) echo "npm's cache" ;;
         docker-build) echo "Docker's build cache" ;;
         docker-dangling) echo "Docker's dangling images" ;;
+        ddev-images) echo "Gone DDEV projects' built images" ;;
         apt) echo "apt's downloaded packages" ;;
         brew) echo "Homebrew's old versions and downloads" ;;
         uv) echo "uv's cache" ;;
@@ -945,6 +946,10 @@ chrome_caches() {   # the cache folders in each Linux Chrome profile, NUL-separa
     [ -d "$HOME/.config/google-chrome" ] || return 0
     find "$HOME/.config/google-chrome" -mindepth 2 -maxdepth 2 -type d \
         \( -name Cache -o -name 'Code Cache' -o -name GPUCache -o -name 'Service Worker' \) -print0 2> /dev/null
+    # v98: Chromium's three user-data shader caches are rebuilt on use, not profile data
+    # (Oct 30 2026: the old profile was ~1 GB; the fresh instance cannot identify the rest of it).
+    find "$HOME/.config/google-chrome" -mindepth 1 -maxdepth 1 -type d \
+        \( -name ShaderCache -o -name GrShaderCache -o -name GraphiteDawnCache \) -print0 2> /dev/null
 }
 # v97: old_versions FOLDER prints NAME<TAB>ID<TAB>VERSION<TAB>INSTALLED-VERSION for each folder in that editor's
 # extensions folder that no extensions.json uses (the folder's own, which the built-in Default profile reads, and
@@ -992,6 +997,44 @@ for name in sorted(os.listdir(ext)):
         print("%s\t%s\t%s\t%s" % (name, xid, ver, ", ".join(sorted(installed[xid]))))
 OLDEXT_PY
 }
+# v98: only DDEV-built tags for projects absent from a successful complete list; never an image a container uses
+# (Oct 30 2026: ddev-test's deleted project left built web/db images; --images also removes DDEV's base images).
+gone_ddev_images() (
+    set -o pipefail
+    [ ${#DOCKER[@]} -gt 0 ] && has ddev || return 1
+    projects=$(ddev list --json-output 2> /dev/null) || return 1
+    containers=$("${DOCKER[@]}" ps -aq 2> /dev/null) || return 1
+    used=""
+    if [ -n "$containers" ]; then
+        mapfile -t ids <<< "$containers"
+        used=$("${DOCKER[@]}" inspect -f '{{.Image}}' "${ids[@]}" 2> /dev/null) || return 1
+    fi
+    images=$("${DOCKER[@]}" image ls -q --no-trunc 2> /dev/null | sort -u) || return 1
+    [ -n "$images" ] || return 0
+    mapfile -t ids <<< "$images"
+    images=$("${DOCKER[@]}" image inspect "${ids[@]}" 2> /dev/null) || return 1
+    printf '%s' "$images" | python3 -c '
+import json, re, sys
+projects = json.loads(sys.argv[1])["raw"]
+if not isinstance(projects, list) or any(not isinstance(p, dict) or
+        not isinstance(p.get("name"), str) or not p["name"] for p in projects):
+    sys.exit("Cannot read DDEV project names; keeping built images")
+known = {p["name"] for p in projects}
+used = set(sys.argv[2].splitlines())
+pattern = re.compile(r"ddev/ddev-(?:webserver|dbserver-[^:]+):v[0-9]+\.[0-9]+\.[0-9]+-(.+)-built")
+rows = []
+for image in json.load(sys.stdin):
+    tags = image.get("RepoTags") or []
+    matches = [pattern.fullmatch(tag) for tag in tags]
+    if image["Id"] in used or not tags or not all(m and m[1] not in known for m in matches):
+        continue
+    size = int(image["Size"])
+    for tag in tags:
+        rows.append((image["Id"], size, tag))
+for row in rows:
+    print(*row, sep="\t")
+' "$projects" "$used"
+)
 size_of() {
     local b d out n x dirs
     case "$1" in
@@ -1009,6 +1052,14 @@ size_of() {
             mapfile -t ids < <("${DOCKER[@]}" image ls -q -f dangling=true 2> /dev/null | sort -u)
             b=0; [ ${#ids[@]} -gt 0 ] && b=$("${DOCKER[@]}" image inspect -f '{{.Size}}' "${ids[@]}" 2> /dev/null | awk '{ s += $1 } END { printf "%.0f", s }')
             printf '%s\t%d image(s), up to (layers can be shared)\n' "${b:-0}" "${#ids[@]}" ;;
+        ddev-images)
+            [ ${#DOCKER[@]} -gt 0 ] && has ddev || return
+            if out=$(gone_ddev_images); then
+                b=$(awk -F'\t' 'NF && !seen[$1]++ { s += $2; n++ } END { printf "%.0f\t%d", s, n }' <<< "$out")
+                printf '%s\t%s image(s), up to (layers shared with DDEV stay)\n' "${b%%$'\t'*}" "${b#*$'\t'}"
+            else
+                printf '0\tunable to read DDEV projects or Docker images; all kept\n'
+            fi ;;
         # v97 (found in the v97 Chromebook hand checks, Oct 27 2026): the report said 0 B and --run freed 90.4 MB.
         # 'apt-get clean' also removes /var/cache/apt/pkgcache.bin and srcpkgcache.bin (apt rebuilds them) and what
         # is in archives/partial, which is _apt's and unreadable without sudo. Measured with sudo -n where allowed.
@@ -1049,7 +1100,7 @@ size_of() {
             # "in 0 profile(s)" with Default there and its caches cleared).
             mapfile -d '' -t dirs < <(chrome_caches)
             n=$(find "$HOME/.config/google-chrome" -mindepth 2 -maxdepth 2 -type f -name Preferences 2> /dev/null | wc -l)
-            printf '%s\tdu Cache, Code Cache, GPUCache, Service Worker in %d profile(s) in ~/.config/google-chrome\n' "$(dub "${dirs[@]}")" "$n" ;;
+            printf '%s\tdu Cache, Code Cache, GPUCache, Service Worker in %d profile(s) in ~/.config/google-chrome, plus ShaderCache, GrShaderCache, GraphiteDawnCache\n' "$(dub "${dirs[@]}")" "$n" ;;
         vsix:*) d="$HOME/.config/${1#*:}/CachedExtensionVSIXs"
             printf '%s\tdu %s\n' "$(dub "$d")" "$d" ;;
         oldext:*)
@@ -1059,8 +1110,13 @@ size_of() {
     esac
 }
 details() {   # the lines under a category in the report: each old extension version, and the one installed
-    local n inst x
+    local n inst x out b
     case "$1" in
+        ddev-images)
+            out=$(gone_ddev_images) || return 0
+            while IFS=$'\t' read -r _ b n; do
+                [ -n "$n" ] && printf '      %-58s %10s (up to)\n' "$n" "$(human "$b")"
+            done <<< "$out" ;;
         oldext:*) x=$(editor_ext "${1#*:}")
             while IFS=$'\t' read -r n _ _ inst; do
                 [ -n "$n" ] && printf '      %-58s %8s   (%s installed)\n' "$n" "$(human "$(dub "$x/$n")")" "$inst"
@@ -1072,6 +1128,14 @@ clean() {
         npm) npm cache clean --force ;;
         docker-build) "${DOCKER[@]}" builder prune -af ;;
         docker-dangling) "${DOCKER[@]}" image prune -f ;;
+        ddev-images)
+            local out n rc=0
+            out=$(gone_ddev_images) || { echo "cannot read DDEV projects or Docker images; all kept"; return 1; }
+            while IFS=$'\t' read -r _ _ n; do
+                [ -n "$n" ] || continue
+                "${DOCKER[@]}" image rm "$n" || rc=1
+            done <<< "$out"
+            return "$rc" ;;
         apt) sudo -n apt-get clean ;;
         brew) brew cleanup -s ;;
         uv) timeout 360 uv cache clean ;;   # v97: was 'uv cache prune' (see size_of); waits up to 5 min for other uv runs
@@ -1148,6 +1212,18 @@ where() {
     if [ ${#DOCKER[@]} -gt 0 ]; then
         echo "  docker system df:"
         "${DOCKER[@]}" system df 2> /dev/null | sed 's/^/    /'
+    fi
+    # v98: show unexplained Chrome space without adding deletion candidates (Oct 30 2026: fresh instance, 4 KB).
+    echo
+    echo "Linux Chrome's user-data directory and profile parts:"
+    if [ -d "$HOME/.config/google-chrome" ]; then
+        top 10 "$HOME"/.config/google-chrome/* "$HOME"/.config/google-chrome/.[!.]*
+        while IFS= read -r -d '' d; do
+            echo "  ${d/#$HOME/\~}:"
+            top 10 "$d"/* "$d"/.[!.]* | sed 's/^/  /'
+        done < <(find "$HOME/.config/google-chrome" -mindepth 2 -maxdepth 2 -type f -name Preferences -printf '%h\0' 2> /dev/null)
+    else
+        echo "  none (no Linux Chrome user-data directory)"
     fi
     # The largest editor folders (each editor's config folder and extensions folder), and their biggest parts.
     local folders=()
@@ -2102,16 +2178,41 @@ if [[ "$FLAGS" =~ " install-cursor " ]]; then
 
     # v51: download.cursor.sh/linux/appImage/x64 has been dead since Cursor 0.46. The current
     # endpoint returns JSON with a downloadUrl; it 403s without a browser-ish User-Agent.
-    CURSOR_URL=$(curl -fsSL -A "Mozilla/5.0 (X11; Linux x86_64)" \
-        "https://www.cursor.com/api/download?platform=linux-x64&releaseTrack=stable" \
-        | python3 -c 'import sys, json; print(json.load(sys.stdin)["downloadUrl"])' 2>/dev/null || true)
+    CURSOR_META=$(curl -fsSL -A "Mozilla/5.0 (X11; Linux x86_64)" \
+        "https://www.cursor.com/api/download?platform=linux-x64&releaseTrack=stable" || true)
+    CURSOR_URL=$(printf '%s' "$CURSOR_META" | python3 -c 'import sys, json
+u = json.load(sys.stdin)["downloadUrl"]
+if not isinstance(u, str) or not u.startswith("https://") or any(c.isspace() for c in u):
+    sys.exit("Invalid Cursor download URL")
+print(u)' 2>/dev/null || true)
+    # v98: remember the API's downloadUrl/version; a URL names the build without starting Electron
+    # (Oct 30 2026: Cursor was downloaded on every run, unlike v97's Lazarus and Chrome debs).
+    CURSOR_RECORD="$ASSETS/cursor-install.json"
+    CURSOR_HAVE=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["downloadUrl"])' "$CURSOR_RECORD" 2>/dev/null || true)
     if [ -n "$CURSOR_URL" ]; then
-        echo "Downloading Cursor AppImage..."
-        # Download to a temp file so an interrupted transfer never leaves a truncated ~/.local/bin/cursor.
-        if wget -qO /tmp/cursor.AppImage "$CURSOR_URL"; then
-            mv /tmp/cursor.AppImage ~/.local/bin/cursor
+        if [ -s ~/.local/bin/cursor ] && [ "$CURSOR_HAVE" = "$CURSOR_URL" ]; then
+            echo "Cursor: installed download URL is current; no AppImage download."
         else
-            rm -f /tmp/cursor.AppImage
+            echo "Downloading Cursor AppImage..."
+            # v98: validate in staging and record only a successful install; failed downloads keep the old build
+            # (Oct 30 2026: missing state downloads once; staging and its record are cleaned on any failure).
+            (
+                CURSOR_TMP=$(mktemp -d "$ASSETS/.cursor.XXXXXX")
+                trap 'rm -rf -- "$CURSOR_TMP"' EXIT
+                trap 'exit 130' INT
+                trap 'exit 143' TERM
+                if wget -qO "$CURSOR_TMP/cursor.AppImage" "$CURSOR_URL" && \
+                    file -b "$CURSOR_TMP/cursor.AppImage" | grep -qE 'ELF|executable|AppImage'; then
+                    printf '%s' "$CURSOR_META" | python3 -c 'import json, sys
+r = json.load(sys.stdin)
+print(json.dumps({"downloadUrl": r["downloadUrl"], "version": r.get("version", "")}))' > "$CURSOR_TMP/record.json"
+                    chmod +x "$CURSOR_TMP/cursor.AppImage"
+                    mv "$CURSOR_TMP/cursor.AppImage" ~/.local/bin/cursor
+                    mv "$CURSOR_TMP/record.json" "$CURSOR_RECORD"
+                else
+                    echo "Warning: Cursor download failed validation; keeping any installed AppImage and its record."
+                fi
+            )
         fi
     else
         echo "Warning: could not resolve the Cursor download URL from cursor.com."
@@ -2133,6 +2234,8 @@ if [[ "$FLAGS" =~ " install-cursor " ]]; then
         echo "Found local Cursor AppImage ($CUR_LOCAL). Installing..."
         mv "$CUR_LOCAL" ~/.local/bin/cursor
         chmod +x ~/.local/bin/cursor
+        # v98: a hand-supplied build has no API identity (Oct 30 2026: resolve and record it on the next run).
+        rm -f "$CURSOR_RECORD"
         if ! grep -q 'export PATH="$HOME/.local/bin:$PATH"' ~/.bashrc; then
             echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
         fi
@@ -4011,6 +4114,103 @@ else
     echo "Skipping Database tools. (Run with 'install-db' flag to enable)"
 fi
 
+# v98: one engine version for CLI, pip and ODBC; Fusion's 2.0 support is unconfirmed
+# (Oct 30 2026: latest moved to 2.0 and the old CLI zip URL returned 404).
+DUCKDB_VERSION="1.5.6"
+duckdb_cli_version() {
+    local out
+    out=$("$1" --version) || return 1
+    printf '%s\n' "$out" | sed -n 's/^v\([0-9][0-9.]*\) .*/\1/p'
+}
+duckdb_odbc_version() {
+    local out
+    out=$(printf 'SELECT version();\n' | isql -b -k "Driver=$1;Database=:memory:" 2>&1) || {
+        printf '%s\n' "$out" >&2
+        return 1
+    }
+    printf '%s\n' "$out" | sed -n 's/^[|[:space:]]*v\([0-9][0-9.]*\)[[:space:]|]*$/\1/p'
+}
+# v98: validate before replacement; subshell traps clean staging without changing the caller's traps
+# (Oct 30 2026: DuckDB publishes GitHub asset digests, not a checksum file).
+install_duckdb_release() (
+    set -e -o pipefail
+    kind="$1"; destination="$2"
+    repo=duckdb; tag="v$DUCKDB_VERSION"; asset=duckdb_cli-linux-amd64.zip
+    if [ "$kind" = odbc ]; then
+        repo=duckdb-odbc; tag="v$DUCKDB_VERSION.0"; asset=duckdb_odbc-linux-amd64.zip
+    elif [[ "$DUCKDB_VERSION" != 1.* ]]; then
+        asset=duckdb-cli-linux-amd64.tar.gz
+    fi
+    tmp=$(mktemp -d "$ASSETS/.duckdb-$kind.XXXXXX")
+    trap 'rm -rf -- "$tmp"' EXIT
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+    trap 'echo "ERROR: DuckDB $kind $tag failed verification or installation; see the error above." >&2' ERR
+    metadata=""
+    if command -v gh > /dev/null 2>&1 && gh auth status > /dev/null 2>&1; then
+        metadata=$(gh api "repos/duckdb/$repo/releases/tags/$tag" 2> /dev/null) || metadata=""
+    fi
+    if [ -z "$metadata" ]; then
+        echo "DuckDB $kind: reading GitHub asset digest (anonymous API; rate limits apply)."
+        metadata=$(curl -fsSL "https://api.github.com/repos/duckdb/$repo/releases/tags/$tag") || {
+            echo "ERROR: cannot read DuckDB $kind release metadata (network error or GitHub rate limit); not installed." >&2
+            exit 1
+        }
+    fi
+    digest=$(printf '%s' "$metadata" | python3 -c '
+import json, re, sys
+release = json.load(sys.stdin)
+tag, asset = sys.argv[1:]
+matches = [a for a in release.get("assets", []) if a.get("name") == asset]
+if release.get("tag_name") != tag or len(matches) != 1:
+    sys.exit("Wrong DuckDB release tag or missing/duplicate asset")
+digest = matches[0].get("digest", "")
+if not isinstance(digest, str) or not re.fullmatch(r"sha256:[0-9a-fA-F]{64}", digest):
+    sys.exit("Missing or invalid GitHub SHA-256 asset digest")
+print(digest.removeprefix("sha256:"))
+' "$tag" "$asset")
+    echo "Downloading DuckDB $kind $tag ($asset)..."
+    curl -fsSL "https://github.com/duckdb/$repo/releases/download/$tag/$asset" -o "$tmp/$asset"
+    printf '%s  %s\n' "$digest" "$tmp/$asset" | sha256sum -c -
+    case "$asset" in
+        *.zip) unzip -tq "$tmp/$asset" ;;
+        *.tar.gz) gzip -t "$tmp/$asset" ;;
+    esac
+    python3 - "$tmp/$asset" "$kind" << 'DUCKDB_MEMBERS'
+import stat, sys, tarfile, zipfile
+path, kind = sys.argv[1:]
+required = "duckdb" if kind == "cli" else "libduckdb_odbc.so"
+allowed = {required} if kind == "cli" else {required, "unixodbc_setup.sh", "update_odbc_path.py"}
+if path.endswith(".zip"):
+    with zipfile.ZipFile(path) as archive:
+        members = [(m.filename, stat.S_IFMT(m.external_attr >> 16) in (0, stat.S_IFREG))
+                   for m in archive.infolist()]
+else:
+    with tarfile.open(path, "r:gz") as archive:
+        members = [(m.name, m.isfile()) for m in archive.getmembers()]
+names = [name for name, regular in members]
+if required not in names or len(set(names)) != len(names) or any(
+        name not in allowed or not regular for name, regular in members):
+    sys.exit("Unexpected DuckDB archive members (only the named regular files are allowed)")
+DUCKDB_MEMBERS
+    mkdir "$tmp/extracted"
+    case "$asset" in
+        *.zip) unzip -q "$tmp/$asset" -d "$tmp/extracted" ;;
+        *.tar.gz) tar -xzf "$tmp/$asset" -C "$tmp/extracted" ;;
+    esac
+    if [ "$kind" = cli ]; then
+        chmod +x "$tmp/extracted/duckdb"
+        [ "$(duckdb_cli_version "$tmp/extracted/duckdb")" = "$DUCKDB_VERSION" ]
+        query=$("$tmp/extracted/duckdb" -init /dev/null :memory: -noheader -csv -c 'SELECT 1;')
+        [ "$query" = 1 ]
+        install -m 755 "$tmp/extracted/duckdb" "$destination"
+    else
+        [ "$(duckdb_odbc_version "$tmp/extracted/libduckdb_odbc.so")" = "$DUCKDB_VERSION" ]
+        sudo mkdir -p "$destination"
+        sudo install -m 755 "$tmp/extracted/libduckdb_odbc.so" "$destination/libduckdb_odbc.so"
+    fi
+)
+
 # Extra ODBC drivers: SQLite, PostgreSQL, MariaDB, and DuckDB (CSV/TSV/JSON/Parquet over SQL)
 if [[ "$FLAGS" =~ " install-db-extra " ]]; then
     echo "================================================================="
@@ -4024,11 +4224,12 @@ if [[ "$FLAGS" =~ " install-db-extra " ]]; then
 
     echo "Installing DuckDB ODBC driver (queries CSV/TSV/JSON/Parquet files directly with SQL)..."
     DUCKDB_ODBC_DIR="/opt/duckdb-odbc"
-    DUCKDB_ODBC_URL="https://github.com/duckdb/duckdb-odbc/releases/latest/download/duckdb_odbc-linux-amd64.zip"
-    curl -fsSL "$DUCKDB_ODBC_URL" -o /tmp/duckdb_odbc.zip
-    sudo mkdir -p "$DUCKDB_ODBC_DIR"
-    sudo unzip -o -q /tmp/duckdb_odbc.zip -d "$DUCKDB_ODBC_DIR"
-    rm -f /tmp/duckdb_odbc.zip
+    if [ -f "$DUCKDB_ODBC_DIR/libduckdb_odbc.so" ] && \
+        [ "$(duckdb_odbc_version "$DUCKDB_ODBC_DIR/libduckdb_odbc.so" 2> /dev/null)" = "$DUCKDB_VERSION" ]; then
+        echo "DuckDB ODBC: $DUCKDB_VERSION is current; no archive download."
+    else
+        install_duckdb_release odbc "$DUCKDB_ODBC_DIR"
+    fi
     # Register the driver with odbcinst (merges into /etc/odbcinst.ini; idempotent on reruns).
     # We do this ourselves instead of running DuckDB's unixodbc_setup.sh, which also switches
     # on global ODBC tracing to /tmp/odbctrace.
@@ -6770,12 +6971,14 @@ if [[ "$FLAGS" =~ " install-lakehouse " ]]; then
     mkdir -p "$HOME/.local/bin"
     export PATH="$HOME/.local/bin:$PATH"
 
-    # --- DuckDB CLI (latest release, single static binary) ---
+    # v98: skip a current CLI; pin pip below to the same engine (Oct 30 2026: latest became 2.0).
     echo "Installing DuckDB CLI..."
-    curl -fsSL "https://github.com/duckdb/duckdb/releases/latest/download/duckdb_cli-linux-amd64.zip" -o /tmp/duckdb_cli.zip
-    unzip -o -q /tmp/duckdb_cli.zip -d /tmp/duckdb_cli
-    install -m 755 /tmp/duckdb_cli/duckdb "$HOME/.local/bin/duckdb"
-    rm -rf /tmp/duckdb_cli.zip /tmp/duckdb_cli
+    if [ -x "$HOME/.local/bin/duckdb" ] && \
+        [ "$(duckdb_cli_version "$HOME/.local/bin/duckdb" 2> /dev/null)" = "$DUCKDB_VERSION" ]; then
+        echo "DuckDB CLI: $DUCKDB_VERSION is current; no archive download."
+    else
+        install_duckdb_release cli "$HOME/.local/bin/duckdb"
+    fi
     echo "DuckDB CLI: $(duckdb --version)"
 
     # Pre-install the lakehouse extensions so first use works offline.
@@ -6789,7 +6992,8 @@ if [[ "$FLAGS" =~ " install-lakehouse " ]]; then
     "$HOME/.lakehouse-env/bin/pip" install -U pip
     # v79: deltalake is delta-rs, the Rust Delta Lake library (no Spark, no JVM): it creates Delta
     # tables and does the writes DuckDB cannot yet (UPDATE, DELETE, MERGE, OPTIMIZE, VACUUM).
-    "$HOME/.lakehouse-env/bin/pip" install -U duckdb dbt-core dbt-duckdb pyarrow pandas deltalake
+    "$HOME/.lakehouse-env/bin/pip" install -U "duckdb==$DUCKDB_VERSION" 'dbt-core<2' dbt-duckdb pyarrow pandas deltalake
+    [ "$("$HOME/.lakehouse-env/bin/python" -c 'import duckdb; print(duckdb.__version__)')" = "$DUCKDB_VERSION" ]
     "$HOME/.lakehouse-env/bin/python" -c "import duckdb; c=duckdb.connect(); [c.install_extension(e) for e in ('iceberg','ducklake','delta','httpfs')]"
     if ! grep -q 'alias dbt1=' ~/.bashrc; then
         echo "alias dbt1='$HOME/.lakehouse-env/bin/dbt'   # classic dbt Core v1 + dbt-duckdb" >> ~/.bashrc
@@ -11225,7 +11429,7 @@ echo "Cleaning up system packages..."
 sudo apt autoremove -y
 
 echo "================================================================="
-echo "Setup Version 97 complete! 🎉"
+echo "Setup Version 98 complete! 🎉"
 [ -n "${DEV_SCREEN_OUTPUT:-}" ] && echo "Screen output: $DEV_SCREEN_OUTPUT"
 echo "NEXT, in this order:"
 echo "  a. source ~/.bashrc                      (or open a new terminal)"
