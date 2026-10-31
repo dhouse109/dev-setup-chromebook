@@ -32,7 +32,7 @@ Gemini-era script, then the move to Claude). The version-by-version notes are in
 | **Me** | Made the plan choices, ran setup and `dev-test` on the Chromebooks, pasted the results back, reviewed and merged the PRs | Made the plan choices, relayed prompts between the chat session and Codex, approved each command Codex ran outside its sandbox, merged the PRs |
 | **Diagnosis** | From what I pasted (the end of a run, error lines), the code and upstream checks | Codex read the run's saved screen output (`assets/logs/*.output`) itself and inspected the installed system read-only (`--version`, `command -v`, `du`) |
 | **Testing during the build** | `bash -n`, ShellCheck, and stand-in or scratch-home tests in the cloud sandbox. The scripts' host guard stops them anywhere but ChromeOS, so the real runs were mine | The same checks, plus the real setup and `dev-test` runs: Codex ran them on the Chromebook after my approval of each command, read the output, and would have fixed and rerun on a failure |
-| **Where commits come from** | Claude Code, with `Co-Authored-By` and `Claude-Session` trailers | Plan and build commits from Codex carry my local git identity and no agent trailer. They are listed below |
+| **Where commits come from** | Claude Code, with `Co-Authored-By` and `Claude-Session` trailers | Plan and build commits from Codex carry my local git identity and no agent trailer. They are listed below. From v98 on, `AGENTS.md` requires every agent commit to end with a co-author trailer naming the agent (`Co-authored-by: Codex <noreply@openai.com>` for Codex) |
 | **Paid from** | Claude Code cloud usage credits (used up during v97) | The Codex allowance on my ChatGPT Pro plan |
 
 ## v94 to v97: Claude Code in the cloud
@@ -119,3 +119,5 @@ reviewed the full diff against the plan and `AGENTS.md` before the merge.
   context.
 - Have the agent push to `plan/vNN` or `release/vNN` after each round, so the reviewing session reads it
   from GitHub instead of from screenshots.
+- Check the first commit of a session ends with the agent's co-author trailer (`AGENTS.md`, Workflow).
+  Codex adds its trailer by instruction, not by a git hook, so a missing one is worth catching early.

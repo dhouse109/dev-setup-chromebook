@@ -120,6 +120,17 @@ Update, in the same change:
   (`plan/vNN`). Never name a branch plain `vNN`: that is the release tag, and a branch with the same name
   makes `git checkout vNN` ambiguous (it happened with v94). Large versions can be built in stages, one
   commit per stage.
+- **Every commit an agent makes says which agent made it**, with a co-author trailer at the end of
+  the message, after a blank line. A local agent commits under the owner's git name and email, so
+  without the trailer its work looks like the owner's own (v98: Codex's commits had none; they are
+  listed in `docs/how-its-built.md`).
+  - Claude Code: `Co-Authored-By: Claude <model> <noreply@anthropic.com>`, plus the `Claude-Session:`
+    line its session asks for.
+  - Codex: `Co-authored-by: Codex <noreply@openai.com>` (Codex's own default trailer, set by
+    `commit_attribution` in `~/.codex/config.toml`). Add it yourself even when that setting is on, since
+    Codex applies it through the prompt, not a git hook.
+  - Any other agent: `Co-Authored-By: <agent name> <its vendor's noreply address>`.
+  - Commits the owner makes by hand get no trailer. Never rewrite pushed commits to add one.
 - **Checks before every push** (CI runs the same in `.github/workflows/lint.yml`):
   - `bash -n` on each script
   - `shellcheck -S error dev-*-chromebook*.sh` (warnings are left for comments to explain)
