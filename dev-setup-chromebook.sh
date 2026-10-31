@@ -2102,16 +2102,41 @@ if [[ "$FLAGS" =~ " install-cursor " ]]; then
 
     # v51: download.cursor.sh/linux/appImage/x64 has been dead since Cursor 0.46. The current
     # endpoint returns JSON with a downloadUrl; it 403s without a browser-ish User-Agent.
-    CURSOR_URL=$(curl -fsSL -A "Mozilla/5.0 (X11; Linux x86_64)" \
-        "https://www.cursor.com/api/download?platform=linux-x64&releaseTrack=stable" \
-        | python3 -c 'import sys, json; print(json.load(sys.stdin)["downloadUrl"])' 2>/dev/null || true)
+    CURSOR_META=$(curl -fsSL -A "Mozilla/5.0 (X11; Linux x86_64)" \
+        "https://www.cursor.com/api/download?platform=linux-x64&releaseTrack=stable" || true)
+    CURSOR_URL=$(printf '%s' "$CURSOR_META" | python3 -c 'import sys, json
+u = json.load(sys.stdin)["downloadUrl"]
+if not isinstance(u, str) or not u.startswith("https://") or any(c.isspace() for c in u):
+    sys.exit("Invalid Cursor download URL")
+print(u)' 2>/dev/null || true)
+    # v98: remember the API's downloadUrl/version; a URL names the build without starting Electron
+    # (Oct 30 2026: Cursor was downloaded on every run, unlike v97's Lazarus and Chrome debs).
+    CURSOR_RECORD="$ASSETS/cursor-install.json"
+    CURSOR_HAVE=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["downloadUrl"])' "$CURSOR_RECORD" 2>/dev/null || true)
     if [ -n "$CURSOR_URL" ]; then
-        echo "Downloading Cursor AppImage..."
-        # Download to a temp file so an interrupted transfer never leaves a truncated ~/.local/bin/cursor.
-        if wget -qO /tmp/cursor.AppImage "$CURSOR_URL"; then
-            mv /tmp/cursor.AppImage ~/.local/bin/cursor
+        if [ -s ~/.local/bin/cursor ] && [ "$CURSOR_HAVE" = "$CURSOR_URL" ]; then
+            echo "Cursor: installed download URL is current; no AppImage download."
         else
-            rm -f /tmp/cursor.AppImage
+            echo "Downloading Cursor AppImage..."
+            # v98: validate in staging and record only a successful install; failed downloads keep the old build
+            # (Oct 30 2026: missing state downloads once; staging and its record are cleaned on any failure).
+            (
+                CURSOR_TMP=$(mktemp -d "$ASSETS/.cursor.XXXXXX")
+                trap 'rm -rf -- "$CURSOR_TMP"' EXIT
+                trap 'exit 130' INT
+                trap 'exit 143' TERM
+                if wget -qO "$CURSOR_TMP/cursor.AppImage" "$CURSOR_URL" && \
+                    file -b "$CURSOR_TMP/cursor.AppImage" | grep -qE 'ELF|executable|AppImage'; then
+                    printf '%s' "$CURSOR_META" | python3 -c 'import json, sys
+r = json.load(sys.stdin)
+print(json.dumps({"downloadUrl": r["downloadUrl"], "version": r.get("version", "")}))' > "$CURSOR_TMP/record.json"
+                    chmod +x "$CURSOR_TMP/cursor.AppImage"
+                    mv "$CURSOR_TMP/cursor.AppImage" ~/.local/bin/cursor
+                    mv "$CURSOR_TMP/record.json" "$CURSOR_RECORD"
+                else
+                    echo "Warning: Cursor download failed validation; keeping any installed AppImage and its record."
+                fi
+            )
         fi
     else
         echo "Warning: could not resolve the Cursor download URL from cursor.com."
@@ -2133,6 +2158,8 @@ if [[ "$FLAGS" =~ " install-cursor " ]]; then
         echo "Found local Cursor AppImage ($CUR_LOCAL). Installing..."
         mv "$CUR_LOCAL" ~/.local/bin/cursor
         chmod +x ~/.local/bin/cursor
+        # v98: a hand-supplied build has no API identity (Oct 30 2026: resolve and record it on the next run).
+        rm -f "$CURSOR_RECORD"
         if ! grep -q 'export PATH="$HOME/.local/bin:$PATH"' ~/.bashrc; then
             echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
         fi
