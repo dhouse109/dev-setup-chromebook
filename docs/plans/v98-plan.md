@@ -116,10 +116,10 @@ is not that machine", which is wrong for an agent running on the Chromebook itse
 
 No script change, so no version bump and no CHANGELOG entry for this item on its own.
 
-## 5. DuckDB failed to install (install-lakehouse or install-db-extra)
+## 5. DuckDB failed to install (install-lakehouse)
 
 **Found Oct 30 2026** by the owner on a Chromebook; details in the newest `assets/logs/dev-setup-*.output`
-on that machine. Not yet diagnosed.
+on that machine. Diagnosed locally Oct 30: the CLI download returns 404, before extensions or Python.
 
 **Where DuckDB is installed today:**
 
@@ -130,9 +130,63 @@ on that machine. Not yet diagnosed.
 - `install-db-extra` (setup, "Extra ODBC drivers"): the DuckDB ODBC driver zip from `releases/latest`
   into `/opt/duckdb-odbc`.
 
-**To fill in** (diagnosis, by Codex locally): the failing lines, the root cause with evidence, the
-proposed fix with choices where there is more than one way, dev-test changes, docs, and how to verify on
-the Chromebook.
+**Found (local diagnosis, Oct 30 2026):** the newest output,
+`assets/logs/dev-setup-20261030-224131.output`, ends at lines 193-197:
+
+```text
+=================================================================
+Installing Local Lakehouse Stack (DuckDB, Iceberg, DuckLake, Delta Lake, dbt)...
+=================================================================
+Installing DuckDB CLI...
+curl: (22) The requested URL returned error: 404
+```
+
+The failed command is setup's CLI download (line 6775). `install-db-extra` was skipped (log line 165);
+neither the CLI extension INSTALLs nor the pip install in `~/.lakehouse-env` was reached. This is an
+upstream release asset name/format change, with no evidence of a Crostini-specific failure.
+
+**Evidence:** a read-only `curl -sSIL` of the exact CLI URL reproduces the redirect to
+`https://github.com/duckdb/duckdb/releases/download/v2.0.0/duckdb_cli-linux-amd64.zip`, then HTTP 404.
+The [v2.0.0 release assets](https://github.com/duckdb/duckdb/releases/expanded_assets/v2.0.0) instead list
+`duckdb-cli-linux-amd64.tar.gz` (hyphens and a tar.gz); a HEAD request to that versioned asset returns
+HTTP 200. The [release metadata](https://api.github.com/repos/duckdb/duckdb/releases/tags/v2.0.0) publishes
+its SHA-256 as `c6507206baf7793c6013dbd82368469a45f20dc0e17a6f92f204602f652ed2bc`.
+`command -v duckdb` finds nothing, `duckdb --version` reports `command not found`, and
+`~/.lakehouse-env/bin/python` is absent. Python import and extension compatibility remain untested;
+`INSTALL delta` was not run (no CLI, and INSTALL writes to the extension cache). No bundle script,
+sudo command, or install was run for this diagnosis.
+
+**Proposed:** replace the obsolete zip URL and unzip step with the published Linux amd64 tar.gz.
+Apply rule 9: stage the download and extraction under `assets/`, verify the archive against the
+published SHA-256 for that exact release, run `gzip -t`, inspect the tar members before extracting,
+and run the staged binary's `--version` and an in-memory `SELECT 1` before replacing
+`~/.local/bin/duckdb`. Resolve one release tag and use it for both the asset and digest, so a new
+`latest` cannot mix releases. A missing digest, failed lookup, bad archive or failed binary check
+stops with a useful error and leaves any installed CLI intact; no unchecked fallback. Use the release
+redirect for the tag, as elsewhere; if digest metadata is rate-limited, report that explicitly.
+
+| Choice: which DuckDB CLI release setup installs | |
+| --- | --- |
+| A (recommended) | Keep following the latest stable release, using the current tar.gz asset name and the verification above. Preserves the bundle's current update policy; extension compatibility must pass the Chromebook checks before release. |
+| B | Pin a reviewed release tag and its published SHA-256 in setup, with the same archive and binary validation. Updates become deliberate bundle changes; an older pin needs its own extension and Python compatibility checks. |
+
+**Test:** stand-in downloads/metadata: a valid archive installs; 404, missing digest, checksum mismatch,
+truncated archive, unexpected tar members and a binary that fails validation all stop before replacing
+an existing CLI. Check a changing `latest` cannot mix the archive and digest from different tags.
+In dev-test, keep the existing CLI/Python extension loads and DuckLake/Delta/dbt smoke checks; strengthen
+the CLI check to print its version and run an in-memory query, and print Python's DuckDB version in the
+import check so mismatches are visible. The lakehouse disk-report line already includes the CLI, venv
+and extension cache; no new retained path is needed. Update `docs/init-checklist.md` with the verified
+CLI download and failure guidance, and CHANGELOG under all four scripts when built. No new flag or
+ODBC change; no Crostini workaround to document.
+
+**To verify on the Chromebook:** after the chosen fix is built, the owner runs setup with
+`install-lakehouse` twice: both reach the final summary, with no 404 and a validated CLI installed.
+Read the new `.output` files; check `duckdb --version`, an in-memory query, CLI extension INSTALL/LOAD
+for iceberg, ducklake, delta, httpfs, sqlite and postgres, and Python's DuckDB version and extension
+loads in `~/.lakehouse-env`. Then run dev-test with `install-lakehouse`: FAIL 0, including DuckLake,
+Delta reads and dbt Core; inspect any optional-feature WARNs. These install/test runs need the owner's
+approval and have not been done as part of this plan diagnosis.
 
 ## Init, demo
 
