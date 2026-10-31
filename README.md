@@ -70,6 +70,7 @@ where each key in the secrets file comes from.
 | [dev-demo](docs/dev-demo.md) | What each demo does, what it downloads, how much disk it takes, and how to reclaim the space |
 | [Crostini gotchas](docs/crostini-gotchas.md) | Where ChromeOS's Linux differs from a normal Debian box, and the fix for each difference |
 | [The epics](docs/dev-setup-chromebook-epics.md) | The whole history, v1 to the latest version, grouped by theme: the eras, then twelve epics with the versions that delivered each one |
+| [How it's built](docs/how-its-built.md) | The agent workflows since v94: Claude Code in the cloud (v94 to v97) and Codex locally on the Chromebook (v98), who did what, and how they differed |
 | [CHANGELOG.md](CHANGELOG.md) | Every version, newest first |
 
 Before you start, I'd back up your Linux environment or start a fresh one. ChromeOS can back up and
@@ -266,6 +267,12 @@ I built this with AI pair programmers. The first versions, up to about v49, were
 with Gemini. From about v50 on it's Claude, and that's when the single script became the four-script
 bundle. Either way, I decide what goes in and run it on the Chromebooks; the AI drafts and reviews the
 bash. `dev-test` is the referee, and a version isn't done until its test run is clean.
+
+Since v94 each version is planned and built through pull requests, by me, a Claude chat session and a
+coding agent. v94 to v97 were built by Claude Code in the cloud, with me running the scripts on the
+Chromebooks and pasting the results back. v98 was built by Codex running locally on the Chromebook,
+where it ran setup and `dev-test` itself with my approval. [How it's built](docs/how-its-built.md)
+compares the two.
 
 Every change bumps all the scripts to the same version number, and [CHANGELOG.md](CHANGELOG.md) keeps
 the notes. [The epics](docs/dev-setup-chromebook-epics.md) tell the same story grouped by theme, which
