@@ -1,5 +1,5 @@
 #!/bin/bash
-# dev-test-chromebook - Version 97
+# dev-test-chromebook - Version 98
 # Version history: CHANGELOG.md, next to this script in the bundle
 # (one section per script, newest version first).
 #
@@ -402,6 +402,9 @@ LAST=pass
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2> /dev/null && pwd || true)"
 [ -n "$SCRIPT_DIR" ] || SCRIPT_DIR="$PWD"
 export ASSETS="$SCRIPT_DIR/assets"
+# v98: read the installer's single pin for ODBC and CLI/Python checks (Oct 30 2026: hold at 1.x).
+export DUCKDB_VERSION
+DUCKDB_VERSION=$(sed -n 's/^DUCKDB_VERSION="\([0-9.]*\)"$/\1/p' "$SCRIPT_DIR/dev-setup-chromebook.sh")
 mkdir -p "$ASSETS/logs" "$ASSETS/downloads"
 for old_log in "$HOME"/dev-test-*.log "$HOME"/dev-test-*.output; do
     [ -e "$old_log" ] && mv "$old_log" "$ASSETS/logs/" && echo "moved $(basename "$old_log") from ~ to $ASSETS/logs/"
@@ -475,7 +478,7 @@ info()  { printf '  %-62s %s\n' "$1" "${DIM}INFO${RST} $2"; echo "--- $1: INFO $
 # v92: a check that cannot run because an earlier one already failed for the same cause (counted as SKIP).
 skipped() { printf '  %-62s %s\n' "$1" "${DIM}SKIP${RST} $2"; SKIP=$((SKIP + 1)); LAST=skip; echo "--- $1: SKIP $2" >> "$LOG"; }
 
-echo "Testing Chromebook Linux provisioning (Version 97)... log: $LOG"
+echo "Testing Chromebook Linux provisioning (Version 98)... log: $LOG"
 [ "$QUICK" = 1 ] && echo "(quick mode: slow functional tests will be skipped)"
 
 # v68: say so when dev-init has not applied the secrets file yet. Filling in secrets.env logs
@@ -2164,6 +2167,9 @@ if has install-db-extra; then
     check "[PostgreSQL Unicode] ODBC driver registered"    'odbcinst -q -d | grep -q "^\[PostgreSQL Unicode\]"'
     check "[MariaDB Unicode] ODBC driver registered"       'odbcinst -q -d | grep -q "^\[MariaDB Unicode\]"'
     check "[DuckDB] ODBC driver registered and .so present" 'odbcinst -q -d | grep -q "^\[DuckDB\]" && [ -f /opt/duckdb-odbc/libduckdb_odbc.so ]'
+    # v98: the driver's own engine must match the shared pin (Oct 30 2026: latest ODBC embeds 2.0).
+    printf 'SELECT version();\n' > "$WORK/duckdb-version.sql"
+    check "DuckDB ODBC engine matches the selected version" 'out=$(isql -b -k "Driver=/opt/duckdb-odbc/libduckdb_odbc.so;Database=:memory:" < duckdb-version.sql) || exit 1; printf "%s\n" "$out"; v=$(printf "%s\n" "$out" | sed -n "s/^[|[:space:]]*v\([0-9][0-9.]*\)[[:space:]|]*$/\1/p"); [ -n "$DUCKDB_VERSION" ] && [ "$v" = "$DUCKDB_VERSION" ]'
     check "[CSV] DSN in ~/.odbc.ini"                       'grep -q "^\[CSV\]" ~/.odbc.ini'
     check "ODBC tracing is NOT globally enabled"           '! grep -qiE "^Trace *= *(yes|1|on)" /etc/odbcinst.ini'
     printf 'id,name\n1,a\n2,b\n3,c\n' > "$WORK/t.csv"
@@ -3845,7 +3851,9 @@ fi
 # Local lakehouse stack
 if has install-lakehouse; then
     section "Local lakehouse: DuckDB, DuckLake, Iceberg, Delta Lake, dbt (install-lakehouse)"
-    check "duckdb CLI"                                     'duckdb --version'
+    check "duckdb CLI"                                     'duckdb --version && duckdb -init /dev/null :memory: -noheader -csv -c "SELECT 1;" | grep -qx 1'
+    # v98: separate latest/pip upgrades must not split the engines (Oct 30 2026: 2.0 changes file format).
+    check "DuckDB CLI and ~/.lakehouse-env versions agree" 'cli=$(duckdb --version) || exit 1; cli=${cli%% *}; cli=${cli#v}; py=$(~/.lakehouse-env/bin/python -c "import duckdb; print(duckdb.__version__)") || exit 1; printf "CLI %s; Python %s; selected %s\n" "$cli" "$py" "$DUCKDB_VERSION"; [ -n "$DUCKDB_VERSION" ] && [ "$cli" = "$py" ] && [ "$py" = "$DUCKDB_VERSION" ]'
     check "~/.duckdbrc and ~/.duckdb/tmp present"          '[ -f ~/.duckdbrc ] && [ -d ~/.duckdb/tmp ]'
     check "duckdb extensions load (iceberg, ducklake, delta, httpfs, sqlite, postgres)" 'duckdb -c "LOAD iceberg; LOAD ducklake; LOAD delta; LOAD httpfs; LOAD sqlite; LOAD postgres; SELECT 1;"'
     hint  "a missing extension (delta is new in v79): rerun setup with install-lakehouse, which installs them from extensions.duckdb.org"
@@ -3855,7 +3863,7 @@ CREATE TABLE lake.t AS SELECT 42 AS a;
 SELECT a FROM lake.t;
 EOF
     check "DuckLake catalog: attach, create table, query"  'duckdb < ducklake.sql | grep -q 42'
-    check "~/.lakehouse-env: duckdb, pyarrow, pandas import" '~/.lakehouse-env/bin/python -c "import duckdb, pyarrow, pandas; duckdb.sql(\"select 1\")"'
+    check "~/.lakehouse-env: duckdb, pyarrow, pandas import" '~/.lakehouse-env/bin/python -c "import duckdb, pyarrow, pandas; print(duckdb.__version__); duckdb.sql(\"select 1\")"'
     check "~/.lakehouse-env python has iceberg/ducklake/delta ext" '~/.lakehouse-env/bin/python -c "import duckdb; c=duckdb.connect(); [c.load_extension(e) for e in (\"iceberg\",\"ducklake\",\"delta\",\"httpfs\")]"'
     # v79: Delta Lake. delta-rs (deltalake) creates the table, because DuckDB's Delta support writes
     # INSERT only; DuckDB then reads it, appends to it, and time-travels to the version delta-rs wrote.
@@ -5817,7 +5825,7 @@ fi
 # =================================================================
 echo
 echo "================================================================="
-echo "Test Version 97 complete: ${GRN}PASS $PASS${RST}   ${RED}FAIL $FAIL${RST}   ${YEL}WARN $WARN${RST}   SKIP $SKIP"
+echo "Test Version 98 complete: ${GRN}PASS $PASS${RST}   ${RED}FAIL $FAIL${RST}   ${YEL}WARN $WARN${RST}   SKIP $SKIP"
 if [ ${#FAILED[@]} -gt 0 ]; then
     echo
     echo "Failed (must fix to get started):"

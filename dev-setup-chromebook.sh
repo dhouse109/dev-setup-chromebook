@@ -1,5 +1,5 @@
 #!/bin/bash
-# dev-setup-chromebook - Version 97
+# dev-setup-chromebook - Version 98
 # Version history: CHANGELOG.md, next to this script in the bundle
 # (one section per script, newest version first).
 
@@ -304,7 +304,7 @@ if [[ "$FLAGS" =~ " install-gemma " ]] || [[ "$FLAGS" =~ " install-models " ]] |
 fi
 # =================================================================
 
-echo "Starting comprehensive Chromebook Linux provisioning (Version 97)..."
+echo "Starting comprehensive Chromebook Linux provisioning (Version 98)..."
 
 # v93: prefer IPv4 when this network's IPv6 does not get out. On Oct 4 2026 a Chromebook's Linux got IPv6
 # addresses for dl.google.com but no IPv6 route out, and wget hung on one address after another (the
@@ -4011,6 +4011,103 @@ else
     echo "Skipping Database tools. (Run with 'install-db' flag to enable)"
 fi
 
+# v98: one engine version for CLI, pip and ODBC; Fusion's 2.0 support is unconfirmed
+# (Oct 30 2026: latest moved to 2.0 and the old CLI zip URL returned 404).
+DUCKDB_VERSION="1.5.6"
+duckdb_cli_version() {
+    local out
+    out=$("$1" --version) || return 1
+    printf '%s\n' "$out" | sed -n 's/^v\([0-9][0-9.]*\) .*/\1/p'
+}
+duckdb_odbc_version() {
+    local out
+    out=$(printf 'SELECT version();\n' | isql -b -k "Driver=$1;Database=:memory:" 2>&1) || {
+        printf '%s\n' "$out" >&2
+        return 1
+    }
+    printf '%s\n' "$out" | sed -n 's/^[|[:space:]]*v\([0-9][0-9.]*\)[[:space:]|]*$/\1/p'
+}
+# v98: validate before replacement; subshell traps clean staging without changing the caller's traps
+# (Oct 30 2026: DuckDB publishes GitHub asset digests, not a checksum file).
+install_duckdb_release() (
+    set -e -o pipefail
+    kind="$1"; destination="$2"
+    repo=duckdb; tag="v$DUCKDB_VERSION"; asset=duckdb_cli-linux-amd64.zip
+    if [ "$kind" = odbc ]; then
+        repo=duckdb-odbc; tag="v$DUCKDB_VERSION.0"; asset=duckdb_odbc-linux-amd64.zip
+    elif [[ "$DUCKDB_VERSION" != 1.* ]]; then
+        asset=duckdb-cli-linux-amd64.tar.gz
+    fi
+    tmp=$(mktemp -d "$ASSETS/.duckdb-$kind.XXXXXX")
+    trap 'rm -rf -- "$tmp"' EXIT
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+    trap 'echo "ERROR: DuckDB $kind $tag failed verification or installation; see the error above." >&2' ERR
+    metadata=""
+    if command -v gh > /dev/null 2>&1 && gh auth status > /dev/null 2>&1; then
+        metadata=$(gh api "repos/duckdb/$repo/releases/tags/$tag" 2> /dev/null) || metadata=""
+    fi
+    if [ -z "$metadata" ]; then
+        echo "DuckDB $kind: reading GitHub asset digest (anonymous API; rate limits apply)."
+        metadata=$(curl -fsSL "https://api.github.com/repos/duckdb/$repo/releases/tags/$tag") || {
+            echo "ERROR: cannot read DuckDB $kind release metadata (network error or GitHub rate limit); not installed." >&2
+            exit 1
+        }
+    fi
+    digest=$(printf '%s' "$metadata" | python3 -c '
+import json, re, sys
+release = json.load(sys.stdin)
+tag, asset = sys.argv[1:]
+matches = [a for a in release.get("assets", []) if a.get("name") == asset]
+if release.get("tag_name") != tag or len(matches) != 1:
+    sys.exit("Wrong DuckDB release tag or missing/duplicate asset")
+digest = matches[0].get("digest", "")
+if not isinstance(digest, str) or not re.fullmatch(r"sha256:[0-9a-fA-F]{64}", digest):
+    sys.exit("Missing or invalid GitHub SHA-256 asset digest")
+print(digest.removeprefix("sha256:"))
+' "$tag" "$asset")
+    echo "Downloading DuckDB $kind $tag ($asset)..."
+    curl -fsSL "https://github.com/duckdb/$repo/releases/download/$tag/$asset" -o "$tmp/$asset"
+    printf '%s  %s\n' "$digest" "$tmp/$asset" | sha256sum -c -
+    case "$asset" in
+        *.zip) unzip -tq "$tmp/$asset" ;;
+        *.tar.gz) gzip -t "$tmp/$asset" ;;
+    esac
+    python3 - "$tmp/$asset" "$kind" << 'DUCKDB_MEMBERS'
+import stat, sys, tarfile, zipfile
+path, kind = sys.argv[1:]
+required = "duckdb" if kind == "cli" else "libduckdb_odbc.so"
+allowed = {required} if kind == "cli" else {required, "unixodbc_setup.sh", "update_odbc_path.py"}
+if path.endswith(".zip"):
+    with zipfile.ZipFile(path) as archive:
+        members = [(m.filename, stat.S_IFMT(m.external_attr >> 16) in (0, stat.S_IFREG))
+                   for m in archive.infolist()]
+else:
+    with tarfile.open(path, "r:gz") as archive:
+        members = [(m.name, m.isfile()) for m in archive.getmembers()]
+names = [name for name, regular in members]
+if required not in names or len(set(names)) != len(names) or any(
+        name not in allowed or not regular for name, regular in members):
+    sys.exit("Unexpected DuckDB archive members (only the named regular files are allowed)")
+DUCKDB_MEMBERS
+    mkdir "$tmp/extracted"
+    case "$asset" in
+        *.zip) unzip -q "$tmp/$asset" -d "$tmp/extracted" ;;
+        *.tar.gz) tar -xzf "$tmp/$asset" -C "$tmp/extracted" ;;
+    esac
+    if [ "$kind" = cli ]; then
+        chmod +x "$tmp/extracted/duckdb"
+        [ "$(duckdb_cli_version "$tmp/extracted/duckdb")" = "$DUCKDB_VERSION" ]
+        query=$("$tmp/extracted/duckdb" -init /dev/null :memory: -noheader -csv -c 'SELECT 1;')
+        [ "$query" = 1 ]
+        install -m 755 "$tmp/extracted/duckdb" "$destination"
+    else
+        [ "$(duckdb_odbc_version "$tmp/extracted/libduckdb_odbc.so")" = "$DUCKDB_VERSION" ]
+        sudo mkdir -p "$destination"
+        sudo install -m 755 "$tmp/extracted/libduckdb_odbc.so" "$destination/libduckdb_odbc.so"
+    fi
+)
+
 # Extra ODBC drivers: SQLite, PostgreSQL, MariaDB, and DuckDB (CSV/TSV/JSON/Parquet over SQL)
 if [[ "$FLAGS" =~ " install-db-extra " ]]; then
     echo "================================================================="
@@ -4024,11 +4121,12 @@ if [[ "$FLAGS" =~ " install-db-extra " ]]; then
 
     echo "Installing DuckDB ODBC driver (queries CSV/TSV/JSON/Parquet files directly with SQL)..."
     DUCKDB_ODBC_DIR="/opt/duckdb-odbc"
-    DUCKDB_ODBC_URL="https://github.com/duckdb/duckdb-odbc/releases/latest/download/duckdb_odbc-linux-amd64.zip"
-    curl -fsSL "$DUCKDB_ODBC_URL" -o /tmp/duckdb_odbc.zip
-    sudo mkdir -p "$DUCKDB_ODBC_DIR"
-    sudo unzip -o -q /tmp/duckdb_odbc.zip -d "$DUCKDB_ODBC_DIR"
-    rm -f /tmp/duckdb_odbc.zip
+    if [ -f "$DUCKDB_ODBC_DIR/libduckdb_odbc.so" ] && \
+        [ "$(duckdb_odbc_version "$DUCKDB_ODBC_DIR/libduckdb_odbc.so" 2> /dev/null)" = "$DUCKDB_VERSION" ]; then
+        echo "DuckDB ODBC: $DUCKDB_VERSION is current; no archive download."
+    else
+        install_duckdb_release odbc "$DUCKDB_ODBC_DIR"
+    fi
     # Register the driver with odbcinst (merges into /etc/odbcinst.ini; idempotent on reruns).
     # We do this ourselves instead of running DuckDB's unixodbc_setup.sh, which also switches
     # on global ODBC tracing to /tmp/odbctrace.
@@ -6770,12 +6868,14 @@ if [[ "$FLAGS" =~ " install-lakehouse " ]]; then
     mkdir -p "$HOME/.local/bin"
     export PATH="$HOME/.local/bin:$PATH"
 
-    # --- DuckDB CLI (latest release, single static binary) ---
+    # v98: skip a current CLI; pin pip below to the same engine (Oct 30 2026: latest became 2.0).
     echo "Installing DuckDB CLI..."
-    curl -fsSL "https://github.com/duckdb/duckdb/releases/latest/download/duckdb_cli-linux-amd64.zip" -o /tmp/duckdb_cli.zip
-    unzip -o -q /tmp/duckdb_cli.zip -d /tmp/duckdb_cli
-    install -m 755 /tmp/duckdb_cli/duckdb "$HOME/.local/bin/duckdb"
-    rm -rf /tmp/duckdb_cli.zip /tmp/duckdb_cli
+    if [ -x "$HOME/.local/bin/duckdb" ] && \
+        [ "$(duckdb_cli_version "$HOME/.local/bin/duckdb" 2> /dev/null)" = "$DUCKDB_VERSION" ]; then
+        echo "DuckDB CLI: $DUCKDB_VERSION is current; no archive download."
+    else
+        install_duckdb_release cli "$HOME/.local/bin/duckdb"
+    fi
     echo "DuckDB CLI: $(duckdb --version)"
 
     # Pre-install the lakehouse extensions so first use works offline.
@@ -6789,7 +6889,8 @@ if [[ "$FLAGS" =~ " install-lakehouse " ]]; then
     "$HOME/.lakehouse-env/bin/pip" install -U pip
     # v79: deltalake is delta-rs, the Rust Delta Lake library (no Spark, no JVM): it creates Delta
     # tables and does the writes DuckDB cannot yet (UPDATE, DELETE, MERGE, OPTIMIZE, VACUUM).
-    "$HOME/.lakehouse-env/bin/pip" install -U duckdb dbt-core dbt-duckdb pyarrow pandas deltalake
+    "$HOME/.lakehouse-env/bin/pip" install -U "duckdb==$DUCKDB_VERSION" 'dbt-core<2' dbt-duckdb pyarrow pandas deltalake
+    [ "$("$HOME/.lakehouse-env/bin/python" -c 'import duckdb; print(duckdb.__version__)')" = "$DUCKDB_VERSION" ]
     "$HOME/.lakehouse-env/bin/python" -c "import duckdb; c=duckdb.connect(); [c.install_extension(e) for e in ('iceberg','ducklake','delta','httpfs')]"
     if ! grep -q 'alias dbt1=' ~/.bashrc; then
         echo "alias dbt1='$HOME/.lakehouse-env/bin/dbt'   # classic dbt Core v1 + dbt-duckdb" >> ~/.bashrc
@@ -11225,7 +11326,7 @@ echo "Cleaning up system packages..."
 sudo apt autoremove -y
 
 echo "================================================================="
-echo "Setup Version 97 complete! 🎉"
+echo "Setup Version 98 complete! 🎉"
 [ -n "${DEV_SCREEN_OUTPUT:-}" ] && echo "Screen output: $DEV_SCREEN_OUTPUT"
 echo "NEXT, in this order:"
 echo "  a. source ~/.bashrc                      (or open a new terminal)"

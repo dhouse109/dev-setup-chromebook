@@ -1,5 +1,5 @@
 #!/bin/bash
-# dev-demo-chromebook - Version 97
+# dev-demo-chromebook - Version 98
 # Version history: CHANGELOG.md, next to this script in the bundle
 # (one section per script, newest version first).
 #
@@ -57,7 +57,7 @@ fi
 
 # Deliberately NO 'set -e': one demo failing to download must not stop the others.
 
-VERSION=97
+VERSION=98
 
 # =================================================================
 # FLAG EXPANSION (STACK SWITCHES)  -- copied verbatim from the installer
