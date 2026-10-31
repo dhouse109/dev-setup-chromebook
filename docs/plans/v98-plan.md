@@ -1,6 +1,6 @@
 # dev-setup-chromebook v98 plan
 
-Oct 30, 2026 · started Oct 27 (items 1-3, from the v97 Chromebook runs) · items 4-5 added Oct 30 · **draft: choices open**
+Oct 30, 2026 · started Oct 27 (items 1-3, from the v97 Chromebook runs) · items 4-6 added Oct 30 · **draft: choices open**
 
 ## Scope
 
@@ -17,9 +17,10 @@ every hand check passed). Anything found in use before the build starts can join
 4. **One instruction file for every coding agent** (repo only, no script change): `CLAUDE.md` becomes
    `AGENTS.md`, with `CLAUDE.md` a symlink to it, so Codex CLI reads the same rules as Claude Code; a new
    section says what an agent may do when it runs locally on a Chromebook. **Done in this plan's PR.**
-5. **DuckDB failed to install** (install-lakehouse or install-db-extra): found Oct 30 on a Chromebook;
-   cause not yet diagnosed. To be diagnosed and planned with Codex CLI running locally (the first version
-   worked on that way).
+5. **DuckDB failed to install** (install-lakehouse): diagnosed locally Oct 30; an obsolete CLI asset URL
+   returns 404. Choose a shared CLI/Python version after checking the downstream pieces for DuckDB 2.0.
+6. **Executable script modes** (repo only): the four scripts are committed as 100644; running
+   `chmod +x` locally leaves mode changes at every checkout.
 
 Each item lists the choices offered; the decision is marked when made. The build starts once all are
 made and "anything else for v98" is settled.
@@ -149,33 +150,112 @@ upstream release asset name/format change, with no evidence of a Crostini-specif
 `https://github.com/duckdb/duckdb/releases/download/v2.0.0/duckdb_cli-linux-amd64.zip`, then HTTP 404.
 The [v2.0.0 release assets](https://github.com/duckdb/duckdb/releases/expanded_assets/v2.0.0) instead list
 `duckdb-cli-linux-amd64.tar.gz` (hyphens and a tar.gz); a HEAD request to that versioned asset returns
-HTTP 200. The [release metadata](https://api.github.com/repos/duckdb/duckdb/releases/tags/v2.0.0) publishes
-its SHA-256 as `c6507206baf7793c6013dbd82368469a45f20dc0e17a6f92f204602f652ed2bc`.
+HTTP 200. The [release metadata](https://api.github.com/repos/duckdb/duckdb/releases/tags/v2.0.0) carries
+GitHub's SHA-256 asset digest; DuckDB publishes no checksum file among this release's assets.
 `command -v duckdb` finds nothing, `duckdb --version` reports `command not found`, and
 `~/.lakehouse-env/bin/python` is absent. Python import and extension compatibility remain untested;
 `INSTALL delta` was not run (no CLI, and INSTALL writes to the extension cache). No bundle script,
 sudo command, or install was run for this diagnosis.
 
-**Proposed:** replace the obsolete zip URL and unzip step with the published Linux amd64 tar.gz.
-Apply rule 9: stage the download and extraction under `assets/`, verify the archive against the
-published SHA-256 for that exact release, run `gzip -t`, inspect the tar members before extracting,
-and run the staged binary's `--version` and an in-memory `SELECT 1` before replacing
-`~/.local/bin/duckdb`. Resolve one release tag and use it for both the asset and digest, so a new
-`latest` cannot mix releases. A missing digest, failed lookup, bad archive or failed binary check
-stops with a useful error and leaves any installed CLI intact; no unchecked fallback. Use the release
-redirect for the tag, as elsewhere; if digest metadata is rate-limited, report that explicitly.
+**Downstream evidence (read-only checks, Oct 30 2026):** artifact availability and dependency metadata
+can be checked without installing anything. They do not prove that queries, extension loads or dbt
+models run; those checks are still required on the Chromebook.
 
-| Choice: which DuckDB CLI release setup installs | |
+- **Extensions:** HEAD requests (`curl -sSIL`, following redirects) to
+  `https://extensions.duckdb.org/v2.0.0/linux_amd64/<name>.duckdb_extension.gz` returned:
+
+  | Extension artifact name | Final HTTP status |
+  | --- | --- |
+  | iceberg | 200 |
+  | ducklake | 200 |
+  | delta | 200 |
+  | httpfs | 200 |
+  | sqlite_scanner | 200 |
+  | postgres_scanner | 200 |
+
+  These are the published artifacts for all six setup INSTALLs (`sqlite` and `postgres` resolve to
+  the scanner names). Availability is confirmed, not LOAD/runtime compatibility.
+- **Python package:** [PyPI's DuckDB 2.0.0 metadata](https://pypi.org/pypi/duckdb/2.0.0/json) reports
+  `requires_python: >=3.11.0` and a non-yanked wheel named
+  `duckdb-2.0.0-cp312-abi3-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl`.
+  The CPython stable ABI (`cp312-abi3`) covers both cp312 and standard cp313; a separate cp313-named
+  wheel is not needed. Free-threaded Python is excluded by the
+  [Python migration guide](https://duckdb.org/docs/2.0/clients/python/migration). Thus a wheel exists
+  for the bundle's Debian Python 3.13 as well as 3.12; no pip installation was performed.
+- **dbt Core adapter:** [PyPI's latest dbt-duckdb metadata](https://pypi.org/pypi/dbt-duckdb/json) reports
+  version `1.11.1`, with `duckdb>=1.0.0`, `dbt-core>=1.8.0`, `dbt-adapters<2,>=1` and
+  `dbt-common<2,>=1`. The optional `md` extra has `duckdb==1.5.5`; setup does not request that extra.
+  The normal requirement permits 2.0, but this is not a claim that the adapter has been tested on it.
+  DuckDB 2.0's Python migration guide lists removed result/relation methods and changed result handling;
+  the adapter's smoke test must pass. Keep classic `dbt-core<2` explicit when implementing the fix.
+- **Delta writer:** [PyPI's latest deltalake metadata](https://pypi.org/pypi/deltalake/json) reports
+  `1.6.6` and `requires_dist: arro3-core>=0.5.0, deprecated>=1.2.18`, plus optional pandas and pyarrow
+  extras. There is no DuckDB requirement: delta-rs is a separate engine, not a DuckDB binding.
+  That removes a package-version constraint, but DuckDB's `delta` extension must still read the
+  Delta tables it writes, and the existing read/append/time-travel tests remain necessary.
+- **dbt Fusion (dbt v2):** no explicit DuckDB 2.0 support statement was found in the checked
+  [dbt changelog](https://github.com/dbt-labs/dbt/blob/main/CHANGELOG.md) or
+  [connection docs](https://docs.getdbt.com/docs/local/connect-data-platform/duckdb-setup).
+  The changelog's engine-specific evidence says "via duckdb 1.5.4"; dbt's own v2 version number
+  does not establish DuckDB 2.0 support. DuckDB's
+  [Fusion article](https://duckdb.org/2026/09/22/dbt-fusion) says it ships a "pinned DuckDB version".
+  The connection docs also say the bundled driver "does not support loading DuckDB extensions" and
+  describe a separate `dbc` driver for that. Fusion uses its own driver, not setup's CLI or Python
+  package. Its shared-file interoperability and extension/catalog behaviour are unconfirmed; do not
+  silently add `dbc` or replace its driver as part of this download fix.
+- **ODBC (separate flag):** [latest release metadata](https://api.github.com/repos/duckdb/duckdb-odbc/releases/latest)
+  identifies `v2.0.0.0`. Its
+  [tagged version source](https://github.com/duckdb/duckdb-odbc/blob/v2.0.0.0/src/duckdb/src/function/table/version/pragma_version.cpp)
+  says `#define DUCKDB_VERSION "v2.0.0"` and `DUCKDB_SOURCE_ID "d54cbbe3df"`.
+  HEAD on setup's existing `releases/latest/download/duckdb_odbc-linux-amd64.zip` returns 200.
+  This driver embeds a separate DuckDB engine; it is not the CLI failure. The bundle's CSV DSN is
+  in-memory, but sharing a new 2.0-format file with a pinned 1.x CLI/Python would be incompatible.
+
+**Recommendation:** hold the CLI and Python on the last stable 1.x release until the remaining
+downstream behaviour is confirmed. This is a conservative inference from the incomplete Fusion/dbt
+evidence, not a demonstrated failure of all downstream tools on 2.0. The
+[DuckDB migration guide](https://duckdb.org/docs/2.0/operations_manual/migration) confirms that new
+2.0-format files cannot be read by older engines; existing older-format files retain their format.
+[PyPI](https://pypi.org/pypi/duckdb/json) currently lists `1.5.6` as the highest non-yanked stable 1.x.
+Its [CLI release](https://github.com/duckdb/duckdb/releases/tag/v1.5.6) still publishes
+`duckdb_cli-linux-amd64.zip` (HEAD 200), and its
+[Python release](https://pypi.org/pypi/duckdb/1.5.6/json) has cp312 and cp313 manylinux x86_64 wheels.
+The same six extension HEAD requests under `v1.5.6/linux_amd64` all return 200.
+
+**Proposed, whichever choice:** setup defines one exact DuckDB version (without the tag's leading `v`),
+uses `v${version}` for the CLI release and installs `duckdb==${version}` in `~/.lakehouse-env` in the
+same pip transaction as dbt-core, dbt-duckdb and the other lakehouse packages. Keep that exact constraint
+on reruns/upgrades; a resolver conflict is an error, never permission to drift. Compare the staged CLI's
+reported version and Python's `duckdb.__version__` with the selected version before declaring success.
+Use the archive name/format published for that tag: the old zip for 1.5.6, the new tar.gz for 2.0.0.
+
+Apply rule 9: read **GitHub's asset digest** at run time from
+`repos/duckdb/duckdb/releases/tags/v${version}` release metadata. Use `gh api` when gh is logged in,
+with an unauthenticated `curl` fallback; never print credentials or make a GitHub login/token required.
+Select the exact asset's `digest` field and require a valid `sha256:` value. DuckDB publishes no checksum
+file for these releases; never hardcode a digest, including for a pinned version. Stage the download
+and extraction under `assets/`, compare its SHA-256, then run `unzip -t` or `gzip -t` as appropriate,
+inspect archive members before extracting, and run the staged binary's `--version` and in-memory
+`SELECT 1` before replacing `~/.local/bin/duckdb`. Use the same tag for the asset and digest. A missing
+digest, rate limit, failed lookup, bad archive or failed binary check stops with a useful error and
+leaves any installed CLI intact; no unchecked fallback.
+
+| Choice: DuckDB version for the lakehouse stack | |
 | --- | --- |
-| A (recommended) | Keep following the latest stable release, using the current tar.gz asset name and the verification above. Preserves the bundle's current update policy; extension compatibility must pass the Chromebook checks before release. |
-| B | Pin a reviewed release tag and its published SHA-256 in setup, with the same archive and binary validation. Updates become deliberate bundle changes; an older pin needs its own extension and Python compatibility checks. |
+| A (recommended) | Pin the CLI and pip duckdb to the last 1.x release (`1.5.6` at this check) until the downstream pieces support 2.0 and the shared-file checks pass. One exact version drives both installs; read GitHub's digest at run time. This fixes the download without introducing the major-version migration. |
+| B | Adopt `2.0.0` for both CLI and pip duckdb, using the new tar.gz and run-time GitHub digest. The six extensions and Python wheel exist and the normal adapter requirement permits it, but accept only after dbt Core, Delta, and Fusion/shared-file checks pass; establish Fusion's actual driver compatibility or an explicit older storage-format policy before sharing files. No independent floating `latest`/pip upgrade. |
 
 **Test:** stand-in downloads/metadata: a valid archive installs; 404, missing digest, checksum mismatch,
 truncated archive, unexpected tar members and a binary that fails validation all stop before replacing
-an existing CLI. Check a changing `latest` cannot mix the archive and digest from different tags.
+an existing CLI. Cover zip and tar.gz; logged-in `gh api`, unauthenticated curl fallback and rate limits;
+never accept metadata for a different tag/asset. A conflicting pip requirement must fail rather than
+install a different DuckDB. Check reruns keep the exact version in both installs.
 In dev-test, keep the existing CLI/Python extension loads and DuckLake/Delta/dbt smoke checks; strengthen
 the CLI check to print its version and run an in-memory query, and print Python's DuckDB version in the
-import check so mismatches are visible. The lakehouse disk-report line already includes the CLI, venv
+import check so mismatches are visible. Add a FAIL check that normalizes the leading `v` from the
+CLI version and compares it with `~/.lakehouse-env`'s `duckdb.__version__`; report both values and
+FAIL on a missing command/import or a mismatch. Exercise matching, mismatched and missing versions.
+The lakehouse disk-report line already includes the CLI, venv
 and extension cache; no new retained path is needed. Update `docs/init-checklist.md` with the verified
 CLI download and failure guidance, and CHANGELOG under all four scripts when built. No new flag or
 ODBC change; no Crostini workaround to document.
@@ -184,9 +264,34 @@ ODBC change; no Crostini workaround to document.
 `install-lakehouse` twice: both reach the final summary, with no 404 and a validated CLI installed.
 Read the new `.output` files; check `duckdb --version`, an in-memory query, CLI extension INSTALL/LOAD
 for iceberg, ducklake, delta, httpfs, sqlite and postgres, and Python's DuckDB version and extension
-loads in `~/.lakehouse-env`. Then run dev-test with `install-lakehouse`: FAIL 0, including DuckLake,
-Delta reads and dbt Core; inspect any optional-feature WARNs. These install/test runs need the owner's
+loads in `~/.lakehouse-env`; verify CLI/Python version equality. Then run dev-test with
+`install-lakehouse`: FAIL 0, including DuckLake, Delta reads and dbt Core. Record Fusion's actual
+`SELECT version()` through a model and test a scratch database written/read across CLI, Python and
+Fusion, in both directions, under `assets/`; a Fusion WARN does not confirm 2.0 interoperability.
+If checking `install-db-extra`, keep its CSV query in memory and record the ODBC engine separately.
+Inspect any optional-feature WARNs. These install/test runs need the owner's
 approval and have not been done as part of this plan diagnosis.
+
+## 6. Executable script modes (repo only)
+
+**Found Oct 30 2026:** `git ls-files -s` records all four bundle scripts as `100644`. The owner runs
+them with `chmod +x`, so `git diff --summary` shows `100644 => 100755` for setup, init, test and demo
+after a checkout. Those local mode changes are present during this plan work and remain uncommitted.
+
+**Proposed:** record that the scripts are executable in Git, so a normal checkout is ready to run and
+the owner's executable bits agree with the index. No script contents change for this item.
+
+| Choice: executable modes | |
+| --- | --- |
+| A (recommended) | Commit all four scripts as `100755` when this choice is approved and built. Checkouts preserve the executable bits and stop showing these local mode changes. |
+| B | Leave the repository at `100644`; the owner sets `git config --local core.fileMode false` in this checkout. Git ignores local executable-bit differences, but fresh clones still need `chmod +x`. |
+
+**Test:** for A, `git ls-files -s` shows `100755` for exactly the four scripts and the diff contains
+only their mode changes for this item. For B, confirm the local setting; no repository mode change.
+
+**To verify on the Chromebook:** after the chosen change, checkout/pull no longer shows the four
+scripts modified solely because they are executable. No modes or Git configuration are changed by
+this plan-only update.
 
 ## Init, demo
 
@@ -209,5 +314,6 @@ Chrome-on-Crostini specific, CHANGELOG (all four sections).
 - [ ] Item 2: what to clear in Linux Chrome's profile (A: only folders Chrome rebuilds, recommended)
 - [ ] Item 3: a gone DDEV project's images (A: removed by `--run`, recommended)
 - [x] Item 4: one instruction file for every agent (`AGENTS.md`, `CLAUDE.md` symlink) — done in this PR
-- [ ] Item 5: DuckDB install failure — diagnosis, then the fix's choices
+- [ ] Item 5: shared CLI/Python DuckDB version (A: pin both to last 1.x pending downstream support, recommended)
+- [ ] Item 6: executable script modes (A: commit all four as 100755, recommended)
 - [ ] Anything else for v98
