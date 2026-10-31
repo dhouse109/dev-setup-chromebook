@@ -1,6 +1,6 @@
 # dev-setup-chromebook v98 plan
 
-Oct 27, 2026 · started Oct 27 (items 1-3, from the v97 Chromebook runs) · **draft: choices open**
+Oct 30, 2026 · started Oct 27 (items 1-3, from the v97 Chromebook runs) · items 4-5 added Oct 30 · **draft: choices open**
 
 ## Scope
 
@@ -14,6 +14,12 @@ every hand check passed). Anything found in use before the build starts can join
    the cache folders (5.5 MB on Oct 27).
 3. **Images left by DDEV projects that are gone** (base, `devclean`): the images DDEV builds per project
    stay after the project is deleted.
+4. **One instruction file for every coding agent** (repo only, no script change): `CLAUDE.md` becomes
+   `AGENTS.md`, with `CLAUDE.md` a symlink to it, so Codex CLI reads the same rules as Claude Code; a new
+   section says what an agent may do when it runs locally on a Chromebook. **Done in this plan's PR.**
+5. **DuckDB failed to install** (install-lakehouse or install-db-extra): found Oct 30 on a Chromebook;
+   cause not yet diagnosed. To be diagnosed and planned with Codex CLI running locally (the first version
+   worked on that way).
 
 Each item lists the choices offered; the decision is marked when made. The build starts once all are
 made and "anything else for v98" is settled.
@@ -92,6 +98,42 @@ project is reported and removed by `--run`; DDEV's own images untouched.
 lists its built images and `--run` removes them; another DDEV project still starts without rebuilding
 from scratch.
 
+## 4. One instruction file for every coding agent (repo only)
+
+**Why (Oct 30 2026):** the owner wants to try Codex CLI, run locally on a Chromebook, for some of the
+bundle work (starting with item 5), alongside Claude Code in cloud sessions. Codex reads `AGENTS.md`, not
+`CLAUDE.md`, so it would start without the bundle's rules. `CLAUDE.md` also said "this cloud environment
+is not that machine", which is wrong for an agent running on the Chromebook itself.
+
+**Change** (made in this PR, so item 5's work follows it from the start):
+
+- `CLAUDE.md` renamed to `AGENTS.md`; `CLAUDE.md` is now a symlink to it (Claude Code reads it as before).
+  Wording made agent-neutral.
+- New section "Where you are running": in a cloud sandbox, nothing changes. Locally on a Chromebook, an
+  agent may read the repo and `assets/logs/` (the v97 `.output` files), lint, and run read-only
+  inspection; it asks the owner before running any of the four scripts, `sudo`, writes outside the repo,
+  or heavy services; it never opens credential files; it never forces the host guard.
+
+No script change, so no version bump and no CHANGELOG entry for this item on its own.
+
+## 5. DuckDB failed to install (install-lakehouse or install-db-extra)
+
+**Found Oct 30 2026** by the owner on a Chromebook; details in the newest `assets/logs/dev-setup-*.output`
+on that machine. Not yet diagnosed.
+
+**Where DuckDB is installed today:**
+
+- `install-lakehouse` (setup, "Local lakehouse stack"): the CLI from `releases/latest` (no checksum, no
+  validation before `install`, unlike rule 9), then `duckdb -c "INSTALL iceberg; INSTALL ducklake;
+  INSTALL delta; …"` from extensions.duckdb.org, then `pip install -U duckdb …` in `~/.lakehouse-env` and
+  the same extensions from Python. Setup runs under `set -e`, so a failure in any of these stops the run.
+- `install-db-extra` (setup, "Extra ODBC drivers"): the DuckDB ODBC driver zip from `releases/latest`
+  into `/opt/duckdb-odbc`.
+
+**To fill in** (diagnosis, by Codex locally): the failing lines, the root cause with evidence, the
+proposed fix with choices where there is more than one way, dev-test changes, docs, and how to verify on
+the Chromebook.
+
 ## Init, demo
 
 Version bump only.
@@ -112,4 +154,6 @@ Chrome-on-Crostini specific, CHANGELOG (all four sections).
 - [ ] Item 1: how setup knows the installed Cursor build (A: a recorded download URL/version, recommended)
 - [ ] Item 2: what to clear in Linux Chrome's profile (A: only folders Chrome rebuilds, recommended)
 - [ ] Item 3: a gone DDEV project's images (A: removed by `--run`, recommended)
+- [x] Item 4: one instruction file for every agent (`AGENTS.md`, `CLAUDE.md` symlink) — done in this PR
+- [ ] Item 5: DuckDB install failure — diagnosis, then the fix's choices
 - [ ] Anything else for v98
