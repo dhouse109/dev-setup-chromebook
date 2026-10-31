@@ -114,8 +114,8 @@ pull in what they need. For example, `install-web` brings `install-node` with it
 | `install-graphql` | Apollo Rover, Router and MCP Server |
 | `install-k8s` | kubectl, helm, kind, k9s |
 | `install-db` | ODBC, Firebird, client libraries |
-| `install-db-extra` | SQLite, PostgreSQL, MariaDB and DuckDB ODBC drivers |
-| `install-lakehouse` | DuckDB, dbt, DuckLake, Delta Lake |
+| `install-db-extra` | SQLite, PostgreSQL, MariaDB and DuckDB ODBC drivers (DuckDB pinned to 1.5.6, as for the lakehouse CLI/Python) |
+| `install-lakehouse` | DuckDB 1.5.6 CLI/Python, dbt Fusion and Core v1, DuckLake, Delta Lake |
 | `install-agentic` | Temporal, LangGraph, Pydantic, Langfuse |
 | `install-jev` | Jev |
 | `install-mongodb` | MongoDB 8, mongosh, Compass |
