@@ -133,5 +133,4 @@ Update, in the same change:
 
 ## Known open items
 
-- dev-test's qt5ct check WARNs on any palette but darker, though setup leaves your own palette alone
-  (v95 plan, item 2).
+None.
