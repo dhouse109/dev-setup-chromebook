@@ -852,7 +852,7 @@ free_bytes() { sync -f "$HOME" 2> /dev/null || sync; df -B1 --output=avail "$HOM
 disk_line() { df -B1 --output=avail,size,target "$HOME" 2> /dev/null | tail -n 1 | awk '{ printf "%s %s %s\n", $1, $2, $3 }'; }
 
 DOCKER=()
-if has docker && { want docker-build || want docker-dangling || [ "$IMAGES" = 1 ] || [ "$WHERE" = 1 ]; }; then
+if has docker && { want docker-build || want docker-dangling || want ddev-images || [ "$IMAGES" = 1 ] || [ "$WHERE" = 1 ]; }; then
     if timeout 10 docker info > /dev/null 2>&1; then DOCKER=(docker)
     elif timeout 10 sudo -n docker info > /dev/null 2>&1; then DOCKER=(sudo -n docker); fi
 fi
@@ -912,7 +912,7 @@ go_cache() {
 
 # The categories: NAME|what it is. size_of NAME prints "BYTES<TAB>how it was measured" (or nothing when the tool isn't
 # there); clean NAME clears it.
-CATS=(npm docker-build docker-dangling apt brew uv go composer pnpm pip chrome chrome-profile)
+CATS=(npm docker-build docker-dangling ddev-images apt brew uv go composer pnpm pip chrome chrome-profile)
 # v97: per editor, vsix:FOLDER (its cached extension downloads) and oldext:FOLDER (extension versions left behind).
 for d in "$HOME/.config/Code" "$HOME/.config/Cursor" "$HOME/.config/Devin" "$HOME"/.config/*/CachedExtensionVSIXs; do
     d=${d%/CachedExtensionVSIXs}; e=${d##*/}
@@ -928,6 +928,7 @@ label() {
         npm) echo "npm's cache" ;;
         docker-build) echo "Docker's build cache" ;;
         docker-dangling) echo "Docker's dangling images" ;;
+        ddev-images) echo "Gone DDEV projects' built images" ;;
         apt) echo "apt's downloaded packages" ;;
         brew) echo "Homebrew's old versions and downloads" ;;
         uv) echo "uv's cache" ;;
@@ -992,6 +993,44 @@ for name in sorted(os.listdir(ext)):
         print("%s\t%s\t%s\t%s" % (name, xid, ver, ", ".join(sorted(installed[xid]))))
 OLDEXT_PY
 }
+# v98: only DDEV-built tags for projects absent from a successful complete list; never an image a container uses
+# (Oct 30 2026: ddev-test's deleted project left built web/db images; --images also removes DDEV's base images).
+gone_ddev_images() (
+    set -o pipefail
+    [ ${#DOCKER[@]} -gt 0 ] && has ddev || return 1
+    projects=$(ddev list --json-output 2> /dev/null) || return 1
+    containers=$("${DOCKER[@]}" ps -aq 2> /dev/null) || return 1
+    used=""
+    if [ -n "$containers" ]; then
+        mapfile -t ids <<< "$containers"
+        used=$("${DOCKER[@]}" inspect -f '{{.Image}}' "${ids[@]}" 2> /dev/null) || return 1
+    fi
+    images=$("${DOCKER[@]}" image ls -q --no-trunc 2> /dev/null | sort -u) || return 1
+    [ -n "$images" ] || return 0
+    mapfile -t ids <<< "$images"
+    images=$("${DOCKER[@]}" image inspect "${ids[@]}" 2> /dev/null) || return 1
+    printf '%s' "$images" | python3 -c '
+import json, re, sys
+projects = json.loads(sys.argv[1])["raw"]
+if not isinstance(projects, list) or any(not isinstance(p, dict) or
+        not isinstance(p.get("name"), str) or not p["name"] for p in projects):
+    sys.exit("Cannot read DDEV project names; keeping built images")
+known = {p["name"] for p in projects}
+used = set(sys.argv[2].splitlines())
+pattern = re.compile(r"ddev/ddev-(?:webserver|dbserver-[^:]+):v[0-9]+\.[0-9]+\.[0-9]+-(.+)-built")
+rows = []
+for image in json.load(sys.stdin):
+    tags = image.get("RepoTags") or []
+    matches = [pattern.fullmatch(tag) for tag in tags]
+    if image["Id"] in used or not tags or not all(m and m[1] not in known for m in matches):
+        continue
+    size = int(image["Size"])
+    for tag in tags:
+        rows.append((image["Id"], size, tag))
+for row in rows:
+    print(*row, sep="\t")
+' "$projects" "$used"
+)
 size_of() {
     local b d out n x dirs
     case "$1" in
@@ -1009,6 +1048,14 @@ size_of() {
             mapfile -t ids < <("${DOCKER[@]}" image ls -q -f dangling=true 2> /dev/null | sort -u)
             b=0; [ ${#ids[@]} -gt 0 ] && b=$("${DOCKER[@]}" image inspect -f '{{.Size}}' "${ids[@]}" 2> /dev/null | awk '{ s += $1 } END { printf "%.0f", s }')
             printf '%s\t%d image(s), up to (layers can be shared)\n' "${b:-0}" "${#ids[@]}" ;;
+        ddev-images)
+            [ ${#DOCKER[@]} -gt 0 ] && has ddev || return
+            if out=$(gone_ddev_images); then
+                b=$(awk -F'\t' 'NF && !seen[$1]++ { s += $2; n++ } END { printf "%.0f\t%d", s, n }' <<< "$out")
+                printf '%s\t%s image(s), up to (layers shared with DDEV stay)\n' "${b%%$'\t'*}" "${b#*$'\t'}"
+            else
+                printf '0\tunable to read DDEV projects or Docker images; all kept\n'
+            fi ;;
         # v97 (found in the v97 Chromebook hand checks, Oct 27 2026): the report said 0 B and --run freed 90.4 MB.
         # 'apt-get clean' also removes /var/cache/apt/pkgcache.bin and srcpkgcache.bin (apt rebuilds them) and what
         # is in archives/partial, which is _apt's and unreadable without sudo. Measured with sudo -n where allowed.
@@ -1059,8 +1106,13 @@ size_of() {
     esac
 }
 details() {   # the lines under a category in the report: each old extension version, and the one installed
-    local n inst x
+    local n inst x out b
     case "$1" in
+        ddev-images)
+            out=$(gone_ddev_images) || return 0
+            while IFS=$'\t' read -r _ b n; do
+                [ -n "$n" ] && printf '      %-58s %10s (up to)\n' "$n" "$(human "$b")"
+            done <<< "$out" ;;
         oldext:*) x=$(editor_ext "${1#*:}")
             while IFS=$'\t' read -r n _ _ inst; do
                 [ -n "$n" ] && printf '      %-58s %8s   (%s installed)\n' "$n" "$(human "$(dub "$x/$n")")" "$inst"
@@ -1072,6 +1124,14 @@ clean() {
         npm) npm cache clean --force ;;
         docker-build) "${DOCKER[@]}" builder prune -af ;;
         docker-dangling) "${DOCKER[@]}" image prune -f ;;
+        ddev-images)
+            local out n rc=0
+            out=$(gone_ddev_images) || { echo "cannot read DDEV projects or Docker images; all kept"; return 1; }
+            while IFS=$'\t' read -r _ _ n; do
+                [ -n "$n" ] || continue
+                "${DOCKER[@]}" image rm "$n" || rc=1
+            done <<< "$out"
+            return "$rc" ;;
         apt) sudo -n apt-get clean ;;
         brew) brew cleanup -s ;;
         uv) timeout 360 uv cache clean ;;   # v97: was 'uv cache prune' (see size_of); waits up to 5 min for other uv runs

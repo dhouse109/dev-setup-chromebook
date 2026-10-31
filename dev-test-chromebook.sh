@@ -798,6 +798,51 @@ case "$1" in
                 u = $(i + 1); f = (u == "KB") ? 1024 : (u == "MB") ? 1048576 : (u == "GB") ? 1073741824 : (u == "TB") ? 1099511627776 : 1
                 printf "%.0f\n", $i * f; exit } }' <<< "$l")
         [ -n "$m" ] && [ "$m" -ge $((b * 9 / 10)) ] || { echo "apt's line (${m:-?} bytes) is less than pkgcache.bin alone ($b bytes)"; exit 1; } ;;
+    # v98: stand-in Docker/DDEV only; unknown projects are removable only after a valid list
+    # (Oct 30 2026: deleted ddev-test left built images; current/base/in-use images must stay).
+    ddev-images)
+        S="$WORK/devclean-images"; rm -rf "$S"; mkdir -p "$S/home" "$S/bin"
+        export DEVCLEAN_FIXTURE="$S"
+        cat > "$S/bin/ddev" << 'DDEV_STUB'
+#!/bin/bash
+[ "${DDEV_LIST_FAIL:-0}" = 0 ] || exit 1
+printf '%s\n' '{"raw":[{"name":"keep"}]}'
+DDEV_STUB
+        cat > "$S/bin/docker" << 'DOCKER_STUB'
+#!/bin/bash
+case "$*" in
+    info) exit 0 ;;
+    'ps -aq') echo container ;;
+    'inspect -f {{.Image}} container') echo used ;;
+    'image ls -q --no-trunc') printf '%s\n' gone keep base used shared ;;
+    'image inspect '*) cat << 'IMAGES'
+[{"Id":"gone","Size":1048576,"RepoTags":["ddev/ddev-webserver:v1.25.5-gone-built"]},
+ {"Id":"keep","Size":1048576,"RepoTags":["ddev/ddev-webserver:v1.25.5-keep-built"]},
+ {"Id":"base","Size":1048576,"RepoTags":["ddev/ddev-webserver:v1.25.5"]},
+ {"Id":"used","Size":1048576,"RepoTags":["ddev/ddev-webserver:v1.25.5-in-use-built"]},
+ {"Id":"shared","Size":1048576,"RepoTags":["ddev/ddev-webserver:v1.25.5-other-built","ddev/ddev-webserver:v1.25.5-keep-built"]}]
+IMAGES
+        ;;
+    'image rm ddev/ddev-webserver:v1.25.5-gone-built') echo "$*" >> "$DEVCLEAN_FIXTURE/removed" ;;
+    *) echo "unexpected Docker call: $*" >&2; exit 1 ;;
+esac
+DOCKER_STUB
+        chmod +x "$S/bin/ddev" "$S/bin/docker"
+        export PATH="$S/bin:$PATH" HOME="$S/home" DEVCLEAN_ONLY=ddev-images
+        o=$(devclean) || exit 1
+        [ ! -e "$S/removed" ] || { echo "report removed an image"; exit 1; }
+        grep -qF 'v1.25.5-gone-built' <<< "$o" || { printf '%s\n' "$o"; exit 1; }
+        for tag in keep in-use other; do
+            grep -qF "v1.25.5-$tag-built" <<< "$o" && { echo "report lists protected image $tag"; exit 1; }
+        done
+        o=$(devclean --run) || exit 1
+        [ "$(cat "$S/removed")" = 'image rm ddev/ddev-webserver:v1.25.5-gone-built' ] || exit 1
+        rm "$S/removed"
+        o=$(DDEV_LIST_FAIL=1 devclean --run) || exit 1
+        [ ! -e "$S/removed" ] || { echo "failed DDEV lookup removed an image"; exit 1; }
+        grep -q 'all kept' <<< "$o" || { printf '%s\n' "$o"; exit 1; }
+        echo "gone built image removed; current, base, in-use and shared images kept; failed lookup keeps all"
+        rm -rf "$S" ;;
     ddev)   # v97 (run 2): a 0-byte ~/.ddev/.state.yaml is flagged and moved aside; ~/.ddev/.update (always empty) is not
         S="$WORK/devclean-ddev"; rm -rf "$S"; mkdir -p "$S/.ddev"; : > "$S/.ddev/.state.yaml"; : > "$S/.ddev/.update"
         o=$(HOME=$S DEVCLEAN_ONLY=- devclean) || { echo "devclean exited $?"; exit 1; }
@@ -819,6 +864,7 @@ hint  "rerun setup (any flags): v97 adds the editors' steps to ~/.local/bin/devc
 check "devclean --where names the largest folders, changes nothing"  'bash devclean_check.sh where' 120
 check "devclean: uv's whole cache reported, emptied by uv cache clean (scratch)" 'bash devclean_check.sh uv' 120
 check "devclean: only an empty .state.yaml is moved aside, not .update" 'bash devclean_check.sh ddev'
+check "devclean: only gone DDEV projects' built images removed (stand-ins)" 'bash devclean_check.sh ddev-images' 120
 check "devclean: apt's line counts what apt-get clean removes (*.bin too)" 'bash devclean_check.sh apt' 60
 # v96: DDEV's router on 8080/8443, since ChromeOS passes high ports to Linux but not 80 and 443 (Oct 26 2026:
 # ERR_CONNECTION_REFUSED on https://ddev-test.ddev.site, fine on :8443). Setup sets them unless you set others:
