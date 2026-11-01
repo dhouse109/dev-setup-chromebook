@@ -466,6 +466,68 @@ Do not claim Android CLI migration or Ruby documentation changes were tested by 
 The plan is final. PR #12 remains **draft** until the owner says to merge; no implementation or
 Chromebook execution is part of this plan amendment.
 
+## Acceptance follow-up (owner request, Nov 1 2026)
+
+The original six-flag setup reached all 79 selected stages; dev-test printed PASS 583, FAIL 5,
+WARN 12, SKIP 1, then needed Ctrl-C. Acceptance is not clean and PR #13 remains draft.
+Evidence: assets/logs/dev-setup-20261031-221256.output, dev-test-20261101-093242.output
+and its matching .log, setup-stages-20261031-221256.tsv, disk-20261101-095209.tsv,
+and dev-test-hang.txt. The PR results comment records individual failures and proposed fixes.
+
+The owner explicitly requested a fix for the post-summary hang in this same PR. The terminal
+recorder passed its process-substitution pipe as script(1)'s filename; new-shell checks could
+leave that extra descriptor in an ssh-agent even after redirecting standard output/error.
+Setup and test now pipe script(1)'s output to a separate tee/copy branch, isolating that descriptor
+from the recorded command. A focused extracted-wrapper regression uses a detached stand-in
+child (no user profiles, credentials or real services), checking terminal and pipe modes,
+complete saved output, and success/failure exit status while the child remains alive.
+Versions stay at 99 during this acceptance fix. Full owner-run acceptance remains outstanding.
+
+## Accepted correction scope (owner request, Nov 1 2026)
+
+Keep all four scripts at version 99 and work in PR #13. Before any full rerun, request approval
+for each targeted command; the owner will run final full setup → init → test. Implement the
+acceptance-comment corrections: select Reqnroll's framework from the installed SDK/runtime;
+parse Selenium's helper-table delimiter and correct its hint; use Debian's /usr/sbin/mkfs.fat
+in the test and generated exchange helper; capture the full Symfony advisory result/status;
+verify Inspector's real npx tool call online then offline and report warm-up failures honestly.
+Retry vendor downloads only, run each fetched installer once, retry Playwright's checked
+install-deps pipeline, recognize failed-run stage summaries and abort on system apt update failure.
+
+New shell-startup probes must supervise their own descendants, stop only the ssh-agents they
+started, and verify none remain both before the summary and on EXIT. Preserve PID/start-time
+ownership evidence under assets/logs, leaving pre-existing agents untouched. Small extracted
+regressions extend the original helper/recorder tests for these failure paths and agent ownership;
+no real profiles, credentials or services are used by those offline regressions.
+
+For Typesense, first preserve full startup logs, immutable image metadata and safe container/host
+limits with the owner-approved `bash tests/typesense-investigate.sh`. Never print its API-key
+arguments or credential environment. Investigate exit 139 without assuming OOM, network failure
+or an image regression, then select any image/config fix from that evidence and post the finding.
+Investigation on Nov 1 identified Typesense #2998: missing /proc/self/io triggers brpc's unsafe
+pre-main glog error path (confirmed by --version, gdb and real-host/container procfs probes).
+The selected fix is the upstream-documented, container-scoped fopen shim: on ENOENT for that one
+read-only procfs path, return zero counters with a one-time explicit diagnostic. Real kernel data,
+permission errors and other paths/modes retain their behavior. Build it from embedded C into
+assets/tools/typesense and mount read-only only when the host lacks the file; do not change the
+vendor image, data format, keys, memory limits or kernel. Small C regression and real authenticated
+health/CRUD tests verify it. Targeted setup applies only install-typesense plus unconditional base
+stages; the owner still performs final full acceptance. Post each push and targeted results to PR #13.
+
+## Final owner acceptance decision (Nov 1 2026)
+
+The owner completed setup → init → dev-test with the original six flags, confirmed init in between,
+and confirmed dev-test returned to the prompt by itself without Ctrl+C. Setup: 79 succeeded,
+0 failed/unreached. Completed test: PASS 594, FAIL 0, WARN 11, SKIP 1; no test-owned ssh-agent left.
+
+The owner explicitly accepts v99 with two non-credential Known issues: offline npx Inspector cache
+ENOTCACHED at test time (pre-existing, not a regression), and environmental disk headroom below the
+model reserve. Record both in CHANGELOG and PR #13; preserve the reserve. Inspector offline cache
+coherence becomes item 1 of the draft v100 plan. Oracle clock-drift errors after long uptime under
+memory pressure cleared after restarting Linux and repeating the test. This decision supersedes
+this plan's earlier pending-acceptance status and authorizes marking PR #13 ready for review only.
+The owner will merge; no merge, branch deletion, tag or release is authorized in this step.
+
 ## Primary references checked for the plan
 
 - [pip options](https://pip.pypa.io/en/stable/cli/pip/): HTTP connection retries, socket timeout and
