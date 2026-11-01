@@ -57,8 +57,10 @@ exists, and `/etc/os-release` says Debian):
   `sudo`, start services, and take a long time), any other `sudo` command, and anything that writes
   outside the repo. When the owner runs a script, give the exact command and flags, and read its
   `.output` file afterwards instead of asking for a paste.
-- If your sandbox blocks network or `sudo`, say so and hand the owner the command; don't look for a
-  way around the sandbox.
+- If the sandbox blocks a command you need (git push/fetch, gh, sudo, a network download), request
+  approval to run that one command outside the sandbox; the owner approves or declines it in the
+  prompt. Never change sandbox or approval settings yourself, and never use a bypass flag.
+  In a cloud sandbox, say so and hand the owner the command instead.
 - **Never open, print or copy credentials**: `~/.config/dev-init/secrets.env`, `~/.codex/auth.json`,
   `~/.claude/`, `gh`'s `hosts.yml`, `~/.ssh/`, cloud CLIs' config. To check a key is set, the scripts
   already report that without showing it.
