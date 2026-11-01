@@ -1,13 +1,14 @@
 # dev-setup-chromebook v99 plan
 
-Oct 31, 2026 · investigation of the v98 full setup run · **draft; owner choices pending**
+Oct 31, 2026 · investigation of the v98 full setup run · **final; owner choices recorded**
 
 ## Scope
 
 v99 follows the v98 release on `main` (6eb42ce, PR #11). This is an investigation and plan only:
 no bundle script has been edited or executed, no package installed or downloaded, and no service
-started for this investigation. The plan branch is `plan/v99`; implementation, after approval, belongs
-on `release/v99`. The scripts and README remain at v98 in this PR.
+started for this investigation. The plan branch is `plan/v99`; implementation belongs on `release/v99`
+when the owner requests the build. The scripts and README remain at v98 in this PR. PR #12 stays in
+draft until the owner explicitly says to merge it; finalizing this plan does not authorize a merge.
 
 Evidence is `assets/logs/dev-setup-20261031-194457.output`: 82,453 lines, approximately 10.8 MB.
 All **L** references below refer to that local output file, not to source-code lines. Only searches,
@@ -17,10 +18,10 @@ counts and selected ranges were read; the full log is not committed. The owner r
 ./dev-setup-chromebook.sh install-all install-db-server install-lan-share install-models install-ollama-containers install-retro
 ```
 
-The run stopped in install-agentic. Proposed work:
+The run stopped in install-agentic. Approved scope for this focused fix release:
 
-1. Bounded retries and timeouts for network operations across the bundle.
-2. Continue independent optional stages after failure, record outcomes and return an honest status.
+1. A-lite: inherited pip policy, early managed apt policy and a small retry helper for bulk installs.
+2. Continue after exhausted bulk-install retries; unexpected errors abort with a stage report.
 3. Contain apt's delayed-item warning flood without hiding failures.
 4. Remove Playwright's misleading project-dependencies warning through a managed installer context.
 5. Replace random-data pipelines that produce broken-pipe messages.
@@ -29,9 +30,13 @@ The run stopped in install-agentic. Proposed work:
 8. Verify Antigravity's PATH behaviour; avoid speculative shell-profile surgery.
 9. Keep other upstream notices classified, with functional checks instead of warning suppression.
 
-Every item offers options, a recommended default and verification. **No choice below is approved yet.**
+The options remain as a decision record. **Owner decisions (Oct 31 2026): item 1 A-lite, item 2 A's
+behaviour with minimal implementation, items 3–9 A. All choices are settled; the plan is final.**
+Testing is limited to small offline tests of net_retry, apt deduplication and password generation,
+plus dev-test updates and full Chromebook acceptance. Broader work is listed under Deferred.
 Disk/RAM guards, optional credentials, verification before replacement and Homebrew after Debian stay
-requirements. This plan does not claim a successful full v98 run or any built/tested v99.
+requirements. The qwen disk guard stays unchanged. This plan does not claim a successful full v98 run
+or any built/tested v99.
 
 ## Evidence and triage
 
@@ -57,7 +62,7 @@ are top-level conditional blocks, not functions; the table says so explicitly.
 | CPU-only Ollama, L78140 | Ollama detects no NVIDIA/AMD GPU in ChromeOS Linux. This environment deliberately uses CPU inference. | **Expected upstream/platform notice; ignore** | setup: `install-ollama`, vendor installer (7056) | Item 9: retain existing API/model checks; do not promise GPU support. |
 | Gemma asks for key in `.bashrc`, L81666–81667 | Old completion text bypasses the documented secrets.env → dev-init flow. No key is printed by this hint. | **Real documentation bug** | setup: `install-gemma` completion text (7423–7424) | Item 6: point to optional GEMINI_API_KEY in secrets.env and dev-init; do not require a key for local use. |
 | HF skill / credential-helper hints, L81655–81662 | Upstream login succeeds. Optional skill and Git credential-helper integration are suggestions, not missing bundle components. | **Upstream; ignore** | setup: `install-gemma`, `hf auth login` (7414) | Item 9: retain optional-login semantics; no automatic skill install or Git credential change. |
-| No final summary, log ends L82453 | Exit occurs before final `unlink_brew_openjdk`, package cleanup and closing hints. Existing DL_FAILED only tracks some downloads and cannot summarize an unhandled abort. | **Real reporting gap caused by fatal exit** | setup: finalization 11425 onward, screen recorder 29–78 | Item 2: stage ledger, incomplete-run summary and preserved exit code, including unexpected fatal exits. |
+| No final summary, log ends L82453 | Exit occurs before final `unlink_brew_openjdk`, package cleanup and closing hints. Existing DL_FAILED only tracks some downloads and cannot summarize an unhandled abort. | **Real reporting gap caused by fatal exit** | setup: finalization 11425 onward, screen recorder 29–78 | Item 2: stage markers, minimal failed/not-reached report and preserved exit code, including unexpected fatal exits. |
 
 Routine skips are not defects: L1176 AArch64, L13199 LDAP, L13295 Elasticsearch, L13314 Milvus,
 L13332 Atlas Local, L77998 Cypress, L78023 GitLab Runner, L78030–78031 Puppet/Chef were not requested
@@ -110,61 +115,53 @@ InterBase/SQL Server/Oracle stages also preceded the failure. Later source block
 `install-cloudflared`, `install-hermes` and `install-openclaw` are not selected, so they are not missing
 work for this invocation. `install-ansible-core` is not a separately requested stage; full contains core.
 
-## 1. Bounded network retries across the bundle
+## 1. Bounded retries for bulk installs (A-lite)
 
 **Found Oct 31 2026:** the agentic pip reset (L82448–82453); previous fixes already cover selected
 downloads (`fetch_tgz`, DuckDB's verified downloader, some curl calls). The policy is inconsistent.
 
-| Choice: reach of the retry change | |
+| Choice: reach of the retry change (owner selected A-lite) | |
 | --- | --- |
-| A (recommended) | Audit every network boundary in all four scripts and their generated launchers. Use small equivalent local helpers in the standalone scripts, package-manager native settings and bounded whole-command retries where needed. No fifth runtime file to fetch/source. |
+| A-lite (selected) | Inherited pip settings, an early managed apt policy and one small net_retry helper per script, applied only to bulk pip/pipx/npm -g/brew installs and vendor curl-to-shell installers. |
+| A (original recommendation; deferred) | Audit every network boundary in all four scripts and their generated launchers, with acquisition helpers and atomic artifact promotion throughout. Too broad for this fix release. |
 | B | Patch only agentic pip, leaving the same failure mode in Gemma, lakehouse, pipx, brew, apt and demos. Smaller change; incomplete resilience. |
 | C | Add a shared external shell library and make the four scripts depend on it. Less duplicated helper code, but changes the four-script distribution contract. |
 
-**Proposed default for A:**
+**Approved implementation:**
 
-- One explicit attempt budget (three whole-command attempts, backoff 2 then 5 seconds, with the native
-  retry counts documented so they do not multiply accidentally). Retry only safe/idempotent acquisition
-  and install operations after transient transport failures. Never retry logins, key uploads, destructive
-  database operations or remote writes blindly; init authentication keeps its current semantics.
-- Pip: explicit `--retries 5 --timeout 60`, and `--resume-retries 5` when that pip supports it. Cover
-  venv pip, pipx/runpip and subprocess pip via invocation-scoped settings. A bounded whole-pip-command
-  retry covers resets escaping its native handling. Dependency conflicts, unsupported Python, invalid
-  credentials, disk exhaustion and checksum failures are classified rather than endlessly retried.
+- Export `PIP_RETRIES=5` and `PIP_TIMEOUT=60` for the bundle invocation, with `PIP_RESUME_RETRIES=5`
+  where the pip version supports it. Venv pip, pipx/runpip and subprocess pip inherit this policy;
+  do not duplicate flags at every call site or change the user's persistent pip configuration.
+  Keep unsupported resume settings out of older pip invocations without adding an installation step.
 - Apt: install one managed `/etc/apt/apt.conf.d/` policy early in setup with `Acquire::Retries "3";`
   and HTTP/HTTPS timeouts of 60 seconds; root apt and Playwright's sudo child must see it. Account for
-  apt's existing internal retries (the font fetch already retried). Use apt-get's strict update error
-  mode where a fresh index is required; don't mistake an update that kept stale indices for success.
-  Keep the existing IPv4 workaround; retries do not replace it.
-- curl/wget: connection timeout 20 seconds plus bounded retries and an idle/read timeout (60 seconds),
-  with finite metadata request limits. Large artifacts get an appropriate transfer budget instead of
-  a tiny overall timeout. Download into a fresh `.part`/temporary path in assets, validate archive/deb
-  and checksum, then promote atomically. Never retry into a pipe that is already executing an installer.
-  Fetch vendor scripts completely and check transport/status before running them. Check both sides of
-  necessary pipelines explicitly or use pipefail locally after auditing those pipelines.
-- Audit brew, npm/npx, uv, git clones, Composer, gems, Rust/Go fetches, SDK managers, Docker/Ollama pulls
-  and Ansible Galaxy too. Prefer their supported retry/timeout knobs, with bounded retries around safe
-  operations where those knobs do not cover failure. Document exceptions and use item 2's outcomes.
-  Never kill dpkg midway as a generic timeout strategy or retry an entire setup/install stage blindly.
-- Demo: cover `fetch_repo`, `fetch_subdir`, `fetch_file`, `apt_need` and generated launchers, preserving
-  edited projects and failed downloads for diagnosis. Test: use the policy for acquisition in scratch
-  projects, but **never retry failed assertions** into a pass. Keep existing test deadlines and counts.
-  Init: bounded read-only API probes; rejected credentials remain skip/todo under existing rules.
-- Helpers print a safe operation label and attempt number, not expanded commands, tokens, authorization
-  headers or signed URLs. User curl/wget/proxy configuration remains respected. TLS checks stay on.
+  apt's existing internal retries (the font fetch already retried). Keep the existing IPv4 workaround;
+  retries do not replace it. Do not kill dpkg midway as a generic timeout strategy.
+- One small `net_retry` helper in each standalone script: three attempts in total, sleeping 2 then
+  5 seconds between failures. Print a safe operation label and attempt number; return failure when
+  exhausted. Document native retry counts so the helper's budget is clear. No fifth runtime file,
+  generic transport framework, error-classification framework or full-stage replay.
+- Apply it to bulk installs only: pip, pipx, npm global (`npm -g`) and brew, plus vendor installers
+  currently streamed from curl into bash/sh. Fetch those vendor scripts completely into assets,
+  check the download/status and existing verification requirements, then run them; never execute a
+  partially downloaded script. Retry only appropriate fetch/install commands, not the entire setup
+  block or unrelated side effects. Keep existing checksums, validation and TLS checks.
+- Existing curl/wget connection settings remain. Auditing every individual transfer, converting
+  downloads throughout the bundle to atomic `.part` promotion, and reworking demo acquisition or
+  generated launchers are deferred. The common pip environment/helper additions do not authorize
+  those demo/launcher changes. Item 4's local Playwright fix remains separately approved.
+- Do not wrap authentication, key uploads, remote writes, assertions or destructive database actions.
+  Init keeps its optional-credential semantics; dev-test must not retry a failed assertion into a pass.
+  Labels must not print expanded commands, tokens, authorization headers or signed URLs.
 
-**Decision:** pending (recommend A).
+**Decision (owner, Oct 31 2026): A-lite.** The full A audit is deferred; v99 is a focused fix release.
 
-**Test / dev-test proof:** fault-injection fixtures for the actual helpers: transient metadata/reset
-failure then success; exhausted attempts; HTTP 404/auth failure; corrupt archive/checksum; stalled
-response; old binary retained on failure. Assert finite attempts, correct status and no credentials
-in output. dev-test checks the managed apt policy and existing selected tool/import checks, including
-`pip check` for agentic. Exercise representative pip/apt/download/demo paths against a local fault
-server, with no real credentials or system install. Verify generated launchers use the same policy.
-
-**To verify on the Chromebook:** owner-approved rerun; loss/recovery during a controlled acquisition
-must recover or produce one actionable failure. Large valid downloads must finish without arbitrary
-size-based timeouts. No live network-disruption exercise is authorized by this plan PR.
+**Test / dev-test proof:** a small offline test of the actual net_retry helper with stand-in commands:
+first-attempt success, failure then success, and exhaustion. Assert at most three calls, 2s/5s backoff
+(replace sleep in the test), safe labels and correct return status. No network or installer is needed.
+Dev-test checks inherited pip settings/support and the managed apt retry/timeout policy, and retains
+selected tool/import checks including agentic `pip check`. Full acceptance is the original-flags
+Chromebook rerun below, with no local fault server or broader transport harness.
 
 ## 2. Stage outcomes and the exit status
 
@@ -177,33 +174,41 @@ print a NOTICE and can leave the final “complete” message optimistic. DL_FAI
 | B | Stop at the first selected-stage failure, but write an incomplete-run report naming work not reached. |
 | C | Continue and return zero with notices only. Easy to overlook failures; not recommended. |
 
-**Proposed:** track requested leaf stages as not-started/running/succeeded/failed/skipped, with safe
-reason labels and exact rerun flags. Store a per-run TSV under `assets/logs`, using DEV_RUN_STAMP,
-plus a readable closing summary. Missing optional credentials and deliberate disk/media/disabled
-skips remain distinct from a failed download; report their reasons. They do not turn into fabricated
-installation success. Do not depend on manually sourcing this TSV as shell code.
+**Approved minimal implementation:**
 
-Keep fail-fast behaviour for failed base prerequisites, unsafe package state and invalid invariants;
-still report the current stage and selected work not reached. On optional failures stop that stage's
-dependent setup (e.g. no “agentic installed” message after pip/import failure), then continue cloud,
-LAN, retro, etc. Preserve existing data and installed versions. Do not blindly run unsafe cleanup
-after a foundational failure. Preserve signal exits (130/143), the original fatal status and the
-screen recorder's status. Normal completed-with-failures summary must differ from clean completion.
+- Add `stage <name>` markers at the top of each top-level block. Use a simple ordered list of selected
+  stages and their rerun flags to track which markers were reached; mark unselected blocks separately
+  so they do not appear as missing work. Add an EXIT trap that reports the stage it stopped in,
+  selected stages not reached and exact rerun flags on an early exit.
+- When `net_retry` is exhausted in an optional selected block, explicitly record that stage as failed,
+  skip the rest of that block, and proceed to the next independent block. No “agentic installed”
+  message or dependent setup after its pip retry fails. Keep the existing top-level block structure;
+  use explicit guards for the block remainder, not a conditionally invoked stage function.
+- Any other unexpected error, including an import smoke failure after a successful acquisition,
+  still aborts under `set -e`, with the EXIT trap's report. Failed base prerequisites, unsafe package
+  state and invalid invariants are not recoverable optional-stage failures. Do not blindly run
+  cleanup after these errors. Preserve signal exits (130/143), original fatal status and recorder status.
+- At the normal end print a summary and exit nonzero if any requested stage failed. List deliberate
+  disk, media and credential skips separately, with safe reasons; do not fabricate installation
+  success or convert absent optional credentials into failed installs. Distinguish clean completion
+  from completed-with-failures. Preserve existing data and installed versions.
+- A small per-run TSV in `assets/logs` using DEV_RUN_STAMP is acceptable; no elaborate ledger or new
+  state machine. Never source the report as shell code. An older failure must not override a newer
+  successful outcome.
 
 Explicitly check/propagate each fallible operation. Bash disables errexit through a function invoked
 as an `if`/`!`/`||` condition; wrapping existing bodies in `if stage_function` is not sufficient. Do
 not implement a global `set +e`, an ERR trap that returns success, or automatic replay of side effects.
 
-**Decision:** pending (recommend A, including nonzero final status).
+**Decision (owner, Oct 31 2026): A's behaviour, with the minimal markers/EXIT-trap implementation above.**
+Only exhausted net_retry failures get the explicit continue path; other unexpected errors abort.
 
-**Test / dev-test proof:** offline stage harness injects failed agentic acquisition/imports, verifies
-subsequent independent stages execute once, dependent actions do not execute and summary/status are
-correct. Inject fatal base failure, interruption and reporting failure; original exit status survives.
-On recovery a new run records success and does not keep stale failures. dev-test reports selected
-stage failures as FAIL (not optional-credential WARN), quotes safe reasons for deliberate skips, and
-continues checking tool functionality even when the last setup was incomplete. Historical failed
-runs do not override newer successful outcomes. The ledger is supplementary evidence, not a substitute
-for actual import, CLI or service checks. Include its disk footprint in the base disk report.
+**Test / dev-test proof:** use item 1's small offline retry test for success/exhaustion status. Update
+dev-test to report selected failed stages as FAIL, quote safe skip reasons and keep actual import,
+CLI and service checks even after an incomplete setup; the report supplements those checks. Inspect
+block guards and EXIT status preservation in code review, and verify summary/reached-stage reporting
+in the full Chromebook acceptance run. Include any report bytes in the base disk report. No separate
+stage harness, broad fault-injection suite or live failure exercise is in scope.
 
 ## 3. Apt's 64,364-warning flood
 
@@ -234,12 +239,14 @@ or bound a CPU-side stall. Prefer a fixed apt if Debian provides it through the 
 Abort/filter errors must not turn a failed install into success. Document the upstream diagnosis in
 crostini-gotchas, identifying it as a Debian issue.
 
-**Decision:** pending (recommend A).
+**Decision (owner, Oct 31 2026): A.**
 
 **Test / dev-test proof:** feed a synthetic 64,364-repeat fixture plus unrelated warnings/errors
 through the actual filter: one first line, repeat total, all unrelated lines and original command
-status survive. With an unprivileged fake apt producer returning nonzero, setup records failure and
-continues per item 2. dev-test checks font/xvfb package presence and launches Chromium/Firefox/WebKit;
+status survive. An unprivileged fake apt producer returning nonzero must remain nonzero through the
+filter; only net_retry exhaustion takes item 2's explicit continue path, while an unexpected error
+still aborts with the EXIT report. Dev-test checks font/xvfb package presence and launches
+Chromium/Firefox/WebKit;
 package presence alone is insufficient. Owner checks the next setup output for bounded warning volume.
 
 ## 4. Playwright installation context and release identity
@@ -261,12 +268,13 @@ release. A mutable `latest` lookup during a later test is not proof that its bro
 Scratch test projects still install their own matching `@playwright/test`; MCP remains independently
 managed. Keep old builds required by other projects; no `uninstall --all` cleanup.
 
-**Decision:** pending (recommend A).
+**Decision (owner, Oct 31 2026): A.**
 
 **Test / dev-test proof:** recorded release, installer CLI and scratch package agree; all three
-bundled browsers and system Chrome run the links spec and Chromium writes a trace. A synthetic later
-upstream release cannot change dev-test's selected version. Interrupted tools-package update keeps a
-usable previous installation/record; failed browser provisioning never writes success. Two setup runs
+bundled browsers and system Chrome run the links spec and Chromium writes a trace. Dev-test reads the
+record rather than resolving mutable latest; review the failure path to confirm an interrupted update
+keeps the previous usable installation/record and never records failed browser provisioning as
+success. Two setup runs
 must avoid the warning box and reuse already installed matching browsers. Include tools-package bytes
 in Playwright's disk-report line and document the extra assets path.
 
@@ -288,7 +296,7 @@ Do not print real generated secrets, rotate existing passwords or read credentia
 development verification. A CSPRNG failure must stop that credential-dependent operation explicitly.
 Suppressing tr's stderr or adding `|| true` would hide errors instead of fixing the generator.
 
-**Decision:** pending (recommend A).
+**Decision (owner, Oct 31 2026): A.**
 
 **Test / dev-test proof:** isolated generation/validation fixtures under `set -e -o pipefail`, with
 fake persisted values and a failing random provider; assert length/character classes, successful
@@ -311,14 +319,15 @@ Gemma's completion hint (L81666–81667) to direct optional GEMINI_API_KEY to
 `~/.config/dev-init/secrets.env`, then dev-init; it must not tell users to put keys directly in
 `.bashrc`. Init may still export settings through its existing managed flow.
 
-**Decision:** pending (recommend A; secrets hint correction included).
+**Decision (owner, Oct 31 2026): A, including the secrets hint correction.** The qwen disk guard
+stays unchanged.
 
-**Test / dev-test proof:** fixture cases qwen absent/present, only embeddings, no model, server down,
-Gemma present and qwen skipped for disk. Every suggested generation model is confirmed present and
-has generation capability; no advice triggers a hidden download. Keep existing recorded-model and
-model API checks. Verify the effective disk margin matches setup's configured/default policy instead
-of inventing a lower margin. A text regression check confirms completion guidance uses secrets.env
-and never requires credentials for local inference. Update checklist/examples accordingly.
+**Test / dev-test proof:** dev-test checks that suggested generation models are confirmed present and
+have generation capability, and keeps the existing recorded-model/API checks. Review the qwen-absent,
+embedding-only, empty-list and unavailable-server paths; no separate fixture harness is required.
+The full run confirms the qwen disk guard is unchanged and skips do not produce unavailable-model
+examples or hidden downloads. Check completion text uses secrets.env and never requires credentials
+for local inference; update checklist/examples accordingly.
 
 ## 7. Verified local .debs and apt's scripting interface
 
@@ -327,19 +336,21 @@ and never requires credentials for local inference. Update checklist/examples ac
 | A (recommended) | Private download/verification first; stage only the verified .deb in a traversable dedicated directory (0755 directory, 0644 file) for apt-get, then clean up. Ensure parent paths are traversable too. |
 | B | Keep root fallback and document the notice. No install failure, but avoids fixing the permission problem. |
 
-A may expose the existing random temp directory only after validation, or use a controlled apt-readable
-staging directory under assets if all its parents are accessible. Do not broaden `$HOME`, repository
+A may simply chmod the existing verified random temp directory to 0755 and its .deb to 0644 after
+validation; a second staging/copying mechanism is not required. All parent paths must be accessible.
+An assets staging directory is an alternative only if needed. Do not broaden `$HOME`, repository
 or config permissions or disable `APT::Sandbox::User`. Check checksums where published and
 `dpkg-deb --info` before staging; a partial/corrupt download never replaces the installed package.
 Audit other local .deb paths as part of this work, including `devsvc_deb`. Switch bundle-owned
 unattended apt operations to apt-get with noninteractive options and item 1's retry policy. Do not
 suppress stderr as a way of removing the unstable-interface warning.
 
-**Decision:** pending (recommend A).
+**Decision (owner, Oct 31 2026): A; chmod of the verified temp directory/file is sufficient.**
 
-**Test / dev-test proof:** mode/traversal and corrupt-package fixtures; nonzero apt status still
-reaches the failure report. On an owner-approved machine run, Symfony, Redis Insight and MongoDB
-clients install without `_apt` fallback/unstable-CLI notices. Keep `symfony version` and requirements,
+**Test / dev-test proof:** review validation-before-chmod and apt status handling, and check resulting
+package/launcher functionality with dev-test. No separate local-deb fixture harness. On the full
+owner-approved machine run, Symfony, Redis Insight and MongoDB clients install without `_apt`
+fallback/unstable-CLI notices. Keep `symfony version` and requirements,
 Redis Insight package/launcher checks and MongoDB client checks; missing requested components are
 FAIL, while explicitly disabled GUI components follow their existing skip policy. No need to reinstall
 current .debs on every rerun merely to produce a quiet log. Disk reporting keeps package bytes in
@@ -363,12 +374,13 @@ fetch-before-run. Do not delete arbitrary PATH exports or rewrite `.profile` bas
 configured local-bin; confirm support rather than inventing an environment variable. No global
 ERROR/warning text filter: future real installer failures must remain visible and recorded.
 
-**Decision:** pending (recommend A).
+**Decision (owner, Oct 31 2026): A.**
 
-**Test / dev-test proof:** `agy --version`/existing CLI check; synthetic clean/repeated profile fixtures
-prove Debian python/sqlite/java/binutils resolve ahead of Homebrew and `agy` remains discoverable.
-Owner-approved fresh login and interactive-shell checks preserve their timing limits and current
-tool-resolution tests; a hand-selected user override is WARN, missing installed CLI is FAIL. Second
+**Test / dev-test proof:** `agy --version`/existing CLI check and dev-test's current tool-resolution
+checks prove Debian python/sqlite/java/binutils resolve ahead of Homebrew and `agy` remains discoverable.
+No separate profile fixture harness. Owner-approved fresh login and interactive-shell checks preserve
+their timing limits and current tool-resolution tests; a hand-selected user override is WARN,
+missing installed CLI is FAIL. Second
 setup run must not grow equivalent PATH lines indefinitely. Do not execute the owner's shell startup
 files as part of this investigation or overwrite unrelated profile edits.
 
@@ -385,54 +397,74 @@ exit is acquisition evidence, not proof every tool works. For Java's early certi
 verify the resulting trust store; the later trigger is why no ordering fix is proposed. For npm's
 deprecated transitives, track the parent release without forcing incompatible nested versions.
 
-**Decision:** pending (recommend A).
+**Decision (owner, Oct 31 2026): A.** Android CLI migration, Ruby documentation removal and the other
+broader changes in B are not part of v99.
 
 **Test / dev-test proof:** retain Java version/compiler and trust-store checks, SDK package/build
 checks, Expo/EAS CLI checks, Ruby/Jekyll smoke and Ollama API/model checks. No test should require
 Landlock ABI 10 or treat CPU-only Ollama as FAIL. An optional missing HF skill remains informational.
-If B is selected, add Android CLI licence/package parity and Ruby runtime checks appropriate to the
-specific change; do not claim these migrations were tested by this log.
+Do not claim Android CLI migration or Ruby documentation changes were tested by this log.
 
-## Implementation and Chromebook acceptance (after owner approval)
+## Deferred (later version; outside v99)
+
+- The full item 1 A audit of every curl/wget call, with general acquisition helpers and consistent
+  timeout/retry/error classification for every individual network boundary. The wider pass over
+  uv, git, Composer, gems, Rust/Go, SDK, Docker/Ollama and Galaxy acquisition is deferred too.
+- Bundle-wide atomic `.part` downloads and promotion/retention changes. Keep existing validation,
+  checksums and good-copy safeguards in v99; the approved vendor fetch-then-run conversion and
+  items 3–9's targeted fixes do not depend on this broader download rewrite.
+- Demo acquisition and generated-launcher changes, including `fetch_repo`, `fetch_subdir`,
+  `fetch_file`, `apt_need` and launcher package-install flows. Only the common helper/pip policy and
+  required bundle version bump apply to those scripts in v99; no demo/launcher rework is approved.
+- Android CLI migration, removal of local Ruby RI documentation and the broader Antigravity binary
+  installation alternative remain unselected. Revisit them only with a later approved scope.
+
+## Implementation and Chromebook acceptance (when built)
 
 - Create `release/v99` from the approved baseline; targeted edits only. Any script change bumps all
   four scripts and every version string to 99, README's current version to v99, and adds all four
   CHANGELOG entries (version bump only where appropriate). Retain dated/tagged design comments.
 - Flags and expansions stay identical. Update dev-test checks and disk-report lines, init-checklist
-  run order/network policy/secrets hints, README behaviour and assets paths, dev-demo docs if generated
-  launchers/acquisition change, and crostini-gotchas for the apt/transport findings.
-- Use focused fault-injection tests for transport/status handling; do not run real installers on a
-  non-Chromebook or force the host guard. Before every push: bash -n all four scripts, shellcheck
-  -S error and secret checks (CI gitleaks; local only if already available).
+  run order/network policy/secrets hints, README behaviour and assets paths, and crostini-gotchas for
+  the apt/transport findings. Demo/launcher changes and their associated docs remain deferred.
+- Add only three small offline tests: net_retry, the apt dedupe filter and the password generator,
+  plus the dev-test updates described above. No local fault server, separate stage/profile/deb/model
+  harness or broader integration/fault-injection suite. Retain existing tool assertions/deadlines.
+  Do not run real installers on a non-Chromebook or force the host guard. Before every push:
+  bash -n all four scripts, shellcheck -S error and secret checks (CI gitleaks; local if available).
 - After implementation, ask the owner before any setup/init/test/demo run or heavy-service test.
-  For a targeted recovery, the selected work not reached can be covered by:
+  **Acceptance choice (owner, Oct 31 2026): a full rerun with the original six flags**, in order:
 
   ```bash
-  ./dev-setup-chromebook.sh install-agentic install-cloud install-jev install-iac install-k8s install-lan-share install-retro install-herdr
+  ./dev-setup-chromebook.sh install-all install-db-server install-lan-share install-models install-ollama-containers install-retro
+  source ~/.bashrc
+  ./dev-init-chromebook.sh install-all install-db-server install-lan-share install-models install-ollama-containers install-retro
+  ./dev-test-chromebook.sh install-all install-db-server install-lan-share install-models install-ollama-containers install-retro
   ```
 
-  This still executes base setup and installs/changes services; it is a proposed future command,
-  **not executed or approved for execution by this planning PR**. It does not retry the disk-skipped
-  qwen model. Keep the disk guard unless the owner explicitly chooses otherwise.
-- Full acceptance uses the original six flags on setup, then init, then dev-test with the same flags
-  (initial init already precedes setup for secrets-template creation). Include ollama-containers in
-  verification even though its setup step ran. Read new `.output`/`.log` files by path. Confirm the
-  summary is reached, failures are visible, reruns are idempotent and dev-test FAIL is 0; only optional
-  credential WARNs are acceptable. Never call the version confirmed before that Chromebook run.
+  These commands install/configure/start services and are **not executed by this planning PR**.
+  Approval of the acceptance route does not remove the rule to ask before execution on the owner's
+  machine. Initial init already precedes setup for secrets-template creation. Keep the qwen disk
+  guard unchanged: a deliberate disk skip is reported, never bypassed to force the full run through.
+- Include ollama-containers in verification even though its v98 setup step ran. Read new
+  `.output`/`.log` files by path. Confirm the summary is reached, failures are visible, reruns are
+  idempotent and dev-test FAIL is 0; only optional credential WARNs are acceptable. Never call the
+  version confirmed before that Chromebook run. Targeted recovery is not the selected acceptance path.
 
-## Open questions for the owner
+## Owner decision record (all questions settled)
 
-1. Approve item 1 A's bundle-wide acquisition audit and local helper approach, or limit it to agentic?
-2. Approve item 2 A: continue independent optional stages, then return nonzero for failed requested
-   installs (with deliberate disk/media/credential skips reported separately)?
-3. Approve items 3–4 A: own apt dependency step, narrowly counted warning deduplication and a minimal
-   assets-based Playwright installer context/recorded release? Alternative keeps npx and its warning.
-4. Approve items 5–7 A: finite random generation, present-model hints/secrets guidance and apt-readable
-   verified .debs plus apt-get cleanup?
-5. Approve items 8–9 A: retain Antigravity's profile behaviour after verification and defer Android
-   CLI/RDoc changes, or select the broader alternatives?
-6. After implementation, prefer targeted recovery first or a full rerun with the original flags?
-   Qwen still needs more room or a separately chosen override; no automatic guard reduction is proposed.
+1. Item 1: **A-lite**; the full network audit, atomic downloads and demo/launcher work are deferred.
+2. Item 2: **A's behaviour with minimal implementation**; stage markers plus EXIT reporting,
+   explicit continuation only on exhausted net_retry, and nonzero status for failed requested stages.
+3. Items 3–4: **A**; separate apt dependency handling/counting filter and a managed Playwright context.
+4. Items 5–7: **A**; finite randomness, honest model/secrets guidance and apt-readable verified .debs.
+   Chmod of the verified temp directory/file is sufficient. The qwen disk guard stays unchanged.
+5. Items 8–9: **A**; retain/verify Antigravity profile behaviour and classify upstream notices.
+6. Testing: **three small offline helper tests plus dev-test updates**; no local fault server or broader
+   harness. Acceptance: **full setup → init → dev-test with the original six flags**.
+
+The plan is final. PR #12 remains **draft** until the owner says to merge; no implementation or
+Chromebook execution is part of this plan amendment.
 
 ## Primary references checked for the plan
 
