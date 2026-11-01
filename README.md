@@ -27,7 +27,11 @@ the whole lab, as it is.
 
 All four take the same flags, so `install-web install-node` means the same thing to each of them.
 
-> **Current version: v98.** [CHANGELOG.md](CHANGELOG.md) has the full history.
+> **Current version: v99.** [CHANGELOG.md](CHANGELOG.md) has the full history.
+
+v99 is being built from the [final plan](docs/plans/v99-plan.md): a focused network/stage-reporting
+fix release. Built changes are not yet confirmed by the full Chromebook acceptance run.
+
 
 ## What it is, and what it isn't
 

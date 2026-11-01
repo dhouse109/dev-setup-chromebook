@@ -1,5 +1,9 @@
 # Init checklist
 
+v99 keeps the same flags and run order. During each bundle invocation, pip/pipx inherit retry and
+socket-timeout settings; setup writes apt's managed acquisition policy before installing packages.
+These settings require no keys. Full v99 acceptance is still pending on a Chromebook.
+
 *Working notes kept alongside the scripts, copied at the v93 release, updated for v95. The "since vNN" remarks date each behaviour; [CHANGELOG.md](../CHANGELOG.md) has the full story.*
 
 ## Run order

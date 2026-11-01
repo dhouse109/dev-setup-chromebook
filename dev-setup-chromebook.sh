@@ -1,5 +1,5 @@
 #!/bin/bash
-# dev-setup-chromebook - Version 98
+# dev-setup-chromebook - Version 99
 # Version history: CHANGELOG.md, next to this script in the bundle
 # (one section per script, newest version first).
 
@@ -77,6 +77,29 @@ if [ -z "${DEV_SCREEN_OUTPUT:-}" ] && [ "${DEV_SCREEN_SAVE:-1}" != 0 ]; then
     fi
 fi
 # <<< dev-bundle screen output <<<
+
+# >>> dev-bundle network policy >>>
+# v99 (Oct 31 2026: agentic pip reset ended install-all): invocation-only settings reach pipx
+# and subprocess pip too. Probe supported resume options; never change the user's pip config.
+export PIP_RETRIES=5 PIP_TIMEOUT=60
+if /usr/bin/python3 -m pip --help 2> /dev/null | grep -q -- '--resume-retries'; then
+    export PIP_RESUME_RETRIES=5
+else
+    unset PIP_RESUME_RETRIES
+fi
+net_retry() {   # net_retry SAFE_LABEL COMMAND [ARG...]; no expanded command/secret in our messages
+    local label=$1 attempt rc=1
+    shift
+    for attempt in 1 2 3; do
+        printf '[network] %s: attempt %s/3\n' "$label" "$attempt" >&2
+        if "$@"; then return 0; else rc=$?; fi
+        case "$attempt" in 1) sleep 2 ;; 2) sleep 5 ;; esac
+    done
+    printf '[network] %s: failed after 3 attempts (exit %s)\n' "$label" "$rc" >&2
+    return "$rc"
+}
+# <<< dev-bundle network policy <<<
+
 
 # Exit script immediately on any error
 set -e
@@ -304,7 +327,7 @@ if [[ "$FLAGS" =~ " install-gemma " ]] || [[ "$FLAGS" =~ " install-models " ]] |
 fi
 # =================================================================
 
-echo "Starting comprehensive Chromebook Linux provisioning (Version 98)..."
+echo "Starting comprehensive Chromebook Linux provisioning (Version 99)..."
 
 # v93: prefer IPv4 when this network's IPv6 does not get out. On Oct 4 2026 a Chromebook's Linux got IPv6
 # addresses for dl.google.com but no IPv6 route out, and wget hung on one address after another (the
@@ -345,6 +368,62 @@ else
         echo "Network: IPv6 works here; nothing changed."
     fi
 fi
+
+# >>> dev-bundle apt output >>>
+# v99 (Oct 31 2026: 64,364 identical lines): Debian apt #1111554, not a bad font.
+# Only consecutive copies of this precise warning are counted. All other diagnostics stream through.
+apt_dedupe() {
+    awk '
+        function flush() {
+            if (count > 1) { print "[apt] warning repeated " count-1 " more times (" count " total)"; fflush() }
+            count=0; last=""
+        }
+        /^W: Tried to start delayed item .*, but failed$/ {
+            if ($0 == last) { count++; next }
+            flush(); last=$0; count=1; print; fflush(); next
+        }
+        { flush(); print; fflush() }
+        END { flush() }
+    '
+}
+apt_get() {
+    local -a status
+    # Capture both statuses even with errexit/pipefail inherited. The filter cannot make apt pass.
+    if sudo DEBIAN_FRONTEND=noninteractive apt-get "$@" 2>&1 | apt_dedupe; then
+        status=("${PIPESTATUS[@]}")
+    else
+        status=("${PIPESTATUS[@]}")
+    fi
+    [ "${status[0]}" = 0 ] || return "${status[0]}"
+    return "${status[1]}"
+}
+# <<< dev-bundle apt output <<<
+
+# >>> dev-bundle random generator >>>
+# v99 (Oct 31 2026: tr | head broke its pipe): finite CSPRNG output, checked before use.
+random_chars() {   # random_chars LENGTH [ALPHABET]; caller must check status, never log the result
+    /usr/bin/python3 - "$1" "${2:-ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789}" <<'RANDOM_PY'
+import secrets
+import sys
+n = int(sys.argv[1])
+alphabet = sys.argv[2]
+if not 1 <= n <= 128 or not alphabet:
+    raise SystemExit("invalid random generator parameters")
+print("".join(secrets.choice(alphabet) for _ in range(n)), end="")
+RANDOM_PY
+}
+dev_password() {
+    local a b
+    a=$(random_chars 16) || return 1
+    b=$(random_chars 1 ABCDEFGHIJKLMNOPQRSTUVWXYZ) || return 1
+    printf 'Dev_%s_%s9' "$a" "$b"
+}
+# <<< dev-bundle random generator <<<
+
+# v99: root apt and Playwright's sudo child share these bounded acquisition settings.
+sudo install -d -m 755 /etc/apt/apt.conf.d
+printf '%s\n' 'Acquire::Retries "3";' 'Acquire::http::Timeout "60";' 'Acquire::https::Timeout "60";' \
+    | sudo tee /etc/apt/apt.conf.d/80dev-bundle-network > /dev/null
 
 # 1. System Setup, Base Packages & Headless Dependencies
 echo "Updating system and installing base packages, Python tools, and Puppeteer dependencies..."
@@ -11429,7 +11508,7 @@ echo "Cleaning up system packages..."
 sudo apt autoremove -y
 
 echo "================================================================="
-echo "Setup Version 98 complete! 🎉"
+echo "Setup Version 99 complete! 🎉"
 [ -n "${DEV_SCREEN_OUTPUT:-}" ] && echo "Screen output: $DEV_SCREEN_OUTPUT"
 echo "NEXT, in this order:"
 echo "  a. source ~/.bashrc                      (or open a new terminal)"

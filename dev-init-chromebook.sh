@@ -1,5 +1,5 @@
 #!/bin/bash
-# dev-init-chromebook - Version 98
+# dev-init-chromebook - Version 99
 # Version history: CHANGELOG.md, next to this script in the bundle
 # (one section per script, newest version first).
 #
@@ -42,6 +42,29 @@ if ! grep -Eqs '^ID="?debian"?$' /etc/os-release && [ "${DEV_BUNDLE_ANY_HOST:-0}
     exit 1
 fi
 # <<< dev-bundle host guard <<<
+
+# >>> dev-bundle network policy >>>
+# v99 (Oct 31 2026: agentic pip reset ended install-all): invocation-only settings reach pipx
+# and subprocess pip too. Probe supported resume options; never change the user's pip config.
+export PIP_RETRIES=5 PIP_TIMEOUT=60
+if /usr/bin/python3 -m pip --help 2> /dev/null | grep -q -- '--resume-retries'; then
+    export PIP_RESUME_RETRIES=5
+else
+    unset PIP_RESUME_RETRIES
+fi
+net_retry() {   # net_retry SAFE_LABEL COMMAND [ARG...]; no expanded command/secret in our messages
+    local label=$1 attempt rc=1
+    shift
+    for attempt in 1 2 3; do
+        printf '[network] %s: attempt %s/3\n' "$label" "$attempt" >&2
+        if "$@"; then return 0; else rc=$?; fi
+        case "$attempt" in 1) sleep 2 ;; 2) sleep 5 ;; esac
+    done
+    printf '[network] %s: failed after 3 attempts (exit %s)\n' "$label" "$rc" >&2
+    return "$rc"
+}
+# <<< dev-bundle network policy <<<
+
 
 # =================================================================
 # FLAG EXPANSION (STACK SWITCHES)  -- copied verbatim from the installer
@@ -2528,9 +2551,9 @@ fi
 echo
 echo "================================================================="
 if [ ${#TODO[@]} -eq 0 ]; then
-    echo "Init Version 98 complete: nothing left to do. 🎉"
+    echo "Init Version 99 complete: nothing left to do. 🎉"
 else
-    echo "Init Version 98 complete. Still manual (${#TODO[@]}):"
+    echo "Init Version 99 complete. Still manual (${#TODO[@]}):"
     printf '  - %s\n' "${TODO[@]}"
 fi
 echo

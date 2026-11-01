@@ -1,5 +1,5 @@
 #!/bin/bash
-# dev-test-chromebook - Version 98
+# dev-test-chromebook - Version 99
 # Version history: CHANGELOG.md, next to this script in the bundle
 # (one section per script, newest version first).
 #
@@ -154,6 +154,29 @@ if [ -z "${DEV_SCREEN_OUTPUT:-}" ] && [ "${DEV_SCREEN_SAVE:-1}" != 0 ]; then
     fi
 fi
 # <<< dev-bundle screen output <<<
+
+# >>> dev-bundle network policy >>>
+# v99 (Oct 31 2026: agentic pip reset ended install-all): invocation-only settings reach pipx
+# and subprocess pip too. Probe supported resume options; never change the user's pip config.
+export PIP_RETRIES=5 PIP_TIMEOUT=60
+if /usr/bin/python3 -m pip --help 2> /dev/null | grep -q -- '--resume-retries'; then
+    export PIP_RESUME_RETRIES=5
+else
+    unset PIP_RESUME_RETRIES
+fi
+net_retry() {   # net_retry SAFE_LABEL COMMAND [ARG...]; no expanded command/secret in our messages
+    local label=$1 attempt rc=1
+    shift
+    for attempt in 1 2 3; do
+        printf '[network] %s: attempt %s/3\n' "$label" "$attempt" >&2
+        if "$@"; then return 0; else rc=$?; fi
+        case "$attempt" in 1) sleep 2 ;; 2) sleep 5 ;; esac
+    done
+    printf '[network] %s: failed after 3 attempts (exit %s)\n' "$label" "$rc" >&2
+    return "$rc"
+}
+# <<< dev-bundle network policy <<<
+
 
 # Deliberately NO 'set -e': a failing check must be recorded, not abort the run.
 
@@ -478,7 +501,7 @@ info()  { printf '  %-62s %s\n' "$1" "${DIM}INFO${RST} $2"; echo "--- $1: INFO $
 # v92: a check that cannot run because an earlier one already failed for the same cause (counted as SKIP).
 skipped() { printf '  %-62s %s\n' "$1" "${DIM}SKIP${RST} $2"; SKIP=$((SKIP + 1)); LAST=skip; echo "--- $1: SKIP $2" >> "$LOG"; }
 
-echo "Testing Chromebook Linux provisioning (Version 98)... log: $LOG"
+echo "Testing Chromebook Linux provisioning (Version 99)... log: $LOG"
 [ "$QUICK" = 1 ] && echo "(quick mode: slow functional tests will be skipped)"
 
 # v68: say so when dev-init has not applied the secrets file yet. Filling in secrets.env logs
@@ -5894,7 +5917,7 @@ fi
 # =================================================================
 echo
 echo "================================================================="
-echo "Test Version 98 complete: ${GRN}PASS $PASS${RST}   ${RED}FAIL $FAIL${RST}   ${YEL}WARN $WARN${RST}   SKIP $SKIP"
+echo "Test Version 99 complete: ${GRN}PASS $PASS${RST}   ${RED}FAIL $FAIL${RST}   ${YEL}WARN $WARN${RST}   SKIP $SKIP"
 if [ ${#FAILED[@]} -gt 0 ]; then
     echo
     echo "Failed (must fix to get started):"
