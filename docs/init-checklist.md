@@ -6,7 +6,16 @@ These settings require no keys. Bulk-install retries use three attempts with 2s/
 Setup reports failed/not-reached stages and rerun flags in its closing summary and
 `assets/logs/setup-stages-<timestamp>.tsv` (`assets/setup-stages.tsv` is the latest run). Exhausted
 optional bulk retries skip their block and continue; unexpected errors abort with an EXIT report.
-Failed requested stages make setup exit nonzero. Deliberate disk/media/credential skips stay separate. Full v99 acceptance is still pending on a Chromebook.
+Failed requested stages make setup exit nonzero. Deliberate disk/media/credential skips stay separate. Playwright's managed installer/lockfile and successful release record live in
+`assets/tools/playwright`; dev-test uses that release instead of resolving latest again. Apt counts
+repeated delayed-item warnings, preserving other diagnostics and exit status. `REDIS_INSIGHT=0` and
+`MONGODB_COMPASS=0` deliberately disable those GUIs; use the same setting for setup and dev-test.
+The qwen disk guard is unchanged; generation examples only name confirmed present completion models.
+Optional GEMINI_API_KEY stays in secrets.env and is applied by init, never entered directly in .bashrc.
+
+Full v99 acceptance is still pending on a Chromebook: setup → init → dev-test with
+`install-all install-db-server install-lan-share install-models install-ollama-containers install-retro`.
+Read the resulting .output/.log files by path; no agent-run bundle command is authorized without approval.
 
 *Working notes kept alongside the scripts, copied at the v93 release, updated for v95. The "since vNN" remarks date each behaviour; [CHANGELOG.md](../CHANGELOG.md) has the full story.*
 
@@ -81,7 +90,7 @@ The same expansion is used by all three scripts, so a flag set that installs is 
 | `install-cloudflared` | cloudflared from Cloudflare's apt repository, for tunnels; setup creates none. Opt-in, in no group (v89) |
 | `install-graphql` | Apollo's GraphQL tools as three binaries in \~/.local/bin from their GitHub releases (checksum-checked where the release has one): Rover, the Apollo Router (v2 only) and the Apollo MCP Server, plus Rover's composition and router plugins in \~/.rover. A \~/.bashrc block turns Apollo telemetry off and accepts the plugins' Elastic License v2. Local federation needs no account; APOLLO\_KEY is never exported. In install-all, no dependencies (v90) |
 | `install-testing` | The test tools: install-playwright, install-selenium, install-bdd and install-robot. Test libraries (@playwright/test, cucumber-js, Behat, behave, Reqnroll's packages) stay per project. In install-all (v91) |
-| `install-playwright` | Playwright's Chromium, Firefox and WebKit in \~/.cache/ms-playwright with their system libraries (playwright install --with-deps), and Playwright MCP warmed in npx's cache. Pulls in install-node. Part of install-testing (v91) |
+| `install-playwright` | Playwright's Chromium, Firefox and WebKit in \~/.cache/ms-playwright with their system libraries (separate filtered install-deps using that release’s list; v99 installer and version record in assets/tools/playwright), and Playwright MCP warmed in npx's cache. Pulls in install-node. Part of install-testing (v91) |
 | `install-selenium` | A Selenium Grid (selenium/standalone-chrome) as the devsvc service selenium: WebDriver on 127.0.0.1:4444, noVNC on 127.0.0.1:7900 to watch it, DDEV name devselenium, created stopped, a heavy engine (\~1.6 GB), no login and never LAN-shared. Plus Selenium Manager's chromedriver for the installed Chrome in \~/.cache/selenium (no chromedriver on PATH) and SE\_AVOID\_STATS in \~/.bashrc. Part of install-testing (v91) |
 | `install-bdd` | The Gherkin runners' machine-level part: Reqnroll's dotnet new templates (SpecFlow's successor) when .NET is installed. Cucumber, Behat (4.x for Symfony 8, 3.x with Drupal's Drupal Extension) and behave are per project. No dependencies. Part of install-testing (v91) |
 | `install-robot` | Robot Framework as a uv tool on Debian's Python with the Browser (Playwright), SeleniumLibrary and RequestsLibrary libraries; robot, rebot, libdoc and rfbrowser in \~/.local/bin; the Browser library's Node side without browsers (it uses the system Chrome). Pulls in install-node. Part of install-testing (v91) |

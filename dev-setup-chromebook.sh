@@ -594,13 +594,17 @@ n = int(sys.argv[1])
 alphabet = sys.argv[2]
 if not 1 <= n <= 128 or not alphabet:
     raise SystemExit("invalid random generator parameters")
-print("".join(secrets.choice(alphabet) for _ in range(n)), end="")
+value = "".join(secrets.choice(alphabet) for _ in range(n))
+if len(value) != n or any(c not in alphabet for c in value):
+    raise SystemExit("random generator validation failed")
+print(value, end="")
 RANDOM_PY
 }
 dev_password() {
     local a b
     a=$(random_chars 16) || return 1
     b=$(random_chars 1 ABCDEFGHIJKLMNOPQRSTUVWXYZ) || return 1
+    [[ "$a" =~ ^[A-Za-z0-9]{16}$ && "$b" =~ ^[A-Z]$ ]] || return 1
     printf 'Dev_%s_%s9' "$a" "$b"
 }
 # <<< dev-bundle random generator <<<
@@ -1666,9 +1670,9 @@ COREPACK_DONE=0
 enable_corepack() {
     [ "$COREPACK_DONE" = 1 ] && return 0
     command -v corepack > /dev/null 2>&1 || { net_retry "corepack" npm install -g corepack || return 1; }
-    corepack enable || return 2
+    corepack enable || return $?
     if ! grep -q 'COREPACK_ENABLE_DOWNLOAD_PROMPT' ~/.bashrc; then
-        echo 'export COREPACK_ENABLE_DOWNLOAD_PROMPT=0   # let the pnpm/yarn shims fetch without asking' >> ~/.bashrc || return 2
+        echo 'export COREPACK_ENABLE_DOWNLOAD_PROMPT=0   # let the pnpm/yarn shims fetch without asking' >> ~/.bashrc || return $?
     fi
     export COREPACK_ENABLE_DOWNLOAD_PROMPT=0
     COREPACK_DONE=1
@@ -2175,7 +2179,10 @@ if [[ "$FLAGS" =~ " install-symfony " ]]; then
         # Not fatal under set -e: a failed download or checksum leaves the rest of setup running.
         if curl -fsSL --retry 3 -o "$SF_TMP/$SF_DEB" "$SF_BASE/$SF_DEB" \
             && curl -fsSL --retry 3 -o "$SF_TMP/checksums.txt" "$SF_BASE/checksums.txt" \
-            && ( cd "$SF_TMP" && awk -v f="$SF_DEB" '$2 == f' checksums.txt | sha256sum -c - > /dev/null ); then
+            && ( cd "$SF_TMP" && awk -v f="$SF_DEB" '$2 == f' checksums.txt | sha256sum -c - > /dev/null ) \
+            && dpkg-deb --info "$SF_TMP/$SF_DEB" > /dev/null 2>&1; then
+            # v99 (Oct 31 2026: _apt could not traverse mktemp's 0700 directory).
+            chmod 755 "$SF_TMP"; chmod 644 "$SF_TMP/$SF_DEB"
             apt_get install -y "$SF_TMP/$SF_DEB" \
                 && echo "Symfony CLI ${SF_TAG#v} installed${SF_HAVE:+ (was $SF_HAVE)}." \
                 || echo "NOTICE: apt could not install $SF_DEB; rerun setup with install-symfony."
@@ -4069,6 +4076,8 @@ if [[ "$FLAGS" =~ " install-antigravity " ]]; then
     make_venv "$HOME/.antigravity-env"
     net_retry "pip packages" ~/.antigravity-env/bin/pip install google-antigravity || { stage_failed "pip packages" "$?"; break; }
 
+    # v99: upstream's logging-before-google.Init prefix also labels successful information lines.
+    # Its local-bin prepend does not reorder Debian versus Homebrew. Keep genuine errors visible.
     vendor_install antigravity https://antigravity.google/cli/install.sh bash || { stage_failed "vendor installer" "$?"; break; }
 
     # v73: install the graphical Antigravity from a tarball you downloaded into ./assets. Google ships the
@@ -4162,6 +4171,7 @@ EOF
         echo "================================================================="
         echo "NOTICE: no Antigravity IDE / desktop-app tarball found."
         echo "Download the Linux x64 tarball of Antigravity IDE (and/or the Antigravity 2.0"
+        stage_skip "media: Antigravity desktop archives not supplied"
         echo "desktop app) from https://antigravity.google/download, put it in"
         echo "  $ASSETS"
         echo "and rerun with install-antigravity. The CLI (agy) and the SDK are installed already."
@@ -4639,6 +4649,7 @@ if [[ "$FLAGS" =~ " install-interbase " ]]; then
         IB_SH=$(find "$ASSETS" -maxdepth 5 -type f -name 'install_linux_x86_64.sh' 2> /dev/null | head -n 1 || true)
         IB_SLIP=$(find "$ASSETS" -maxdepth 5 -type f \( -name '*.slip' -o -name 'reg_*.txt' \) 2> /dev/null | head -n 1 || true)
         if [ -z "$IB_BIN$IB_SH" ]; then
+            stage_skip "media: InterBase installer not supplied"
             echo "================================================================="
             echo "NOTICE: no InterBase installer found. Download InterBase for Linux (the free Developer"
             echo "Edition: https://www.embarcadero.com/products/interbase/developer/free-download), put the"
@@ -4868,6 +4879,7 @@ if [[ "$FLAGS" =~ " install-mssql " ]] || [[ "$FLAGS" =~ " install-oracle " ]]; 
     # The file is removed once the container exists.
     mkdir -p "$HOME/.config/devdb"
     db_skipped() {   # db_skipped ENGINE REASON: record why ENGINE's container is missing
+        case "$2" in disk:*) stage_skip "disk: install-$1" ;; esac
         printf '%s\n' "$2" > "$HOME/.config/devdb/$1.skipped"
     }
     # Every docker call here goes through sudo: the docker group from the base section only applies
@@ -4884,9 +4896,7 @@ if [[ "$FLAGS" =~ " install-mssql " ]] || [[ "$FLAGS" =~ " install-oracle " ]]; 
     }
     # Letters, digits and '_', starting with a letter: both engines take it unquoted, and it meets SQL
     # Server's policy (three of upper case, lower case, digits and symbols).
-    db_new_password() {
-        printf 'Dev_%s_%s9' "$(tr -dc 'A-Za-z0-9' < /dev/urandom | head -c 16)" "$(tr -dc 'A-Z' < /dev/urandom | head -c 1)"
-    }
+    db_new_password() { dev_password; }
     db_pull() {   # db_pull IMAGE ESTIMATED_GB ENGINE: pull it, or check for an update; 1 = the image is not here
         local img=$1 est=$2 engine=$3 free_gb
         if sudo docker image inspect "$img" > /dev/null 2>&1; then
@@ -5391,9 +5401,9 @@ if [[ "$FLAGS" =~ " install-ldap " ]]; then
         done
         printf '%s' "$v"
     }
-    ldap_random() { tr -dc 'A-Za-z0-9' < /dev/urandom | head -c "${1:-16}"; }
+    ldap_random() { random_chars "${1:-16}"; }
     # Letters, digits and '_', like the database passwords: safe unquoted everywhere, 8+ characters.
-    ldap_new_password() { printf 'Dev_%s_%s9' "$(ldap_random 16)" "$(tr -dc 'A-Z' < /dev/urandom | head -c 1)"; }
+    ldap_new_password() { dev_password; }
     ldap_quote() { printf "'%s'" "${1//\'/\'\\\'\'}"; }
 
     LDAP_BASE_DN=$(ldap_value LDAP_BASE_DN)
@@ -5887,7 +5897,11 @@ if [ "$DEVSVC_ANY" = 1 ]; then
             [ -n "$DS_V" ] || DS_V=$(devsvc_value "$DS_K")
             # Letters, digits and '_', upper and lower case and a digit: OpenSearch's password rules
             # (one of each, and a non-alphanumeric) and every URL and header take it as it is.
-            [ -n "$DS_V" ] || DS_V="Dev_$(tr -dc 'A-Za-z0-9' < /dev/urandom | head -c 20)9"
+            if [ -z "$DS_V" ]; then
+                DS_RANDOM=$(random_chars 20)   # failure aborts before any credential is stored
+                [[ "$DS_RANDOM" =~ ^[A-Za-z0-9]{20}$ ]] || { echo 'ERROR: invalid generated service credential' >&2; exit 1; }
+                DS_V="Dev_${DS_RANDOM}9"
+            fi
         fi
         printf -v "$DS_K" '%s' "$DS_V"
     done
@@ -6036,18 +6050,25 @@ if [[ "$FLAGS" =~ " install-redis " ]]; then
             RI_DEB="Redis-Insight-linux-amd64.deb"
             RI_TMP=$(mktemp -d)
             if curl -fsSL --retry 3 -o "$RI_TMP/$RI_DEB" "$RI_BASE/$RI_DEB" && dpkg-deb --info "$RI_TMP/$RI_DEB" > /dev/null 2>&1; then
-                RI_OK=1
+                # v99: a public checksum is published here; a failed fetch must not bypass it
+                # before making the package apt-readable (bundle download-verification rule).
+                RI_OK=0
                 if curl -fsSL --retry 3 -o "$RI_TMP/latest-linux.yml" "$RI_BASE/latest-linux.yml" 2> /dev/null; then
                     RI_WANT=$(awk -v f="$RI_DEB" '$0 ~ "url: *"f"$" {getline; sub(/^ *sha512: */, ""); print; exit}' "$RI_TMP/latest-linux.yml")
                     RI_GOT=$(openssl dgst -sha512 -binary "$RI_TMP/$RI_DEB" | base64 -w0)
                     if [ -z "$RI_WANT" ]; then
-                        echo "NOTICE: latest-linux.yml does not list $RI_DEB; installing on dpkg's integrity check alone."
+                        echo "NOTICE: latest-linux.yml does not list $RI_DEB; keeping the installed version. Rerun setup with install-redis."
                     elif [ "$RI_WANT" != "$RI_GOT" ]; then
                         echo "NOTICE: $RI_DEB does not match the release's SHA-512; not installed. Rerun setup with install-redis."
-                        RI_OK=0
+                    else
+                        RI_OK=1
                     fi
+                else
+                    echo "NOTICE: could not fetch Redis Insight's checksum manifest; keeping the installed version. Rerun setup with install-redis."
                 fi
                 if [ "$RI_OK" = 1 ]; then
+                    # v99: expose only the verified public package to apt's sandbox.
+                    chmod 755 "$RI_TMP"; chmod 644 "$RI_TMP/$RI_DEB"
                     apt_get install -y "$RI_TMP/$RI_DEB" \
                         && echo "Redis Insight ${RI_TAG#v} installed${RI_HAVE:+ (was $RI_HAVE)}: pick it from the ChromeOS launcher." \
                         || echo "NOTICE: apt could not install $RI_DEB; rerun setup with install-redis."
@@ -6207,6 +6228,8 @@ devsvc_deb() {
     if ! dpkg-deb --info "$tmp/$pkg.deb" > /dev/null 2>&1; then
         echo "NOTICE: the $pkg download is not a valid .deb; not installed."; rm -rf "$tmp"; return 0
     fi
+    # v99: verification above is private; _apt may read the validated public .deb now.
+    chmod 755 "$tmp"; chmod 644 "$tmp/$pkg.deb"
     apt_get install -y "$tmp/$pkg.deb" > /dev/null \
         && echo "$pkg $ver installed${have:+ (was $have)}." \
         || echo "NOTICE: apt could not install $pkg $ver."
@@ -6970,15 +6993,44 @@ fi
 # Playwright (install-playwright, part of install-testing)
 if [[ "$FLAGS" =~ " install-playwright " ]]; then
     stage install-playwright
+    for _dev_stage_once in 1; do
     echo "--- Playwright browsers (install-playwright)"
-    # --with-deps installs the browsers' system libraries through apt_get (Playwright's own list for
-    # Debian 13). Chromium also brings chromium-headless-shell, the slim build headless runs use.
-    if npx -y playwright@latest install --with-deps chromium firefox webkit; then
-        echo "Playwright $(npx -y playwright@latest --version 2> /dev/null | awk '{print $2}'): $(find "$HOME/.cache/ms-playwright" -mindepth 1 -maxdepth 1 -type d -printf '%f ' 2> /dev/null)"
-    else
-        echo "NOTICE: 'playwright install --with-deps' failed (cdn.playwright.dev or apt unreachable?); rerun setup with install-playwright."
-        echo "        Tests can still use the system Chrome: use: { channel: 'chrome' } in playwright.config."
+    # v99 (Oct 31 2026: npx project warning and apt flood): use one managed installer release,
+    # separate upstream's own OS-dependency step from user-owned browser downloads, and only
+    # update the version record once both succeed. Other projects keep their own pinned libraries.
+    PW_ROOT="$ASSETS/tools/playwright"
+    mkdir -p "$PW_ROOT"
+    pw_release() { npm view playwright version > "$PW_ROOT/latest-version"; }
+    net_retry "Playwright release" pw_release \
+        || { stage_failed "Playwright release" "$?"; break; }
+    PW_WANT=$(cat "$PW_ROOT/latest-version")
+    [[ "$PW_WANT" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo 'ERROR: invalid Playwright release'; exit 1; }
+    PW_DIR="$PW_ROOT/$PW_WANT"
+    if [ ! -x "$PW_DIR/node_modules/.bin/playwright" ]; then
+        PW_TMP=$(mktemp -d "$PW_ROOT/.install.XXXXXX")
+        printf '%s\n' '{"private":true,"name":"dev-bundle-playwright-installer"}' > "$PW_TMP/package.json"
+        if net_retry "Playwright installer package" npm install --prefix "$PW_TMP" --save-exact \
+                --ignore-scripts --no-audit --no-fund "playwright@$PW_WANT"; then
+            # Preserve an incomplete previous attempt for diagnosis, never overwrite an active record.
+            if [ -e "$PW_DIR" ]; then mv "$PW_DIR" "$PW_TMP/previous-incomplete"; fi
+            mv "$PW_TMP" "$PW_DIR"
+        else
+            stage_failed "Playwright installer package" "$?"; break
+        fi
     fi
+    # This is a command helper, not a stage function; cd/exec failures propagate explicitly.
+    pw_cli() { (cd "$PW_DIR" && exec node node_modules/playwright/cli.js "$@"); }
+    PW_ACTUAL=$(pw_cli --version)
+    [ "$PW_ACTUAL" = "Version $PW_WANT" ] || { echo 'ERROR: Playwright installer version mismatch'; exit 1; }
+    # Upstream supplies the version-specific Debian dependency list; root sees our apt.conf policy.
+    # pipefail is local to this pipeline, and the narrow filter keeps all other diagnostics.
+    (set -o pipefail; pw_cli install-deps chromium firefox webkit 2>&1 | apt_dedupe)
+    PLAYWRIGHT_DOWNLOAD_CONNECTION_TIMEOUT=60000 net_retry "Playwright browsers" pw_cli install chromium firefox webkit \
+        || { stage_failed "Playwright browsers" "$?"; break; }
+    printf '%s\n' "$PW_WANT" > "$PW_ROOT/version.new"
+    mv -f "$PW_ROOT/version.new" "$PW_ROOT/version"
+    echo "Playwright $PW_WANT: managed CLI and matching browsers installed."
+
     # Old browser builds from earlier Playwright releases stay until 'npx playwright uninstall' (no --all:
     # that would also remove the builds other projects pinned). The disk report in dev-test lists them.
     if npx -y @playwright/mcp@latest --help > /dev/null 2>&1; then
@@ -6986,6 +7038,7 @@ if [[ "$FLAGS" =~ " install-playwright " ]]; then
     else
         echo "NOTICE: could not fetch @playwright/mcp (npm registry unreachable?); npx fetches it on first use."
     fi
+    done # v99: exhausted Playwright retries skip the remainder of this block
 else
     echo "Skipping Playwright. (Run with 'install-playwright' or 'install-testing')"
 fi
@@ -7130,14 +7183,12 @@ if [[ "$FLAGS" =~ " install-gitlab " ]]; then
         echo "glab: $("$GLAB_BIN" version 2> /dev/null | head -n 1)"
     else
         stage_failed "GitLab CLI" "$?"; break
-        echo "NOTICE: 'brew install glab' failed; rerun setup with install-gitlab."
     fi
     apt_get install -y rsync git
     if net_retry "bulk packages" npm install -g gitlab-ci-local@latest; then
         echo "gitlab-ci-local: $(gitlab-ci-local --version 2> /dev/null)"
     else
             stage_failed "bulk packages" "$?"; break
-        echo "NOTICE: 'npm install -g gitlab-ci-local' failed (npm registry unreachable?); rerun setup with install-gitlab."
     fi
     echo "Try: gitlab-ci-local --list (in a project with a .gitlab-ci.yml); glab auth status once dev-init has run."
     done # v99: end this stage; exhausted retries break only this block
@@ -7790,6 +7841,7 @@ EOF
         echo "Logging in to Hugging Face non-interactively..."
         ~/.gemma-env/bin/hf auth login --token "$HF_TOKEN" || echo "NOTICE: Hugging Face rejected HF_TOKEN; dev-init will report it. Ollama needs no login."
     else
+        stage_skip "credential: optional Hugging Face login (no token)"
         echo "No HF_TOKEN in the environment or in secrets.env: leaving the Hugging Face login to dev-init."
     fi
 
@@ -7797,8 +7849,8 @@ EOF
     echo "Gemma 4 Setup Complete!"
     echo "The lightweight ${GEMMA_MODEL} model has been pulled into Ollama"
     echo "(chosen for 8GB RAM; larger variants like gemma4:e4b may freeze this Chromebook)."
-    echo "Remember to export your GEMINI_API_KEY into your ~/.bashrc"
-    echo "so the Python script can route to the cloud API when online."
+    echo "Optional cloud route: set GEMINI_API_KEY in ~/.config/dev-init/secrets.env, then run dev-init with install-gemma."
+    echo "Local models work without a Google key."
     echo ""
     echo "Run it with:  gemma      (after 'source ~/.bashrc' or in a new terminal)"
     echo "Any local model:  gemma -m deepseek-r1:1.5b   (local route only; 'gemma --help' lists the options)"
@@ -7888,6 +7940,7 @@ if [[ "$FLAGS" =~ " install-models " ]]; then
             echo "NOTICE: skipping $m ($size_txt): it would leave ${left_gb} GB free, under DEV_MODELS_MIN_FREE_GB=$MIN_FREE_GB."
             echo "        Give Linux more disk (ChromeOS Settings > About ChromeOS > Linux development environment > Disk size),"
             echo "        remove a model you no longer use ('ollama rm <model>'), or rerun with DEV_MODELS_MIN_FREE_GB=<lower>."
+            stage_skip "disk: curated model $m"
             SKIPPED_MODELS+=("$m (disk)")
             continue
         fi
@@ -7900,22 +7953,51 @@ if [[ "$FLAGS" =~ " install-models " ]]; then
         fi
     done
 
-    # What dev-test checks and dev-demo uses: every model of this flag that is present now. Left as it
-    # was when the server was down, so one bad run does not erase the record.
-    if [ "$OLLAMA_UP" = 1 ]; then
+    # v99 (Oct 31 2026: qwen was skipped but still recommended): one post-pull snapshot,
+    # then presence + completion capability, never embeddings as a chat fallback. A show/list call
+    # only reads metadata; it cannot pull a missing model or load it into RAM.
+    MODEL_SNAPSHOT=''
+    MODEL_CHAT=''
+    if [ "$OLLAMA_UP" = 1 ] && MODEL_SNAPSHOT=$(ollama list 2>/dev/null); then
         : > "$ASSETS/ollama-models.txt"
         for m in "${MODELS_DEFAULT[@]}" "${MODELS_EXTRA[@]}"; do
-            if [ -n "$m" ] && have_model "$m"; then echo "$m" >> "$ASSETS/ollama-models.txt"; fi
+            [ -n "$m" ] || continue
+            want=$m; [[ "$want" == *:* ]] || want="$want:latest"
+            if printf '%s\n' "$MODEL_SNAPSHOT" | awk 'NR>1 {print $1}' | grep -qxF "$want"; then
+                echo "$m" >> "$ASSETS/ollama-models.txt"
+            fi
+        done
+        for m in qwen3.5:4b deepseek-r1:1.5b gemma4:e2b-it-qat "${MODELS_DEFAULT[@]}" "${MODELS_EXTRA[@]}"; do
+            [ -n "$m" ] || continue
+            want=$m; [[ "$want" == *:* ]] || want="$want:latest"
+            if printf '%s\n' "$MODEL_SNAPSHOT" | awk 'NR>1 {print $1}' | grep -qxF "$want" \
+                && MODEL_INFO=$(ollama show "$m" 2>/dev/null) \
+                && printf '%s\n' "$MODEL_INFO" | awk '
+                    $1=="Capabilities" {caps=1; next}
+                    caps && NF==0 {caps=0}
+                    caps && $1=="completion" {found=1}
+                    END {exit !found}'; then
+                MODEL_CHAT=$m; break
+            fi
         done
     fi
     touch "$ASSETS/ollama-models.txt"
-
     echo "Models: ${#PULLED[@]} pulled, ${#PRESENT[@]} already present, ${#SKIPPED_MODELS[@]} skipped${SKIPPED_MODELS[*]:+: ${SKIPPED_MODELS[*]}}"
     echo "Recorded in $ASSETS/ollama-models.txt:"
     sed 's/^/  /' "$ASSETS/ollama-models.txt"
-    echo "Try:  ollama run deepseek-r1:1.5b                (reasoning model; add --think=false for a direct answer)"
-    echo "      gemma -m qwen3.5:4b                        (the hybrid client on any local model; install-gemma)"
-    echo "      aider --model ollama_chat/qwen3.5:4b       (works, but a 4B model makes a basic coding agent)"
+    {
+        if [ -n "$MODEL_CHAT" ]; then
+            echo "Try: ollama run $MODEL_CHAT"
+            if [ -x "$HOME/.gemma-env/bin/python" ] && [ -s "$ASSETS/gemma_client.py" ]; then echo "     gemma -m $MODEL_CHAT"; fi
+            if command -v aider >/dev/null 2>&1; then echo "     aider --model ollama_chat/$MODEL_CHAT"; fi
+        elif [ -n "$MODEL_SNAPSHOT" ]; then
+            echo 'No present generation-capable model confirmed; generation examples omitted.'
+            echo 'Embedding models in the recorded list can be used with Ollama /api/embed.'
+        else
+            echo 'Ollama metadata unavailable; previous model record kept, generation examples omitted.'
+        fi
+    } > "$ASSETS/ollama-model-hints.txt"
+    cat "$ASSETS/ollama-model-hints.txt"
     echo "Up to two models stay loaded when they fit: 'ollama ps' shows them, 'ollama stop <model>' gives the RAM back."
 else
     echo "Skipping the curated local models. (Run with 'install-models' to enable; not part of install-all)"
@@ -8052,7 +8134,6 @@ EOF_ENV
             echo "MCP Inspector: $(npm ls -g --depth=0 @modelcontextprotocol/inspector 2> /dev/null | grep -o 'inspector@[0-9.]*' || echo installed) (mcp-inspector; npx cache warm)"
         else
             stage_failed "bulk packages" "$?"; break
-            echo "NOTICE: 'npm install -g @modelcontextprotocol/inspector' failed (is the npm registry reachable?); rerun setup with install-agentic."
         fi
     else
         echo "NOTICE: no npm, so no MCP Inspector (it is a Node app): rerun setup with install-agentic install-node."
@@ -8165,7 +8246,6 @@ if [[ "$FLAGS" =~ " install-cloudflare " ]]; then
         echo "wrangler: $(wrangler --version 2> /dev/null | tail -n 1)"
     else
             stage_failed "bulk packages" "$?"; break
-        echo "NOTICE: 'npm install -g wrangler' failed; rerun setup with install-cloudflare."
     fi
     echo "Log in with dev-init (install-cloudflare): CLOUDFLARE_API_TOKEN from secrets.env, or 'wrangler login'."
     done # v99: end this stage; exhausted retries break only this block
@@ -11827,7 +11907,6 @@ if [[ "$FLAGS" =~ " install-openclaw " ]]; then
             echo "(If you installed its gateway service, 'openclaw gateway restart' puts the new version in place.)"
         else
             stage_failed "OpenClaw" "$?"; break
-            echo "NOTICE: npm could not install openclaw; rerun setup with install-openclaw."
         fi
     else
         echo "NOTICE: OpenClaw needs Node 24.16+ or 26.1+ and nvm's default is ${OC_NODE:-missing}; rerun setup with install-node install-openclaw."

@@ -52,6 +52,19 @@ to see it in context; the comment above each fix usually tells the story.
 
 ## Network
 
+- **One dropped pip download ended the whole setup** (`install-agentic`, v99; Oct 31 2026). The v98 run
+  ended at an unhandled ConnectionResetError; pip's own partial retry did not recover. **Fix:** exported
+  pip retry/socket settings (resume retries when supported), three-attempt bulk-install retries with
+  2s/5s backoff, and early managed apt retries/timeouts. Vendor streaming installers are fetched fully
+  before execution. Only exhausted optional bulk retries continue to independent blocks; other errors
+  abort with stage/EXIT reporting and rerun flags. Reports live in assets, not in loose home files.
+- **Apt printed 64,364 copies of one font warning** (`install-playwright`, v99; Oct 31 2026). The font
+  actually installed; Debian apt 3.0.3's delayed acquisition queue emitted the same warning repeatedly
+  ([Debian #1111554](https://bugs.debian.org/1111554), moved to debug output in 3.1.8). **Fix:** separate
+  upstream's version-specific dependency install from browser downloads and count only identical
+  consecutive delayed-item warnings before terminal/log capture. Other diagnostics and both producer
+  and filter status survive. Retries/filtering do not repair apt's queue; don't add unstable apt feeds.
+
 - **Downloads hang on IPv6** (setup base). A Linux VM can get IPv6 addresses with no route out. `wget` then
   waits on one IPv6 address after another, while the ChromeOS browser works because it races IPv4 against
   IPv6. **Fix:** setup detects this and adds `precedence ::ffff:0:0/96 100` to `/etc/gai.conf`, plus
@@ -142,6 +155,25 @@ to see it in context; the comment above each fix usually tells the story.
   Ollama's models first.
 
 ## Packages and PATH
+
+- **Random password generation printed Broken pipe** (SQL Server, Oracle and devsvc, v99; Oct 31 2026).
+  `tr < /dev/urandom | head` closes the reader early; without pipefail the last command hides the
+  producer error, and surrounding printf/assignments can mask it even with pipefail. **Fix:** finite
+  Python secrets generation, checked before storing credentials. LDAP's latent copies use it too;
+  existing configured passwords are kept. This is a shell issue, not a ChromeOS-specific failure.
+- **Apt couldn't read a local .deb as `_apt`** (Symfony CLI / Redis Insight, v99; Oct 31 2026).
+  `mktemp -d` is private (0700). **Fix:** verify privately first, then chmod only that temp directory
+  (0755) and public package (0644) for apt-get. MongoDB clients use the same pattern. Never disable the
+  apt sandbox or broaden home/config permissions. Unattended package calls use apt-get.
+- **Antigravity printed ERROR for successful info messages** (v99 investigation, Oct 31 2026).
+  Its upstream Google logger runs before initialization; the following installation succeeds. Its
+  local-bin prepend duplicates PATH entries but does not reverse Debian/Homebrew ordering. Keep the
+  diagnostics and managed Homebrew block; dev-test checks the installed agy plus lookup order.
+- **Upstream notices can accompany successful installs** (v99 investigation, Oct 31 2026): sdkmanager
+  deprecation, EAS/npm deprecated transitives, brew's Landlock ABI 10 requirement on an ABI 3 kernel,
+  and RDoc scanning an http-parser fixture. Keep functional checks; no dependency override, Android
+  migration, kernel/sandbox bypass or removal of local RI docs is made for these notices. Java's
+  initial “No JRE found” notice is followed by its certificate trigger; dev-test checks the trust store.
 
 - **Homebrew shadows Debian** (setup base). Formula dependencies bring their own python3, sqlite3, `as`,
   `ld` and openjdk, and Homebrew's `shellenv` puts them ahead of Debian's. **Fix:** a marked `~/.bashrc`

@@ -540,7 +540,10 @@ assert all(x in s for x in ('Acquire::Retries "3";', 'Acquire::http::Timeout "60
                            'Acquire::https::Timeout "60";')), "apt acquisition policy differs"
 print("apt: retries 3, HTTP/HTTPS timeout 60 seconds")
 APT_POLICY_PY
-check "managed apt acquisition retry/timeout policy" 'test -f /etc/apt/apt.conf.d/80dev-bundle-network && apt-config dump | /usr/bin/python3 apt-policy.py'
+check "managed apt acquisition policy file is installed" 'test -f /etc/apt/apt.conf.d/80dev-bundle-network'
+warn  "apt retry/timeout policy has no user override" 'apt-config dump | /usr/bin/python3 apt-policy.py'
+warn  "Debian Python, SQLite and binutils precede Homebrew" 'for t in python3 sqlite3 as ld; do p=$(readlink -f "$(command -v "$t")"); case "$p" in /usr/bin/*|/bin/*) ;; *) echo "$t resolves to $p"; exit 1;; esac; done'
+
 
 export DEV_TEST_FLAGS="$FLAGS"
 cat > "$WORK/setup-stages.py" <<'STAGES_PY'
@@ -1544,6 +1547,13 @@ if has install-java; then
     section "Java: JDK, Maven, Gradle (install-java)"
     check "java and javac (default-jdk)"                   'java -version && javac -version'
     check "java and javac on PATH are Debian's JDK, not Homebrew's" 'for t in java javac jar; do p=$(readlink -f "$(command -v $t)"); echo "$t -> $p"; case "$p" in /usr/lib/jvm/*) ;; *) exit 1;; esac; done'
+    # v99: ca-certificates-java may configure before the JRE, then populate the store via triggers.
+    cat > "$WORK/java-trust.sh" <<'JAVA_TRUST'
+set -o pipefail
+test -s /etc/ssl/certs/java/cacerts || exit 1
+keytool -list -cacerts -storepass changeit 2>/dev/null | awk '/trustedCertEntry/ {n++} END {print n+0 " trusted certificates"; exit(n==0)}'
+JAVA_TRUST
+    check "Debian Java CA trust store is populated" 'bash java-trust.sh'
     hint  "brew's openjdk (a dependency of gradle and kotlin) links itself ahead of /usr/bin on Linux: 'brew unlink openjdk'"
     check "PATH javac and JAVA_HOME javac are the same release" '[ "$(javac -version 2>&1)" = "$("$JAVA_HOME/bin/javac" -version 2>&1)" ] || { javac -version; "$JAVA_HOME/bin/javac" -version; exit 1; }'
     check "JAVA_HOME in ~/.bashrc and javac there"         'grep -q "^export JAVA_HOME" ~/.bashrc && [ -x "$JAVA_HOME/bin/javac" ] && "$JAVA_HOME/bin/javac" -version'
@@ -2117,7 +2127,18 @@ if has install-antigravity; then
     section "Google Antigravity (install-antigravity)"
     check "~/.antigravity-env has google-antigravity"      '~/.antigravity-env/bin/pip show google-antigravity > /dev/null'
     # The remote install.sh puts the CLI at ~/.local/bin/agy.
-    check "agy (Antigravity CLI) in ~/.local/bin"           '[ -x ~/.local/bin/agy ] && agy --version'
+    check "agy (Antigravity CLI) in ~/.local/bin"           '[ -x ~/.local/bin/agy ] && ~/.local/bin/agy --version'
+    warn  "agy resolves to the installed local CLI" 'test "$(command -v agy)" = "$HOME/.local/bin/agy"'
+    # v99: inspect only the exact public PATH line seen in v98; never rewrite unrelated profile edits.
+    cat > "$WORK/agy-profile.sh" <<'AGY_PROFILE'
+needle='export PATH="'"$HOME"'/.local/bin:$PATH"'
+for f in "$HOME/.bashrc" "$HOME/.profile"; do
+    [ -f "$f" ] || continue
+    n=$(grep -cFx "$needle" "$f" || true)
+    [ "$n" -le 1 ] || { echo "${f##*/}: $n copies of Antigravity's local-bin PATH line"; exit 1; }
+done
+AGY_PROFILE
+    warn "Antigravity's profile PATH line is not duplicated" 'bash agy-profile.sh'
 
     # v73: the graphical app lives under /opt and is installed from a tarball you put in ./assets.
     warn  "Antigravity IDE or desktop app installed (from a tarball in ./assets)" 'ok=1; for p in /opt/antigravity-ide/current/antigravity-ide /opt/antigravity/current/antigravity; do [ -x "$p" ] && { echo "$p"; ok=0; }; done; exit $ok'
@@ -2780,13 +2801,24 @@ EOF
 fi
 
 if has install-playwright; then
-    # Playwright's browser builds are tied to its release: the scratch project uses the release setup's
-    # 'npx playwright@latest' installed the browsers for (npx's cache), so nothing is downloaded but the
-    # npm package.
+    # v99: browser builds are tied to setup's recorded managed release. The scratch project installs
+    # its matching test package; a newer latest release or cleared npx cache cannot select new browsers.
     check "Playwright's browsers in ~/.cache/ms-playwright (chromium, firefox, webkit)" 'cd ~/.cache/ms-playwright 2> /dev/null || { echo "no ~/.cache/ms-playwright"; exit 1; }; ls -d chromium-* chromium_headless_shell-* firefox-* webkit-* 2> /dev/null | xargs; for b in chromium firefox webkit; do ls -d "$b"-* > /dev/null 2>&1 || { echo "missing: $b"; exit 1; }; done'
-    hint  "rerun setup with install-playwright (playwright install --with-deps chromium firefox webkit)"
-    check "the Playwright release setup used is in npx's cache" 'v=$(timeout 60 npx -y --prefer-offline playwright@latest --version 2> /dev/null | awk "{print \$2}"); echo "playwright $v"; [ -n "$v" ] && echo "$v" > "$WORK/testing/pw.version"'
-    hint  "rerun setup with install-playwright; npm's cache (~/.npm/_npx) may have been cleared"
+    hint  "rerun setup with install-playwright (managed install-deps, then chromium/firefox/webkit)"
+    # v99: use setup's successful record, never a mutable latest lookup that might need new browsers.
+    cat > "$WORK/testing/pw-release.sh" <<'PW_RELEASE'
+root="$ASSETS/tools/playwright"
+v=$(cat "$root/version") || exit 1
+[[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || exit 1
+actual=$(node "$root/$v/node_modules/playwright/cli.js" --version) || exit 1
+[ "$actual" = "Version $v" ] || { echo "installer/record version mismatch"; exit 1; }
+printf '%s\n' "$v" > "$WORK/testing/pw.version"
+echo "Playwright $v, from setup's managed installer"
+PW_RELEASE
+    check "Playwright managed installer matches setup's recorded release" 'bash "$WORK/testing/pw-release.sh"'
+    check "Playwright fonts and Xvfb installed" 'for p in fonts-freefont-ttf fonts-noto-color-emoji fonts-ipafont-gothic fonts-wqy-zenhei fonts-unifont fonts-tlwg-loma-otf xvfb; do dpkg-query -W -f="\${Status}\n" "$p" | grep -qx "install ok installed" || exit 1; done'
+
+    hint  "rerun setup with install-playwright to restore the managed installer and successful version record"
     mkdir -p "$WORK/testing/pw/tests"
     cat > "$WORK/testing/pw/playwright.config.ts" << 'EOF'
 import { defineConfig, devices } from '@playwright/test'
@@ -2835,7 +2867,7 @@ EOF
         for _p in chromium firefox webkit chrome; do
             slow  "Playwright Test: the links spec passes in $_p" "cd testing/pw && BASE_URL=\$LINKS_URL npx playwright test --project=$_p --output=out-$_p" 300
         done
-        hint  "chrome = the system Chrome (channel: 'chrome'); the other three are Playwright's builds. A missing library: rerun setup with install-playwright (--with-deps)"
+        hint  "chrome = the system Chrome (channel: 'chrome'); the other three are Playwright's builds. A missing library: rerun setup with install-playwright (managed install-deps, then matching browsers)"
         check "Playwright wrote a trace for the Chromium run (npx playwright show-trace opens it)" 'ls testing/pw/out-chromium/*/trace.zip'
     fi
     slowwarn "pytest-playwright (Python, through uv) on the system Chrome" 'cd testing && cat > test_pw_links.py << "PY"
@@ -3689,7 +3721,11 @@ echo "$r" | grep -qx alpha'
             hint  "'devsvc ddev' joins it (DDEV recreates the network after 'ddev poweroff')"
             slowwarn "a container on DDEV's network reaches devredis:6379" 'if ! docker network inspect ddev_default > /dev/null 2>&1; then echo "SKIPPED: no ddev_default network yet"; exit 0; fi; img=$(docker inspect -f "{{.Config.Image}}" devsvc-redis); docker run --rm --network ddev_default -e REDISCLI_AUTH --entrypoint redis-cli "$img" -h devredis --no-auth-warning ping | grep -q PONG && echo "devredis:6379 answers PONG from ddev_default"' 300
         fi
-        warn  "Redis Insight desktop app, in the ChromeOS launcher" 'dpkg-query -W -f="\${Package} \${Version}\n" "redisinsight*" 2> /dev/null | grep . || { echo "Redis Insight is not installed"; exit 1; }; ls /usr/share/applications | grep -i insight'
+        if [ "${REDIS_INSIGHT:-1}" = 1 ]; then
+            check "Redis Insight desktop app, in the ChromeOS launcher" 'dpkg-query -W -f="\${Package} \${Version}\n" "redisinsight*" 2> /dev/null | grep . || { echo "Redis Insight is not installed"; exit 1; }; ls /usr/share/applications | grep -i insight'
+        else
+            info "Redis Insight" "SKIP: explicitly disabled (REDIS_INSIGHT=0)"
+        fi
         hint  "setup downloads it from Redis Insight's GitHub release; its log says why it did not (rerun setup with install-redis). REDIS_INSIGHT=0 skips it on purpose"
     fi
     svc_release redis
@@ -3888,10 +3924,14 @@ EOF
     fi
     svc_release milvus
     if has install-mongodb; then
-        warn  "mongosh on this machine"                        'mongosh --version'
+        check "mongosh on this machine"                        'mongosh --version'
         hint  "setup installs MongoDB's .deb (rerun setup with install-mongodb); 'devsvc cli mongodb' falls back to the container's mongosh"
-        warn  "MongoDB Database Tools (mongodump, mongorestore, mongoimport)" 'for c in mongodump mongorestore mongoimport mongoexport; do command -v "$c" > /dev/null || { echo "missing: $c"; exit 1; }; done; mongodump --version | head -n 1'
-        warn  "MongoDB Compass desktop app, in the ChromeOS launcher" 'dpkg-query -W -f="\${Package} \${Version}\n" mongodb-compass && ls /usr/share/applications | grep -i compass'
+        check "MongoDB Database Tools (mongodump, mongorestore, mongoimport)" 'for c in mongodump mongorestore mongoimport mongoexport; do command -v "$c" > /dev/null || { echo "missing: $c"; exit 1; }; done; mongodump --version | head -n 1'
+        if [ "${MONGODB_COMPASS:-1}" = 1 ]; then
+            check "MongoDB Compass desktop app, in the ChromeOS launcher" 'dpkg-query -W -f="\${Package} \${Version}\n" mongodb-compass && ls /usr/share/applications | grep -i compass'
+        else
+            info "MongoDB Compass" "SKIP: explicitly disabled (MONGODB_COMPASS=0)"
+        fi
         hint  "MONGODB_COMPASS=0 skips it on purpose; otherwise setup's log says why"
         check "devsvc-mongodb container: 127.0.0.1:27017, start policy per DEVSVC_AUTOSTART" "docker inspect devsvc-mongodb > mg.json || exit 1; jq -r -e --arg port 27017/tcp --arg policy $(svc_policy mongodb) -f devsvc.jq mg.json"
         hint  "no such container: rerun setup with install-mongodb"
@@ -4165,14 +4205,43 @@ if has install-models; then
     section "Local models: DeepSeek-R1 1.5B, Qwen3.5 4B, Qwen3 embeddings (install-models)"
     check "setup recorded the model list (assets/ollama-models.txt)" '[ -s "$ASSETS/ollama-models.txt" ] && tr "\n" " " < "$ASSETS/ollama-models.txt"'
     hint  "rerun setup with install-models. An empty list means every pull was skipped: setup's NOTICE lines say why (disk guard, network)"
+    cat > "$WORK/model-hints.sh" <<'MODEL_HINTS'
+set -o pipefail
+f="$ASSETS/ollama-model-hints.txt"
+test -f "$f" || exit 1
+m=$(awk '/^Try: ollama run / {print $4}' "$f")
+if [ -z "$m" ]; then echo 'No generation example recorded (metadata unavailable or no completion model)'; exit 0; fi
+want=$m; [[ "$want" == *:* ]] || want="$want:latest"
+ollama list | awk 'NR>1 {print $1}' | grep -qxF "$want" || exit 1
+ollama show "$m" | awk '$1=="Capabilities" {caps=1;next} caps && NF==0 {caps=0} caps && $1=="completion" {found=1} END {exit !found}' || exit 1
+while IFS= read -r line; do
+    case "$line" in
+        *'gemma -m '*) [ "$line" = "     gemma -m $m" ] || exit 1 ;;
+        *'aider --model '*) [ "$line" = "     aider --model ollama_chat/$m" ] || exit 1 ;;
+    esac
+done < "$f"
+echo "Generation example references present completion model $m"
+MODEL_HINTS
+    check "model examples reference a present completion model" 'bash model-hints.sh'
+
     mapfile -t TEST_MODELS < <(grep -v '^[[:space:]]*$' "$ASSETS/ollama-models.txt" 2> /dev/null)
-    [ ${#TEST_MODELS[@]} -gt 0 ] || TEST_MODELS=(deepseek-r1:1.5b qwen3.5:4b qwen3-embedding:0.6b)
     for m in "${TEST_MODELS[@]}"; do
         want=$m; [[ "$want" == *:* ]] || want="$want:latest"
         check "model $m is pulled"                         "ollama list | awk 'NR > 1 {print \$1}' | grep -qxF '$want'"
     done
     hint  "ollama pull <model>, or rerun setup with install-models"
-    warn  "at least 10 GB free where Ollama keeps models"  'd=/usr/share/ollama; [ -d "$d" ] || d="$HOME"; df -h "$d" | tail -n 1; [ "$(df -Pk "$d" | awk "NR == 2 {print \$4}")" -ge $((10 * 1024 * 1024)) ]'
+    # v99: report the same configured/default margin as setup; do not change the qwen disk guard.
+    cat > "$WORK/model-margin.sh" <<'MODEL_MARGIN'
+d=/usr/share/ollama; [ -d "$d" ] || d="$HOME"
+total=$(df -Pk / | awk 'NR==2 {print int($2/1024/1024)}')
+margin=$((total*15/100)); [ "$margin" -ge 1 ] || margin=1; [ "$margin" -le 10 ] || margin=10
+margin=${DEV_MODELS_MIN_FREE_GB:-$margin}
+free=$(df -Pk "$d" | awk 'NR==2 {print $4}')
+echo "${free} KB free; configured/default reserve $margin GB"
+[ "$free" -ge $((margin*1024*1024)) ]
+MODEL_MARGIN
+    warn "configured/default free-space margin for Ollama models" 'bash model-margin.sh'
+
     hint  "'ollama rm <model>' for models you no longer use, or give Linux more disk (ChromeOS Settings > About ChromeOS > Linux development environment)"
     # Thinking off and 32 tokens: this proves the model loads and answers, not how well it reasons.
     # Whatever is loaded is stopped first, so the load time is comparable between runs.
@@ -5817,6 +5886,7 @@ if ! has nodisk; then
     # OpenClaw's npm package (about 900 MB) sits inside $NVM_DIR, so the node row counts it; this is its state.
     has install-openclaw && dpaths openclaw "OpenClaw state: config, sessions, workspace (~/.openclaw)" "$HOME/.openclaw"
     if has install-ollama; then
+        dpaths ollama "Curated-model records and examples" "$ASSETS/ollama-models.txt" "$ASSETS/ollama-model-hints.txt"
         dpaths ollama "Ollama server bundle"                 /usr/local/lib/ollama /usr/local/bin/ollama
         dpaths ollama "Ollama models, all pulled ($(ollama list 2> /dev/null | tail -n +2 | grep -c .))" /usr/share/ollama/.ollama/models "$HOME/.ollama/models"
     fi
@@ -5913,7 +5983,7 @@ if ! has nodisk; then
     has install-graphql  && dpaths graphql "Rover, Router v2, Apollo MCP Server + Rover's plugins (~/.rover)" "$HOME/.local/bin/rover" "$HOME/.local/bin/router" "$HOME/.local/bin/apollo-mcp-server" "$HOME/.rover"
     [ -d "$HOME/dev-demo/drupal/drupal-graphql/local" ] && dpaths graphql "dev-demo drupal-graphql, local site (code + SQLite)" "$HOME/dev-demo/drupal/drupal-graphql/local"
     # v91: the test tools. The Grid's image is in the services lines above.
-    has install-playwright && dpaths testing "Playwright browsers (~/.cache/ms-playwright)" "$HOME/.cache/ms-playwright"
+    has install-playwright && dpaths testing "Playwright browsers and managed installer" "$HOME/.cache/ms-playwright" "$ASSETS/tools/playwright"
     has install-selenium   && dpaths testing "Selenium Manager's drivers (~/.cache/selenium)" "$HOME/.cache/selenium"
     has install-robot      && dpaths testing "Robot Framework tool venv + the Browser library's Node side" "$HOME/.local/share/uv/tools/robotframework"
     has install-cypress    && dpaths testing "Cypress binaries (~/.cache/Cypress, one per version)" "$HOME/.cache/Cypress"

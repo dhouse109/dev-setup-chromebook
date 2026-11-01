@@ -96,6 +96,8 @@ done
 if random_chars 0 >/dev/null 2>&1; then exit 1; fi
 random_chars() { return 44; }
 if dev_password >/dev/null 2>&1; then exit 1; fi
+random_chars() { return 0; }  # a provider that claims success but supplies no characters
+if dev_password >/dev/null 2>&1; then exit 1; fi
 ''')
 
 

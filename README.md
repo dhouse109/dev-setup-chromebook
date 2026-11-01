@@ -29,8 +29,18 @@ All four take the same flags, so `install-web install-node` means the same thing
 
 > **Current version: v99.** [CHANGELOG.md](CHANGELOG.md) has the full history.
 
-v99 is being built from the [final plan](docs/plans/v99-plan.md): a focused network/stage-reporting
-fix release. Built changes are not yet confirmed by the full Chromebook acceptance run.
+v99 implements the [final plan](docs/plans/v99-plan.md): bounded bulk-install retries, stage/EXIT
+reports and focused Playwright, password, model-hint and package-permission fixes. Built, not yet
+confirmed run on a Chromebook. Full acceptance still belongs to the owner.
+
+Pip/pipx inherit invocation-only retries/timeouts; setup installs a managed apt acquisition policy.
+The wrapper bounds command attempts (three); package managers also retry internally (pip five, apt
+three), so this is not a three-request cap or an overall installation deadline.
+Exhausted optional bulk retries leave that block and continue; unexpected errors abort with the
+current stage and selected work not reached. Requested failures return nonzero. The summary gives
+rerun flags; `assets/logs/setup-stages-<timestamp>.tsv` retains each run and `assets/setup-stages.tsv`
+is the latest report. Disk/media/credential skips are separate. This does not retry every network
+operation; the wider audit and demo/launcher acquisition changes remain deferred.
 
 
 ## What it is, and what it isn't
@@ -105,7 +115,7 @@ pull in what they need. For example, `install-web` brings `install-node` with it
 | `install-cache` | `install-redis` `install-memcached` |
 | `install-search` | `install-solr` `install-opensearch` `install-meilisearch` `install-typesense` |
 | `install-vector` | `install-qdrant` and sqlite-vec |
-| `install-testing` | `install-playwright` `install-selenium` (Grid in Docker) `install-bdd` (Gherkin runners) `install-robot` (Robot Framework) |
+| `install-testing` | `install-playwright` (managed installer under assets, matching recorded browser release) `install-selenium` (Grid in Docker) `install-bdd` (Gherkin runners) `install-robot` (Robot Framework) |
 
 `install-all` also includes these single flags:
 
@@ -121,7 +131,7 @@ pull in what they need. For example, `install-web` brings `install-node` with it
 | `install-db` | ODBC, Firebird, client libraries |
 | `install-db-extra` | SQLite, PostgreSQL, MariaDB and DuckDB ODBC drivers (DuckDB pinned to 1.5.6, as for the lakehouse CLI/Python) |
 | `install-lakehouse` | DuckDB 1.5.6 CLI/Python, dbt Fusion and Core v1, DuckLake, Delta Lake |
-| `install-agentic` | Temporal, LangGraph, Pydantic, Langfuse |
+| `install-agentic` | Temporal, LangGraph, Pydantic, Langfuse; bounded pip retries and stage failure reporting |
 | `install-jev` | Jev |
 | `install-mongodb` | MongoDB 8, mongosh, Compass |
 | `install-gitlab` | glab, gitlab-ci-local |
