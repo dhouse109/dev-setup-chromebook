@@ -30,8 +30,10 @@ All four take the same flags, so `install-web install-node` means the same thing
 > **Current version: v99.** [CHANGELOG.md](CHANGELOG.md) has the full history.
 
 v99 implements the [final plan](docs/plans/v99-plan.md): bounded bulk-install retries, stage/EXIT
-reports and focused Playwright, password, model-hint and package-permission fixes. Built, not yet
-confirmed run on a Chromebook. Full acceptance still belongs to the owner.
+reports and focused Playwright, password, model-hint and package-permission fixes. The owner accepted
+v99 after full setup → init → dev-test on Nov 1 2026 (FAIL 0), with two Known issues: pre-existing
+offline Inspector cache availability and environmental disk headroom below the model reserve.
+See [CHANGELOG.md](CHANGELOG.md).
 
 The Nov 1 acceptance corrections keep v99: Reqnroll uses the installed .NET framework, Selenium's
 helper table and retro's sbin tool lookup are checked correctly, and Symfony/Inspector diagnostics

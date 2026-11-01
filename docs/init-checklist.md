@@ -34,9 +34,12 @@ keeping a backup under assets/downloads/helper-backups. `python3 -B tests/warm-i
 replays only setup's real online/offline Inspector probe with managed nvm activated. Neither command
 runs the full installer; the cache probe's server starts only when executed directly or by FastMCP.
 
-Full v99 acceptance is still pending on a Chromebook: setup → init → dev-test with
-`install-all install-db-server install-lan-share install-models install-ollama-containers install-retro`.
-Read the resulting .output/.log files by path; no agent-run bundle command is authorized without approval.
+The owner accepted full v99 setup → init → dev-test on Nov 1 2026 with
+`install-all install-db-server install-lan-share install-models install-ollama-containers install-retro`:
+PASS 594, FAIL 0, WARN 11, SKIP 1. The owner confirms init was run in between and dev-test returned to
+the prompt without Ctrl+C. Two non-credential WARNs are accepted Known issues: pre-existing offline
+Inspector cache availability and environmental disk headroom below the model reserve. The reserve
+stays unchanged. Read resulting .output/.log files by path; agent-run bundle commands still need approval.
 
 *Working notes kept alongside the scripts, copied at the v93 release, updated for v95. The "since vNN" remarks date each behaviour; [CHANGELOG.md](../CHANGELOG.md) has the full story.*
 

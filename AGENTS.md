@@ -133,6 +133,8 @@ Update, in the same change:
     Codex applies it through the prompt, not a git hook.
   - Any other agent: `Co-Authored-By: <agent name> <its vendor's noreply address>`.
   - Commits the owner makes by hand get no trailer. Never rewrite pushed commits to add one.
+- **PR comments are public.** Report counts, results and repo-relative paths only; no PIDs,
+  hardware or kernel details, auth status, or home-directory paths.
 - **Checks before every push** (CI runs the same in `.github/workflows/lint.yml`):
   - `bash -n` on each script
   - `shellcheck -S error dev-*-chromebook*.sh` (warnings are left for comments to explain)

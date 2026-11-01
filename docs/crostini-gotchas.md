@@ -30,6 +30,14 @@ to see it in context; the comment above each fix usually tells the story.
   process-I/O metric, not database writes, search or other monitoring. Keep the vendor image, existing
   data volume and resource limits. Remove the workaround after a released upstream image fixes it.
 
+- **Oracle clock-drift errors after long uptime under memory pressure** (`install-oracle`, v99;
+  Nov 1 2026). Oracle can log time-drift errors and terminate its instance in these conditions.
+  In acceptance, the first startup failed with clock-drift errors; closing other windows and
+  restarting Linux cleared the condition, and the repeated Oracle round trip passed.
+  Restart Linux before retrying when this pattern occurs. This observation does not establish the
+  cause of a separate terminal reset; do not change database settings or merely increase its wait
+  limit without further evidence.
+
 ## Graphics
 
 - **Windowed OpenGL falls back to software rendering** (setup base). Crostini hands Linux a virgl GPU as

@@ -514,6 +514,20 @@ vendor image, data format, keys, memory limits or kernel. Small C regression and
 health/CRUD tests verify it. Targeted setup applies only install-typesense plus unconditional base
 stages; the owner still performs final full acceptance. Post each push and targeted results to PR #13.
 
+## Final owner acceptance decision (Nov 1 2026)
+
+The owner completed setup → init → dev-test with the original six flags, confirmed init in between,
+and confirmed dev-test returned to the prompt by itself without Ctrl+C. Setup: 79 succeeded,
+0 failed/unreached. Completed test: PASS 594, FAIL 0, WARN 11, SKIP 1; no test-owned ssh-agent left.
+
+The owner explicitly accepts v99 with two non-credential Known issues: offline npx Inspector cache
+ENOTCACHED at test time (pre-existing, not a regression), and environmental disk headroom below the
+model reserve. Record both in CHANGELOG and PR #13; preserve the reserve. Inspector offline cache
+coherence becomes item 1 of the draft v100 plan. Oracle clock-drift errors after long uptime under
+memory pressure cleared after restarting Linux and repeating the test. This decision supersedes
+this plan's earlier pending-acceptance status and authorizes marking PR #13 ready for review only.
+The owner will merge; no merge, branch deletion, tag or release is authorized in this step.
+
 ## Primary references checked for the plan
 
 - [pip options](https://pip.pypa.io/en/stable/cli/pip/): HTTP connection retries, socket timeout and
