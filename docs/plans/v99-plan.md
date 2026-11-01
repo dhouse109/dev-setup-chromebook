@@ -483,6 +483,30 @@ child (no user profiles, credentials or real services), checking terminal and pi
 complete saved output, and success/failure exit status while the child remains alive.
 Versions stay at 99 during this acceptance fix. Full owner-run acceptance remains outstanding.
 
+## Accepted correction scope (owner request, Nov 1 2026)
+
+Keep all four scripts at version 99 and work in PR #13. Before any full rerun, request approval
+for each targeted command; the owner will run final full setup → init → test. Implement the
+acceptance-comment corrections: select Reqnroll's framework from the installed SDK/runtime;
+parse Selenium's helper-table delimiter and correct its hint; use Debian's /usr/sbin/mkfs.fat
+in the test and generated exchange helper; capture the full Symfony advisory result/status;
+verify Inspector's real npx tool call online then offline and report warm-up failures honestly.
+Retry vendor downloads only, run each fetched installer once, retry Playwright's checked
+install-deps pipeline, recognize failed-run stage summaries and abort on system apt update failure.
+
+New shell-startup probes must supervise their own descendants, stop only the ssh-agents they
+started, and verify none remain both before the summary and on EXIT. Preserve PID/start-time
+ownership evidence under assets/logs, leaving pre-existing agents untouched. Small extracted
+regressions extend the original helper/recorder tests for these failure paths and agent ownership;
+no real profiles, credentials or services are used by those offline regressions.
+
+For Typesense, first preserve full startup logs, immutable image metadata and safe container/host
+limits with the owner-approved `bash tests/typesense-investigate.sh`. Never print its API-key
+arguments or credential environment. Investigate exit 139 without assuming OOM, network failure
+or an image regression, then select any image/config fix from that evidence and post the finding.
+No image/config change has yet been chosen. Targeted Chromebook results and a comment per push
+belong on PR #13. Full acceptance remains outstanding.
+
 ## Primary references checked for the plan
 
 - [pip options](https://pip.pypa.io/en/stable/cli/pip/): HTTP connection retries, socket timeout and

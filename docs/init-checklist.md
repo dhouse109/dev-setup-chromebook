@@ -13,6 +13,23 @@ repeated delayed-item warnings, preserving other diagnostics and exit status. `R
 The qwen disk guard is unchanged; generation examples only name confirmed present completion models.
 Optional GEMINI_API_KEY stays in secrets.env and is applied by init, never entered directly in .bashrc.
 
+Nov 1 acceptance follow-up: vendor downloads retry, fetched installers execute once, and failed
+system apt updates abort. Playwright's dependency pipeline retries before browsers/version recording.
+Reqnroll scratch tests select the SDK's major/minor framework and require that runtime. Retro uses
+`/usr/sbin/mkfs.fat`, independent of user PATH. Symfony logs the complete security result and checker
+status. Inspector setup runs a real npx tool call and verifies the same call offline; failure is a
+NOTICE with full diagnostics in `assets/logs/inspector-cache-*`, not a claim that the cache is warm.
+No new flags, secret variables or login steps are required.
+
+Shell-startup probes supervise and stop only their descendant ssh-agents. Their PID/start-time ledger
+is `assets/logs/shell-agents-<timestamp>.tsv`; dev-test checks it before its summary and again on EXIT.
+A pre-existing user agent is left alone. Failed service starts retain complete output/container logs
+in `assets/logs/devsvc-<service>-<timestamp>.startup.log`, including safe image/state/limit fields.
+Typesense's exit-139 investigation must precede any image/config fix. With approval, run
+`bash tests/typesense-investigate.sh` to collect full startup logs and image/host metadata under
+`assets/logs/typesense-investigation-<timestamp>`; do not upload raw logs or credential arguments.
+Targeted test commands also need individual approval; the owner performs final full acceptance.
+
 Full v99 acceptance is still pending on a Chromebook: setup → init → dev-test with
 `install-all install-db-server install-lan-share install-models install-ollama-containers install-retro`.
 Read the resulting .output/.log files by path; no agent-run bundle command is authorized without approval.

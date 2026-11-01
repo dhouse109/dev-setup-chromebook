@@ -73,7 +73,8 @@ if [ -z "${DEV_SCREEN_OUTPUT:-}" ] && [ "${DEV_SCREEN_SAVE:-1}" != 0 ]; then
         fi
         sed -i -e :a -e '/^\n*$/{$d;N;ba' -e '}' "$DEV_SCREEN_OUTPUT" 2> /dev/null   # no trailing blank lines
         # The run ends with its summary block, its last line a row of '='. Anything else: it stopped early.
-        if grep -q ' Version [0-9]* complete' "$DEV_SCREEN_OUTPUT" 2> /dev/null && tail -n 1 "$DEV_SCREEN_OUTPUT" | grep -q '^=\{20,\}$'; then :
+        # v99 (Nov 1 2026): fatal setup exits still print a complete stage summary.
+        if grep -Eq ' Version [0-9]+ complete|^Setup stage summary \(Version [0-9]+\)$' "$DEV_SCREEN_OUTPUT" 2> /dev/null && tail -n 1 "$DEV_SCREEN_OUTPUT" | grep -q '^=\{20,\}$'; then :
         else echo "Screen output (stopped before the summary): $DEV_SCREEN_OUTPUT" >&2; fi
         exit "$_rc"
     fi
@@ -617,8 +618,10 @@ vendor_install() {   # vendor_install LABEL URL SHELL [INSTALLER_ARGS...]
     shift 3
     file="$ASSETS/downloads/$label-install.sh"
     net_retry "$label download" curl -fsSL -o "$file" "$url" || return $?
+    # v99 (Nov 1 2026): installer side effects run once; only fetching may exhaust retries.
+    NET_RETRY_EXHAUSTED=0
     [ -s "$file" ] && head -n 1 "$file" | grep -q '^#!' || return 1
-    net_retry "$label installer" "$shell" "$file" "$@" || return $?
+    "$shell" "$file" "$@" || return $?
     rm -f "$file"
 }
 
@@ -634,7 +637,9 @@ echo "Updating system and installing base packages, Python tools, and Puppeteer 
 # where sudo asks for none; on any other machine (DEV_BUNDLE_ANY_HOST=1) it would delete a real login
 # password, so it runs on ChromeOS only (DEV_ON_CHROMEOS comes from the host guard above).
 if [ "${DEV_ON_CHROMEOS:-0}" = 1 ]; then sudo passwd -d "$USER"; fi
-apt_get update && apt_get upgrade -y
+# v99 (Nov 1 2026): abort on a failed update before upgrade; later stages stay unreached.
+apt_get update
+apt_get upgrade -y
 
 # Consolidated apt install (Debian Trixie Compatible - PEP 668 & no software-properties-common)
 apt_get install -y \
@@ -7026,7 +7031,10 @@ if [[ "$FLAGS" =~ " install-playwright " ]]; then
     [ "$PW_ACTUAL" = "Version $PW_WANT" ] || { echo 'ERROR: Playwright installer version mismatch'; exit 1; }
     # Upstream supplies the version-specific Debian dependency list; root sees our apt.conf policy.
     # pipefail is local to this pipeline, and the narrow filter keeps all other diagnostics.
-    (set -o pipefail; pw_cli install-deps chromium firefox webkit 2>&1 | apt_dedupe)
+    # v99 (Nov 1 2026): retry the checked pipeline in the parent shell, retaining exhaustion state.
+    pw_deps() { (set -o pipefail; pw_cli install-deps chromium firefox webkit 2>&1 | apt_dedupe); }
+    net_retry "Playwright system dependencies" pw_deps \
+        || { stage_failed "Playwright system dependencies" "$?"; break; }
     PLAYWRIGHT_DOWNLOAD_CONNECTION_TIMEOUT=60000 net_retry "Playwright browsers" pw_cli install chromium firefox webkit \
         || { stage_failed "Playwright browsers" "$?"; break; }
     printf '%s\n' "$PW_WANT" > "$PW_ROOT/version.new"
@@ -8131,9 +8139,32 @@ EOF_ENV
     # needs Node: with install-node (install-all has it), otherwise a NOTICE.
     if command -v npm > /dev/null 2>&1; then
         if net_retry "bulk packages" npm install -g --allow-scripts=esbuild @modelcontextprotocol/inspector@latest; then
-            # npx keeps its own copy per package: run it once (a no-op command) so that copy is complete.
-            timeout 300 npx --yes --package=@modelcontextprotocol/inspector@latest -c true > /dev/null 2>&1 || true
-            echo "MCP Inspector: $(npm ls -g --depth=0 @modelcontextprotocol/inspector 2> /dev/null | grep -o 'inspector@[0-9.]*' || echo installed) (mcp-inspector; npx cache warm)"
+            # v99 (Nov 1 2026: warm-up claimed success after ENOTCACHED): execute the real
+            # npx/stdio tool call, then repeat offline. Keep full diagnostics and both statuses.
+            INSPECTOR_PROBE="$ASSETS/tools/mcp-inspector/cache-check.py"
+            INSPECTOR_LOG="$ASSETS/logs/inspector-cache-${DEV_RUN_STAMP:-$(date +%Y%m%d-%H%M%S)}.log"
+            mkdir -p "$(dirname "$INSPECTOR_PROBE")"
+            cat > "$INSPECTOR_PROBE" << 'PY'
+from fastmcp import FastMCP
+mcp = FastMCP("cache-check")
+@mcp.tool
+def add(a: int, b: int) -> int:
+    return a + b
+mcp.run()
+PY
+            inspector_cache_call() {
+                local rc=0
+                timeout 300 npx "$1" @modelcontextprotocol/inspector --cli fastmcp run "$INSPECTOR_PROBE" \
+                    --method tools/call --tool-name add --tool-arg a=2 --tool-arg b=3 > "$INSPECTOR_LOG.$2" 2>&1 || rc=$?
+                cat "$INSPECTOR_LOG.$2" >> "$INSPECTOR_LOG"
+                printf '\n%s exit=%s\n' "$2" "$rc" >> "$INSPECTOR_LOG"
+                [ "$rc" = 0 ] && tr -d ' \n' < "$INSPECTOR_LOG.$2" | grep -q '"result":5'
+            }
+            if inspector_cache_call --yes online && inspector_cache_call --offline offline; then
+                echo "MCP Inspector: installed globally; npx cache verified by an offline tools/call (result 5)."
+            else
+                echo "NOTICE: MCP Inspector installed globally; npx cache warm-up/offline call FAILED (see $INSPECTOR_LOG); rerun install-agentic online."
+            fi
         else
             stage_failed "bulk packages" "$?"; break
         fi
@@ -10201,7 +10232,7 @@ exch_create() {   # exch_create WS
         fi
         return 0
     fi
-    command -v mkfs.fat > /dev/null && command -v mcopy > /dev/null || die "mtools and dosfstools are missing: rerun dev-setup with install-retro."
+    [ -x /usr/sbin/mkfs.fat ] && command -v mcopy > /dev/null || die "mtools and dosfstools are missing: rerun dev-setup with install-retro."
     exch_setting; mb=$SET_VAL
     heads=${RETRO_EXCHANGE_HEADS:-16}
     case "$heads" in 16|255) ;; *) die "RETRO_EXCHANGE_HEADS=$heads: 16 (the default) or 255." ;; esac
@@ -10226,7 +10257,8 @@ with open(path, 'wb') as f:
 print(total)
 PY
     ) || die "could not create $img"
-    mkfs.fat -F 16 -n EXCHANGE --offset 63 -h 63 -g "$heads/63" "$img" $(( (total - 63) / 2 )) > /dev/null || { rm -f "$img"; die "mkfs.fat failed on $img"; }
+    # v99 (Nov 1 2026): Debian installs dosfstools in sbin, absent from a normal user PATH.
+    /usr/sbin/mkfs.fat -F 16 -n EXCHANGE --offset 63 -h 63 -g "$heads/63" "$img" $(( (total - 63) / 2 )) > /dev/null || { rm -f "$img"; die "mkfs.fat failed on $img"; }
     echo "Created the exchange disk $img ($mb MB, FAT16; RETRO_EXCHANGE_MB from $SET_SRC): D: in the guest."
 }
 exch_mount_size() {   # the -size value DOSBox-X's imgmount needs for the exchange disk of WS

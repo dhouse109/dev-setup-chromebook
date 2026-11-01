@@ -1,4 +1,4 @@
-"""Three offline helper tests. Extract definitions; never source/run a bundle script."""
+"""Offline helper regression tests. Extract definitions; never source/run a bundle script."""
 from pathlib import Path
 import subprocess
 import tempfile
@@ -79,6 +79,51 @@ sudo() { echo normal; }
 apt_dedupe() { cat >/dev/null; return 43; }
 rc=0; apt_get install example >/dev/null || rc=$?
 [ "$rc" = 43 ]
+''')
+
+    def test_vendor_installer_runs_once(self):
+        source = (ROOT / "dev-setup-chromebook.sh").read_text()
+        definitions = "net_retry() {" + block("network policy").split("net_retry() {", 1)[1]
+        definitions += "\nvendor_install() {" + source.split("vendor_install() {", 1)[1].split("\n}\n", 1)[0] + "\n}"
+        with tempfile.TemporaryDirectory(dir=ROOT / "assets") as work:
+            bash(definitions, f'''
+ASSETS='{work}'
+mkdir -p "$ASSETS/downloads"
+sleep() {{ :; }}
+calls=0
+curl() {{ calls=$((calls+1)); [ "$calls" -ge 2 ] || return 42; printf '#!/bin/sh\\nexit 43\\n' > "$3"; }}
+rc=0
+vendor_install fixture https://example.invalid sh || rc=$?
+[ "$calls" = 2 ] && [ "$rc" = 43 ] && [ "$NET_RETRY_EXHAUSTED" = 0 ]
+# A failing installer with side effects is invoked only once.
+printf '#!/bin/sh\\necho called >> "$1"\\nexit 44\\n' > "$ASSETS/installer"
+curl() {{ cp "$ASSETS/installer" "$3"; }}
+rc=0
+vendor_install fixture https://example.invalid sh "$ASSETS/calls" || rc=$?
+[ "$rc" = 44 ] && [ "$(wc -l < "$ASSETS/calls")" = 1 ] && [ "$NET_RETRY_EXHAUSTED" = 0 ]
+curl() {{ return 45; }}
+rc=0; vendor_install fixture https://example.invalid sh || rc=$?
+[ "$rc" = 45 ] && [ "$NET_RETRY_EXHAUSTED" = 1 ]
+# Validation failure after download must never retain a stale exhaustion flag.
+curl() {{ printf html > "$3"; }}
+rc=0; vendor_install fixture https://example.invalid sh || rc=$?
+[ "$rc" = 1 ] && [ "$NET_RETRY_EXHAUSTED" = 0 ]
+''')
+
+    def test_playwright_dependency_pipeline_retries(self):
+        source = (ROOT / "dev-setup-chromebook.sh").read_text()
+        helper = next(line for line in source.splitlines() if "pw_deps() {" in line)
+        definitions = "net_retry() {" + block("network policy").split("net_retry() {", 1)[1]
+        bash(definitions + "\n" + helper, '''
+sleep() { :; }
+apt_dedupe() { cat; }
+pw_cli() { echo 'dependency producer failed'; return 46; }
+rc=0; net_retry dependencies pw_deps || rc=$?
+[ "$rc" = 46 ] && [ "$NET_RETRY_EXHAUSTED" = 1 ]
+pw_cli() { echo installed; }
+apt_dedupe() { cat >/dev/null; return 47; }
+rc=0; net_retry dependencies pw_deps || rc=$?
+[ "$rc" = 47 ] && [ "$NET_RETRY_EXHAUSTED" = 1 ]
 ''')
 
     def test_password_generator(self):

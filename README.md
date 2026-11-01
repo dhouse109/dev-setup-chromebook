@@ -33,6 +33,11 @@ v99 implements the [final plan](docs/plans/v99-plan.md): bounded bulk-install re
 reports and focused Playwright, password, model-hint and package-permission fixes. Built, not yet
 confirmed run on a Chromebook. Full acceptance still belongs to the owner.
 
+The Nov 1 acceptance corrections keep v99: Reqnroll uses the installed .NET framework, Selenium's
+helper table and retro's sbin tool lookup are checked correctly, and Symfony/Inspector diagnostics
+retain real command statuses. Shell-startup probes stop only their own ssh-agents and verify cleanup.
+Typesense crash investigation preserves full logs and image/limit evidence before choosing a fix.
+
 Pip/pipx inherit invocation-only retries/timeouts; setup installs a managed apt acquisition policy.
 The wrapper bounds command attempts (three); package managers also retry internally (pip five, apt
 three), so this is not a three-request cap or an overall installation deadline.

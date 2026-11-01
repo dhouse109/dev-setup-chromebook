@@ -17,6 +17,20 @@ def wrapper(name):
 
 
 class ScreenOutput(unittest.TestCase):
+    def test_failed_setup_summary_recognized_without_complete_line(self):
+        for summary in (True, False):
+            with self.subTest(summary=summary), tempfile.TemporaryDirectory(dir=ROOT / "assets") as tmp:
+                fixture = Path(tmp) / "dev-fixture-chromebook.sh"
+                message = "Setup stage summary (Version 99)" if summary else "Stopped during setup"
+                fixture.write_text("#!/bin/bash\n" + wrapper("setup") +
+                                   f"\necho '{message}'\necho '{'=' * 65}'\nexit 42\n")
+                env = dict(os.environ, DEV_SCREEN_SAVE="1")
+                env.pop("DEV_SCREEN_OUTPUT", None)
+                result = subprocess.run(["bash", str(fixture)], env=env,
+                                        capture_output=True, text=True, timeout=5)
+                self.assertEqual(result.returncode, 42)
+                self.assertEqual("stopped before the summary" in result.stderr, not summary)
+
     def test_detached_child_cannot_hold_recorder_open(self):
         source = wrapper("test")
         self.assertEqual(source, wrapper("setup"))

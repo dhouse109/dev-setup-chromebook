@@ -10,7 +10,12 @@ to see it in context; the comment above each fix usually tells the story.
   output/error redirected. The copy waited forever for EOF after the test itself exited.
   **Fix:** send script(1)'s output through a separate tee/copy branch; its pipe descriptor no longer
   reaches the recorded command or shell-startup agents. Keep waiting for the final saved lines and
-  preserve script(1)'s exit status. No user agent is killed or reconfigured.
+  preserve script(1)'s exit status. A separate child-subreaper supervisor now wraps every startup
+  probe, adopts its detached agents and stops only those descendants. PID/start-time ledgers verify
+  no test-owned agent remains before the summary and again on EXIT; pre-existing agents stay alive.
+- **dosfstools installed but `mkfs.fat` reported missing** (`install-retro`, v99; Nov 1 2026).
+  Normal user PATH can omit `/usr/sbin`, where Debian installs `mkfs.fat`. Both the test and generated
+  exchange helper now use `/usr/sbin/mkfs.fat`; package presence alone did not prove helper operation.
 
 ## Graphics
 
