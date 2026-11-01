@@ -31,13 +31,39 @@ while True:
 
 
 def wait_file(path):
-    end = time.monotonic() + 3
-    while not path.exists() and time.monotonic() < end:
+    end = time.monotonic() + 10
+    while time.monotonic() < end:
+        try:
+            value = path.read_text().strip()
+        except FileNotFoundError:
+            value = ""
+        if value.isdigit():
+            return int(value)
         time.sleep(0.01)
-    return int(path.read_text())
+    raise AssertionError(f"fake-agent startup handshake did not finish: {path}")
 
 
 class ShellAgents(unittest.TestCase):
+    def test_browser_app_trap_retains_exit_verification_and_status(self):
+        source = (ROOT / "dev-test-chromebook.sh").read_text()
+        cleanup = "test_exit() {" + source.split("test_exit() {", 1)[1].split("\n}", 1)[0] + "\n}"
+        app_trap = source.split("    LINKS_PID=$!\n", 1)[1].split("    for _ in", 1)[0]
+        for status in (0, 42):
+            with self.subTest(status=status), tempfile.TemporaryDirectory(dir=ROOT / "assets") as tmp:
+                work = Path(tmp)
+                scratch = work / "scratch"
+                scratch.mkdir()
+                (scratch / "shell_start.py").write_text(SOURCE)
+                ledger = work / "agents.tsv"
+                ledger.touch()
+                log = work / "exit.log"
+                env = dict(os.environ, WORK=str(scratch), LOG=str(log), SHELL_AGENT_LEDGER=str(ledger))
+                code = cleanup + "\ntrap test_exit EXIT\nsleep 30 &\nLINKS_PID=$!\n" + app_trap + f"\nexit {status}\n"
+                result = subprocess.run(["bash", "-c", code], env=env, capture_output=True, timeout=15)
+                self.assertEqual(result.returncode, status, result.stderr)
+                self.assertIn("no test-owned ssh-agent remains", log.read_text())
+                self.assertFalse(scratch.exists())
+
     def test_owned_agents_cleaned_and_existing_agent_untouched(self):
         with tempfile.TemporaryDirectory(dir=ROOT / "assets") as tmp:
             work = Path(tmp)

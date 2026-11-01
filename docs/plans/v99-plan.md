@@ -504,8 +504,15 @@ For Typesense, first preserve full startup logs, immutable image metadata and sa
 limits with the owner-approved `bash tests/typesense-investigate.sh`. Never print its API-key
 arguments or credential environment. Investigate exit 139 without assuming OOM, network failure
 or an image regression, then select any image/config fix from that evidence and post the finding.
-No image/config change has yet been chosen. Targeted Chromebook results and a comment per push
-belong on PR #13. Full acceptance remains outstanding.
+Investigation on Nov 1 identified Typesense #2998: missing /proc/self/io triggers brpc's unsafe
+pre-main glog error path (confirmed by --version, gdb and real-host/container procfs probes).
+The selected fix is the upstream-documented, container-scoped fopen shim: on ENOENT for that one
+read-only procfs path, return zero counters with a one-time explicit diagnostic. Real kernel data,
+permission errors and other paths/modes retain their behavior. Build it from embedded C into
+assets/tools/typesense and mount read-only only when the host lacks the file; do not change the
+vendor image, data format, keys, memory limits or kernel. Small C regression and real authenticated
+health/CRUD tests verify it. Targeted setup applies only install-typesense plus unconditional base
+stages; the owner still performs final full acceptance. Post each push and targeted results to PR #13.
 
 ## Primary references checked for the plan
 

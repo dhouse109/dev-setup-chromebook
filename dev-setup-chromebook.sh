@@ -6210,6 +6210,48 @@ if [[ "$FLAGS" =~ " install-typesense " ]]; then
     # Typesense keeps its index in RAM (and on disk for restarts): small projects only on this machine.
     # Every request carries the API key, local ones included.
     DS_ARGS=(-p 127.0.0.1:8108:8108 -v devsvc-typesense-data:/data --memory 1g)
+    # v99 (Nov 1 2026: eldrid exit 139, empty logs, even --version): Typesense #2998.
+    # Missing optional kernel I/O accounting triggers brpc logging before glog initialization.
+    # Scope the upstream-documented shim to this container only; retain real metrics where present.
+    if [ ! -r /proc/self/io ]; then
+        TS_COMPAT_ROOT="$ASSETS/tools/typesense"
+        mkdir -p "$TS_COMPAT_ROOT"
+        cat > "$TS_COMPAT_ROOT/proc-io-compat.c" << 'TS_PROC_IO_C'
+/* dev-bundle v99, Nov 1 2026: Typesense #2998, brpc logs before glog is initialized.
+ * Kernel process-I/O accounting is optional. Only ENOENT on this one read-only path
+ * gets zero counters; do not hide access errors or replace real kernel metrics. */
+#define _GNU_SOURCE
+#include <dlfcn.h>
+#include <errno.h>
+#include <stdatomic.h>
+#include <stdio.h>
+#include <string.h>
+#include <unistd.h>
+
+static FILE *open_stream(const char *path, const char *mode, const char *symbol) {
+    FILE *(*next_open)(const char *, const char *) = dlsym(RTLD_NEXT, symbol);
+    if (!next_open) { errno = ENOSYS; return NULL; }
+    FILE *stream = next_open(path, mode);
+    if (stream || errno != ENOENT || strcmp(path, "/proc/self/io") != 0 ||
+        (strcmp(mode, "r") != 0 && strcmp(mode, "re") != 0)) return stream;
+    static char counters[] = "rchar: 0\nwchar: 0\nsyscr: 0\nsyscw: 0\nread_bytes: 0\nwrite_bytes: 0\ncancelled_write_bytes: 0\n";
+    static atomic_flag warned = ATOMIC_FLAG_INIT;
+    if (!atomic_flag_test_and_set(&warned)) {
+        static const char note[] = "dev-bundle: kernel /proc/self/io unavailable; Typesense process-I/O counters report zero (upstream #2998).\n";
+        (void)write(STDERR_FILENO, note, sizeof(note) - 1);
+    }
+    return fmemopen(counters, sizeof(counters) - 1, "r");
+}
+FILE *fopen(const char *path, const char *mode) { return open_stream(path, mode, "fopen"); }
+FILE *fopen64(const char *path, const char *mode) { return open_stream(path, mode, "fopen64"); }
+TS_PROC_IO_C
+        gcc -std=c11 -shared -fPIC -O2 -Wall -Wextra -Werror \
+            -o "$TS_COMPAT_ROOT/proc-io-compat.so.new" "$TS_COMPAT_ROOT/proc-io-compat.c" -ldl
+        mv -f "$TS_COMPAT_ROOT/proc-io-compat.so.new" "$TS_COMPAT_ROOT/proc-io-compat.so"
+        DS_ARGS+=(--mount "type=bind,src=$TS_COMPAT_ROOT/proc-io-compat.so,dst=/opt/dev-bundle/proc-io-compat.so,readonly"
+            --env LD_PRELOAD=/opt/dev-bundle/proc-io-compat.so)
+        echo "Typesense: kernel /proc/self/io absent; compatibility shim enabled (process-I/O counters zero; upstream #2998)."
+    fi
     DS_CMD=(--data-dir /data --api-key "$TYPESENSE_API_KEY" --enable-cors)
     devsvc_container typesense "$TYPESENSE_IMAGE" || true
     echo "Typesense: http://127.0.0.1:8108 here, http://devtypesense:8108 from DDEV, API key 'devsvc password typesense'. 'devsvc up typesense'."
@@ -8150,7 +8192,8 @@ mcp = FastMCP("cache-check")
 @mcp.tool
 def add(a: int, b: int) -> int:
     return a + b
-mcp.run()
+if __name__ == "__main__":
+    mcp.run()
 PY
             inspector_cache_call() {
                 local rc=0

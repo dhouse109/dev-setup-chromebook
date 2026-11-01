@@ -25,10 +25,14 @@ Shell-startup probes supervise and stop only their descendant ssh-agents. Their 
 is `assets/logs/shell-agents-<timestamp>.tsv`; dev-test checks it before its summary and again on EXIT.
 A pre-existing user agent is left alone. Failed service starts retain complete output/container logs
 in `assets/logs/devsvc-<service>-<timestamp>.startup.log`, including safe image/state/limit fields.
-Typesense's exit-139 investigation must precede any image/config fix. With approval, run
+Typesense's exit-139 investigation identified upstream #2998 (missing kernel `/proc/self/io`); setup now uses a scoped read-only preload shim only on affected hosts, with zero process-I/O counters and an explicit diagnostic. With approval, run
 `bash tests/typesense-investigate.sh` to collect full startup logs and image/host metadata under
 `assets/logs/typesense-investigation-<timestamp>`; do not upload raw logs or credential arguments.
-Targeted test commands also need individual approval; the owner performs final full acceptance.
+Targeted test commands also need individual approval; the owner performs final full acceptance. With approval,
+`python3 -B tests/refresh-retro-helper.py` refreshes only the installed helper after syntax checks,
+keeping a backup under assets/downloads/helper-backups. `python3 -B tests/warm-inspector-cache.py`
+replays only setup's real online/offline Inspector probe with managed nvm activated. Neither command
+runs the full installer; the cache probe's server starts only when executed directly or by FastMCP.
 
 Full v99 acceptance is still pending on a Chromebook: setup → init → dev-test with
 `install-all install-db-server install-lan-share install-models install-ollama-containers install-retro`.

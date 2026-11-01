@@ -447,6 +447,10 @@ export WORK; WORK=$(mktemp -d "$HOME/.cache/dev-test/run.XXXXXX")
 # v99 (Nov 1 2026): verify the ownership ledger again on exit, including early failures/signals.
 test_exit() {
     local rc=$?
+    if [ -n "${LINKS_PID:-}" ]; then
+        kill "$LINKS_PID" 2> /dev/null
+        wait "$LINKS_PID" 2> /dev/null
+    fi
     if [ -f "$WORK/shell_start.py" ]; then
         python3 "$WORK/shell_start.py" --check >> "$LOG" 2>&1 || {
             [ "$rc" != 0 ] || rc=1
@@ -2945,7 +2949,8 @@ EOF
     # The app for this section, on a free port; stopped at the end of the section (and on exit).
     python3 "$WORK/testing/links_app.py" --port-file "$WORK/testing/links.port" > "$WORK/testing/links_app.log" 2>&1 &
     LINKS_PID=$!
-    trap '[ -n "${LINKS_PID:-}" ] && kill "$LINKS_PID" 2> /dev/null; rm -rf "$WORK"' EXIT
+    # v99 (Nov 1 2026): keep the central EXIT verifier; it also stops this app.
+    trap test_exit EXIT
     for _ in $(seq 1 20); do [ -s "$WORK/testing/links.port" ] && break; sleep 0.25; done
     LINKS_URL="http://127.0.0.1:$(cat "$WORK/testing/links.port" 2> /dev/null)"; export LINKS_URL
     check "the test app (links_app.py) answers on $LINKS_URL"  'curl -fsS "$LINKS_URL/links.json" | jq -e "length == 2"'
@@ -3997,6 +4002,11 @@ EOF
     has install-meilisearch   && [ "$(docker inspect -f '{{.State.Running}}' devsvc-meilisearch 2> /dev/null)" = true ] \
         && slowwarn "Python client (meilisearch through uv)" 'uv run --no-project --with meilisearch python -c "import meilisearch, subprocess; k = subprocess.check_output([\"devsvc\", \"password\", \"meilisearch\"], stderr=subprocess.DEVNULL, text=True).strip(); print(\"meilisearch-python:\", meilisearch.Client(\"http://127.0.0.1:7700\", k).get_version()[\"pkgVersion\"])"' 300
     svc_release meilisearch
+    # v99 (Nov 1 2026): verify the missing-procfs compatibility before the real health/auth/search checks.
+    if has install-typesense && [ ! -r /proc/self/io ]; then
+        check "Typesense missing-kernel-I/O shim is mounted read-only" '[ -s "$ASSETS/tools/typesense/proc-io-compat.so" ] && docker inspect --format "{{json .Mounts}}" devsvc-typesense | jq -e --arg src "$ASSETS/tools/typesense/proc-io-compat.so" ".[] | select(.Destination == \"/opt/dev-bundle/proc-io-compat.so\" and .Source == \$src and .RW == false)" > /dev/null'
+        hint "rerun setup with install-typesense: upstream #2998 crashes before main without optional /proc/self/io"
+    fi
     has install-typesense     && svc_search typesense     8108 8108 devtypesense  "Typesense"     300
     svc_release typesense
     # --- v89 stage 3: vector stores and MongoDB ---
@@ -6108,7 +6118,7 @@ if ! has nodisk; then
             dpaths ldap "OpenLDAP database (/var/lib/ldap)" /var/lib/ldap
         fi
     fi
-    [ -n "$SVC_HAVE" ] && dpaths services "Service startup and Typesense investigation diagnostics" "$ASSETS"/logs/devsvc-*.startup.log "$ASSETS"/logs/typesense-investigation-*
+    [ -n "$SVC_HAVE" ] && dpaths services "Service startup and Typesense investigation diagnostics" "$ASSETS"/logs/devsvc-*.startup.log "$ASSETS"/logs/typesense-investigation-* "$ASSETS/tools/typesense"
     # v89: the shared services (install-cache, install-search, install-elasticsearch). Image size from
     # 'docker image inspect' (layers images share are counted in each), volume with du.
     for _s in redis memcached solr opensearch elasticsearch meilisearch typesense qdrant milvus mongodb atlas-local; do

@@ -36,7 +36,8 @@ confirmed run on a Chromebook. Full acceptance still belongs to the owner.
 The Nov 1 acceptance corrections keep v99: Reqnroll uses the installed .NET framework, Selenium's
 helper table and retro's sbin tool lookup are checked correctly, and Symfony/Inspector diagnostics
 retain real command statuses. Shell-startup probes stop only their own ssh-agents and verify cleanup.
-Typesense crash investigation preserves full logs and image/limit evidence before choosing a fix.
+Typesense startup diagnostics identified missing kernel process-I/O accounting; a scoped compatibility
+shim preserves the vendor image/data and reports zero counters only for that unavailable metric.
 
 Pip/pipx inherit invocation-only retries/timeouts; setup installs a managed apt acquisition policy.
 The wrapper bounds command attempts (three); package managers also retry internally (pip five, apt

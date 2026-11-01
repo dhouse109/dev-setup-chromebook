@@ -17,6 +17,19 @@ to see it in context; the comment above each fix usually tells the story.
   Normal user PATH can omit `/usr/sbin`, where Debian installs `mkfs.fat`. Both the test and generated
   exchange helper now use `/usr/sbin/mkfs.fat`; package presence alone did not prove helper operation.
 
+- **Typesense exits 139 before logging** (`install-typesense`, v99; Nov 1 2026, eldrid).
+  `/proc/self/io` is missing in this ChromeOS kernel. Typesense 30.2's bundled brpc samples it in a
+  global constructor, then logs the missing-file error through glog before initialization and
+  segfaults. Even `--version` crashes, with empty Docker logs; gdb confirms the static-init chain.
+  See [Typesense #2998](https://github.com/typesense/typesense/issues/2998) and
+  [brpc #3184](https://github.com/apache/brpc/pull/3184).
+  **Fix:** the upstream-documented `fopen` shim, compiled from embedded source into
+  `assets/tools/typesense`, mounted read-only and preloaded only in Typesense when the host lacks
+  that file. Only an ENOENT read of `/proc/self/io` receives zero counters, with one explicit warning;
+  real kernel counters, access errors and other paths are unchanged. This disables only the unavailable
+  process-I/O metric, not database writes, search or other monitoring. Keep the vendor image, existing
+  data volume and resource limits. Remove the workaround after a released upstream image fixes it.
+
 ## Graphics
 
 - **Windowed OpenGL falls back to software rendering** (setup base). Crostini hands Linux a virgl GPU as

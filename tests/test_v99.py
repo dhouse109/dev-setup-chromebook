@@ -1,8 +1,11 @@
 """Offline helper regression tests. Extract definitions; never source/run a bundle script."""
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
+import types
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -26,6 +29,23 @@ def bash(definitions, commands):
 
 
 class V99Helpers(unittest.TestCase):
+    def test_inspector_probe_import_does_not_start_nested_loop(self):
+        source = (ROOT / "dev-setup-chromebook.sh").read_text().split(
+            'cat > "$INSPECTOR_PROBE" << \'PY\'\n', 1)[1].split("\nPY", 1)[0]
+        class FakeMCP:
+            def __init__(self, name):
+                pass
+            def tool(self, function=None):
+                return function if function is not None else lambda function: function
+            def run(self):
+                raise AssertionError("FastMCP CLI imports must not start a nested event loop")
+        module = types.ModuleType("fastmcp")
+        module.FastMCP = FakeMCP
+        scope = {"__name__": "cache_check_import"}
+        with patch.dict(sys.modules, fastmcp=module):
+            exec(compile(source, "cache-check.py", "exec"), scope)
+        self.assertEqual(scope["add"](2, 3), 5)
+
     def test_net_retry(self):
         definitions = "net_retry() {" + block("network policy").split("net_retry() {", 1)[1]
         # Each standalone script must carry the identical implementation.
