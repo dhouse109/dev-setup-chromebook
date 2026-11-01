@@ -4,6 +4,14 @@ These are things that went wrong while building this bundle on ChromeOS's Linux 
 Chromebooks), and what fixed each one. Every fix is in the scripts. Search them for the flag in brackets
 to see it in context; the comment above each fix usually tells the story.
 
+- **Dev-test printed its summary but never returned** (setup/test recorder, v99; Nov 1 2026).
+  New-shell startup checks can leave an `ssh-agent -D` running. Passing `>(_copy)` as script(1)'s
+  output filename let that agent inherit the recorder's extra pipe descriptor, even with standard
+  output/error redirected. The copy waited forever for EOF after the test itself exited.
+  **Fix:** send script(1)'s output through a separate tee/copy branch; its pipe descriptor no longer
+  reaches the recorded command or shell-startup agents. Keep waiting for the final saved lines and
+  preserve script(1)'s exit status. No user agent is killed or reconfigured.
+
 ## Graphics
 
 - **Windowed OpenGL falls back to software rendering** (setup base). Crostini hands Linux a virgl GPU as

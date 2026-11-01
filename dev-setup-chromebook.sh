@@ -61,9 +61,11 @@ if [ -z "${DEV_SCREEN_OUTPUT:-}" ] && [ "${DEV_SCREEN_SAVE:-1}" != 0 ]; then
         if [ -t 0 ] && [ -t 1 ] && command -v script > /dev/null 2>&1; then
             # script(1) runs its command with $SHELL -c: bash here, and the run gets your SHELL back.
             _cmd="SHELL=$(printf '%q' "${SHELL:-/bin/bash}") exec $(printf '%q ' "$BASH" "$0" "$@")"
-            SHELL=/bin/bash script -qfec "$_cmd" >(_copy)
-            _rc=$?
-            wait $! 2> /dev/null   # the copy's last lines
+            # v99 (Nov 1 2026: dev-test printed its summary but never returned): passing >(_copy)
+            # as script's filename leaks its pipe fd into new-shell checks and their ssh-agent.
+            # Keep that descriptor in tee's branch only; wait still drains the copy's last lines.
+            SHELL=/bin/bash script -qfec "$_cmd" /dev/null | (trap '' INT TERM; tee -p >(_copy); wait $! 2> /dev/null)
+            _rc=${PIPESTATUS[0]}
         else
             [ -t 1 ] && export DEV_SCREEN_TTY=1   # decided before the pipe: dev-test keeps its colors on a terminal
             "$BASH" "$0" "$@" 2>&1 | (trap '' INT TERM; tee -p >(_copy); wait $! 2> /dev/null)
