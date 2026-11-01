@@ -55,12 +55,14 @@ fi
 net_retry() {   # net_retry SAFE_LABEL COMMAND [ARG...]; no expanded command/secret in our messages
     local label=$1 attempt rc=1
     shift
+    NET_RETRY_EXHAUSTED=0
     for attempt in 1 2 3; do
         printf '[network] %s: attempt %s/3\n' "$label" "$attempt" >&2
         if "$@"; then return 0; else rc=$?; fi
         case "$attempt" in 1) sleep 2 ;; 2) sleep 5 ;; esac
     done
     printf '[network] %s: failed after 3 attempts (exit %s)\n' "$label" "$rc" >&2
+    NET_RETRY_EXHAUSTED=1
     return "$rc"
 }
 # <<< dev-bundle network policy <<<

@@ -49,7 +49,11 @@ rc=0
 net_retry 'safe label' operation || rc=$?
 [ "$n" = {expected_calls} ]
 [ "$(cat sleeps)" = '{expected_sleep}' ]
-if [ {succeed_at} = 4 ]; then [ "$rc" = 42 ]; else [ "$rc" = 0 ]; fi
+if [ {succeed_at} = 4 ]; then
+    [ "$rc" = 42 ] && [ "$NET_RETRY_EXHAUSTED" = 1 ]
+else
+    [ "$rc" = 0 ] && [ "$NET_RETRY_EXHAUSTED" = 0 ]
+fi
 ''')
                 self.assertIn("safe label: attempt 1/3", result.stderr)
                 self.assertNotIn("operation", result.stderr)

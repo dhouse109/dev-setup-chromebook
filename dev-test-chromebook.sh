@@ -167,12 +167,14 @@ fi
 net_retry() {   # net_retry SAFE_LABEL COMMAND [ARG...]; no expanded command/secret in our messages
     local label=$1 attempt rc=1
     shift
+    NET_RETRY_EXHAUSTED=0
     for attempt in 1 2 3; do
         printf '[network] %s: attempt %s/3\n' "$label" "$attempt" >&2
         if "$@"; then return 0; else rc=$?; fi
         case "$attempt" in 1) sleep 2 ;; 2) sleep 5 ;; esac
     done
     printf '[network] %s: failed after 3 attempts (exit %s)\n' "$label" "$rc" >&2
+    NET_RETRY_EXHAUSTED=1
     return "$rc"
 }
 # <<< dev-bundle network policy <<<
@@ -529,6 +531,39 @@ init_pending_note
 section "Base system, Python tooling, SSH, Docker, Homebrew, Chrome (always)"
 
 check "passwordless sudo (installer ran 'passwd -d')"      'sudo -n true'
+# v99: these are installation outcomes/settings, not optional credential warnings.
+check "pip acquisition policy inherited by subprocesses" '[ "$PIP_RETRIES" = 5 ] && [ "$PIP_TIMEOUT" = 60 ]; rc=$?; if /usr/bin/python3 -m pip --help 2>/dev/null | grep -q -- "--resume-retries"; then [ "$PIP_RESUME_RETRIES" = 5 ] || exit 1; fi; exit "$rc"'
+cat > "$WORK/apt-policy.py" <<'APT_POLICY_PY'
+import sys
+s = sys.stdin.read()
+assert all(x in s for x in ('Acquire::Retries "3";', 'Acquire::http::Timeout "60";',
+                           'Acquire::https::Timeout "60";')), "apt acquisition policy differs"
+print("apt: retries 3, HTTP/HTTPS timeout 60 seconds")
+APT_POLICY_PY
+check "managed apt acquisition retry/timeout policy" 'test -f /etc/apt/apt.conf.d/80dev-bundle-network && apt-config dump | /usr/bin/python3 apt-policy.py'
+
+export DEV_TEST_FLAGS="$FLAGS"
+cat > "$WORK/setup-stages.py" <<'STAGES_PY'
+import csv
+import os
+from pathlib import Path
+p = Path(os.environ["ASSETS"]) / "setup-stages.tsv"
+if not p.is_file():
+    raise SystemExit("no v99 setup stage report: rerun setup with the same flags")
+requested = set(os.environ["DEV_TEST_FLAGS"].split())
+bad = []
+with p.open() as f:
+    for row in csv.DictReader(f, delimiter="\t"):
+        flags = set(row["flags"].split())
+        if row["status"] == "skipped":
+            print("SKIP:", row["reason"])
+        elif (not flags or flags & requested) and row["status"] != "succeeded":
+            bad.append(f'{row["stage"]}: {row["status"]} {row["reason"]}; rerun flags: {row["flags"]}')
+if bad:
+    raise SystemExit("\n".join(bad))
+print("selected stages in last setup report succeeded; tool checks still follow")
+STAGES_PY
+check "last setup has no selected failed/unreached stages" '/usr/bin/python3 setup-stages.py'
 check "apt is healthy"                                     'sudo -n apt-get check'
 check "key apt packages present"                           'for p in build-essential git curl wget nano php-cli pipx python3-venv python3-pip ffmpeg x11-utils libgtk-3-dev libwebkit2gtk-4.1-dev librsvg2-dev; do dpkg_has "$p" || { echo "missing: $p"; exit 1; }; done'
 # v93: a network whose IPv6 does not get out made downloads hang (Oct 4 2026); setup v93 then prefers IPv4.
@@ -4181,6 +4216,7 @@ if has install-agentic; then
     check "~/agentic/.env.example present"                 '[ -f ~/agentic/.env.example ]'
     warn  "~/agentic/.env has Langfuse keys"               'grep -q "^LANGFUSE_SECRET_KEY=sk-lf-" ~/agentic/.env'
     hint  "cp ~/agentic/.env.example ~/agentic/.env and add your cloud.langfuse.com keys"
+    check "agentic pip dependency consistency" '~/.agentic-env/bin/python -m pip check'
     check "~/.agentic-env import smoke (same set as the installer)" '~/.agentic-env/bin/python -c "import temporalio, temporalio.contrib.pydantic, langgraph, langgraph.checkpoint.sqlite, pydantic, langfuse, langfuse.langchain, langchain_ollama, langchain_anthropic, langchain_google_genai, dotenv, rich, pytest, pytest_asyncio"'
 
     cat > "$WORK/pydantic_smoke.py" << 'EOF'
@@ -5704,6 +5740,7 @@ if ! has nodisk; then
     dpaths() { local s=$1 i=$2; shift 2; _disk_report "$s" "$i" "$(_disk_bytes "$@")" "du: $*"; }
     dapt()   { local s=$1 i=$2; shift 2; _disk_report "$s" "$i" "$(_apt_bytes "$@")" "apt: $*"; }
 
+    dpaths base "v99 setup stage reports" "$ASSETS/setup-stages.tsv" "$ASSETS"/logs/setup-stages-*.tsv
     dpaths base "Google Chrome"                              /opt/google/chrome
     dapt   base "Docker Engine"                              docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
     dpaths base "Homebrew formulae: gcc, ddev, gh, mkcert"   "$CELLAR/gcc" "$CELLAR/ddev" "$CELLAR/gh" "$CELLAR/mkcert"
