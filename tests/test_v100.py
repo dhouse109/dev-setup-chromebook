@@ -170,6 +170,15 @@ class FontsAndMedia(Fixture):
 
 
 class Colors(Fixture):
+    def test_default_data_publication_repeats_over_readonly_file(self):
+        start = '    # v100 (Nov 5 2026): only our default reset is bundled'
+        block = start + source('setup').split(start, 1)[1].split('    # v100 (Nov 5 2026): companion location', 1)[0]
+        self.bash(block + '\n' + block)
+        data = self.work / 'home/.local/lib/dev-retro/colors/default.reg'
+        self.assertTrue(data.read_text().startswith('Windows Registry Editor Version 5.00\n'))
+        self.assertEqual(data.stat().st_mode & 0o777, 0o444)
+        self.assertEqual([p.name for p in data.parent.iterdir()], ['default.reg'])
+
     def test_shared_devtest_color_fixture(self):
         h = self.work / 'helper'; h.write_text(helper())
         reset = self.work / 'default.reg'

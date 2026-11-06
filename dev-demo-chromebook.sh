@@ -4307,6 +4307,7 @@ echo "built: dos16.exe dos32.exe (DOSBox-X)  win16.exe win32.exe win64.exe (Wine
 BUILD_EOF
     # v92: the two STEPS files are documentation the bundle owns, so they are rewritten on every run
     # (gen_file keeps a file that exists; a retro/matrix folder made by v85-v91 has the old Delphi notes).
+    # v100 (Nov 5–6 2026): qualified owner observations and manual recovery; generated docs refresh on rerun.
     cat > "$DIR/STEPS-delphi1.md" << 'EOF'
 # Delphi 1.0 on this Chromebook (dev-demo v93)
 
@@ -4368,6 +4369,50 @@ the desktop to black or reapplies a saved scheme over manual changes. The select
 dev-test warns on manual drift or an active theme and never repairs it. Existing COM prefixes are
 not changed. The disposable real-Wine integration check uses only a test-owned scratch prefix.
 
+v100 owner observations (Nov 5–6 2026), not a claim that every Delphi version/component works:
+Delphi 3 Client/Server installed under Wine from loose CD files and its IDE ran. Once installed,
+plain `delphi 3 setup` reapplies settings; to revisit the CD menu for Local InterBase or InstallShield
+Express use `delphi 3 setup "$HOME/delphi/install/3/INSTALL.EXE"`. Setup now preserves manual colors.
+The four Internet Solutions Pack controls HTTPCT.OCX, POPCT.OCX, SMTPCT.OCX and WINSCK.OCX reported
+registration errors in that install. Clicking OK let Delphi install/run; those optional controls
+may still be unavailable. This is not advice to ignore unrelated installer errors or a claim that
+all add-ons work. Delphi 4–7 remain unverified on the owner's media.
+
+Delphi 1 and Delphi 3 IDEs predate normal wheel support and ignored the wheel under Wine, while
+Notepad in the same prefix scrolled. Use Ctrl+Up/Down and Page Up/Down in the IDE. Delphi 1 files
+belong in a folder such as `~/win31/install/apps/Delphi1` (a name containing delphi helps discovery);
+Delphi 3–7 use `~/delphi/install/N`, as loose CD files or an ISO. The Delphi 3–7 IDE launchers appear
+after their `delphi N setup`, not merely install-retro. The bare DOSBox-X launcher is Debian's own
+entry; use win31/win95/retro commands for bundle guest settings.
+
+v100 guest hand procedures (Nov 5–6 owner findings): DOSBox-X full screen can lose keyboard
+focus after switching windows on ChromeOS. Click the picture; try the current mapper's Ctrl+F10
+mouse-release shortcut and Alt+Enter if mapped. New/absent host-key settings use Ctrl+Shift, so
+Ctrl+Shift+F toggles full screen; explicit owner mappings remain. Verify these on each guest during
+acceptance: the host key alone is not asserted to release the mouse. No maximize=true default is
+added. F11/F12 mappings are under ChromeOS Settings > Device > Keyboard and inputs > Customize
+keyboard keys; QEMU instead uses Ctrl+Alt+G for a captured PS/2 mouse and `<guest> keys ctrl-alt-del`
+for NT/2000 login.
+
+Change output/scaler in the config with the guest off, not through the Video menu while running,
+especially during Setup. One owner Windows 95 Setup run became unbootable after a live menu change.
+If the picture is lost in Windows 95, the owner's blind Start-menu shutdown sequence was Ctrl+Esc,
+U, Enter; it is not a universal DOS/win31/NT shutdown shortcut. Do not force a renderer change to
+recover it. Windows 3.1 floppy setup queues all .IMG/.IMA files on A: in filename order; DOS > Swap
+floppy advances the queue. At the end choose Return to MS-DOS, then restart with win31.
+
+For NT/2000, reach the installed desktop, shut down, exchange enable, then put/get with the guest
+off. A reported D: is a convention; check the exchange volume's actual letter in older installs.
+In Disk Management assign an unused letter to an existing FAT volume with no letter, without
+formatting. If it says unallocated, stop: recreating it on Linux makes an empty disk and does not
+recover a deleted partition. Never format exchange in Windows; mtools expects the Linux-created
+FAT layout. Avoid writing C: directly from Linux: qcow2/NTFS are not exchange FAT disks and writes
+must never race a guest. Windows 2000 Setup's FAT choice above 2 GB means FAT32; after a backup,
+an optional in-guest `convert C: /fs:ntfs` changes it later (use the actual Windows system letter,
+which may differ on old installs). Conversion is never part of dev-test or automatic acceptance.
+Windows 2000 has no built-in Explorer ZIP support: unzip your archive on Linux into the guest
+workspace, then put the resulting folder. No extra ZIP software/media is downloaded by the bundle.
+
 ## Wine: the `delphi1` command (forms, code, non-database programs)
 
     delphi1 setup      # a 32-bit Wine prefix (~/.local/share/wine/delphi1), Delphi's SETUP.EXE in a
@@ -4409,12 +4454,13 @@ Needs your own Windows 3.1/3.11 media.
 1. Copy the Windows 3.1x setup disks (loose files, or .img/.ima images) into ~/win31/install/windows
 2. Delphi's files stay in ~/win31/install/apps   (D:\ inside win31)
 3. win31 setup      # installs Windows 3.11 into C:\WINDOWS (leave 32-bit disk access OFF)
-4. win31            # boots Windows; File > Run  D:\SETUP.EXE  installs Delphi onto C:
+4. win31            # boots Windows; File > Run  D:\Delphi1\SETUP.EXE (adjust to your media subfolder) installs Delphi onto C:
 5. win31            # from then on, Delphi is in Program Manager
 
 Both routes run the same 16-bit code, which this demo's win16 item exercises directly.
 EOF
     # v93: STEPS-delphi.md, Delphi 3, 4, 5, 6 and 7 (real Windows guests and 'delphi N' under Wine).
+    # v100 (Nov 5–6 2026): D3 observations are specific to this media, not proof of every optional component.
     cat > "$DIR/STEPS-delphi.md" << 'EOF'
 # Delphi 3, 4, 5, 6 and 7 on this Chromebook (dev-demo v93)
 
@@ -4425,15 +4471,14 @@ The media and serial numbers are yours; nothing is downloaded.
 | Delphi | Real Windows guest (engine)          | Wine (`delphi N`, Windows version reported) | Wine status                 |
 |--------|--------------------------------------|---------------------------------------------|-----------------------------|
 | 1      | win31 (DOSBox-X)                     | `delphi1` (its own command)                 | works; no debugger, no BDE  |
-| 3      | win95 (DOSBox-X) or winnt40 (QEMU)   | `delphi 3` (win95)                          | untested on real discs      |
+| 3      | win95 (DOSBox-X) or winnt40 (QEMU)   | `delphi 3` (win95)                          | owner-tested D3 Client/Server install/IDE; optional controls unverified |
 | 4      | win95 (DOSBox-X) or winnt40 (QEMU)   | `delphi 4` (win98)                          | untested on real discs      |
 | 5      | win2000 (QEMU); NT 4.0 also works    | `delphi 5` (win2k)                          | untested on real discs      |
 | 6      | win2000 (QEMU); NT 4.0 SP6a likely   | `delphi 6` (win2k)                          | untested; old debugger reports |
 | 7      | win2000 (QEMU)                       | `delphi 7` (winxp)                          | untested; the best-known case |
 
 Delphi 6 and 7 do not support Windows 95, and Windows 3.1 runs only Delphi 1. Delphi 3 and 4 can share one
-guest; 5, 6 and 7 share win2000 (Delphi 5 also runs on 95, 98 and NT 4.0, but 2000 is its era, as under Wine). The QEMU guests run close to native speed only with KVM (`retro` says whether
-this Chromebook has it); without it they emulate the CPU and are slow.
+guest; 5, 6 and 7 share win2000 (Delphi 5 also runs on 95, 98 and NT 4.0, but 2000 is its era, as under Wine). QEMU acceleration is selected per guest: win2000 defaults to TCG; NT 4.0 keeps auto with KVM when usable. `<guest> accel` reports the actual selection and reason; availability is not a speed guarantee.
 
 v100 font diagnostics (Nov 5 finding): explicit `delphi1 setup` / `delphi N setup` checks Arial,
 Courier New, Tahoma and bold Tahoma files and retries acquisition once if the command fails or files
@@ -4494,12 +4539,28 @@ the desktop to black or reapplies a saved scheme over manual changes. The select
 dev-test warns on manual drift or an active theme and never repairs it. Existing COM prefixes are
 not changed. The disposable real-Wine integration check uses only a test-owned scratch prefix.
 
+v100 owner observations (Nov 5–6 2026), not a claim that every Delphi version/component works:
+Delphi 3 Client/Server installed under Wine from loose CD files and its IDE ran. Once installed,
+plain `delphi 3 setup` reapplies settings; to revisit the CD menu for Local InterBase or InstallShield
+Express use `delphi 3 setup "$HOME/delphi/install/3/INSTALL.EXE"`. Setup now preserves manual colors.
+The four Internet Solutions Pack controls HTTPCT.OCX, POPCT.OCX, SMTPCT.OCX and WINSCK.OCX reported
+registration errors in that install. Clicking OK let Delphi install/run; those optional controls
+may still be unavailable. This is not advice to ignore unrelated installer errors or a claim that
+all add-ons work. Delphi 4–7 remain unverified on the owner's media.
+
+Delphi 1 and Delphi 3 IDEs predate normal wheel support and ignored the wheel under Wine, while
+Notepad in the same prefix scrolled. Use Ctrl+Up/Down and Page Up/Down in the IDE. Delphi 1 files
+belong in a folder such as `~/win31/install/apps/Delphi1` (a name containing delphi helps discovery);
+Delphi 3–7 use `~/delphi/install/N`, as loose CD files or an ISO. The Delphi 3–7 IDE launchers appear
+after their `delphi N setup`, not merely install-retro. The bare DOSBox-X launcher is Debian's own
+entry; use win31/win95/retro commands for bundle guest settings.
+
 ## Wine: the `delphi` command
 
     delphi                 which versions are set up, and where each one's media goes
     delphi 7 setup         a 32-bit prefix (~/.local/share/wine/delphi7), the CD as drive D: (an .iso is
                            unpacked once into ~/delphi/.cd/7), its installer in a virtual desktop (keep
-                           the default folders), then: Windows XP reported, black desktop, TEMP=C:\TEMP,
+                           the default folders), then: Windows XP reported, preserved colors, TEMP=C:\TEMP,
                            MS Sans Serif -> Tahoma, smoothed core fonts, launcher icons pointed at 'delphi 7'
     delphi 7               the IDE, in a virtual desktop the size of the screen
     delphi 7 run X.EXE     another program in the same desktop (a compiled project, a tool from Bin\)
@@ -4572,6 +4633,7 @@ your discs: whether an old BDE reports "insufficient disk space" on these larger
 large free space). If it does, a smaller disk is the first thing to try (RETRO_WIN95_DISK_MB for a new
 win95 disk); note what happened, and the next bundle version can build the fix in.
 EOF
+    # v100 (Nov 5–6 2026): distinguish exchange/drive-letter conventions and guest-specific key procedures.
     cat > "$DIR/STEPS-winnt.md" << 'EOF'
 # Windows NT 4.0 and Windows 2000 in QEMU (dev-demo v93)
 
@@ -4587,7 +4649,7 @@ is there. Product keys are yours too. Delphi in these guests: STEPS-delphi.md.
     win2000 setup      # the same with an 8 GB disk
     winnt40            # boots the installed guest; 'winnt40 setup' again resumes a half-done install
 
-Drives inside the guest: C: the disk, D: the exchange disk (FAT16, 1 GB by default: RETRO_EXCHANGE_MB in
+Typical completed-install letters (after exchange enable; verify in Windows): C: the disk, D: the exchange disk (FAT16, 1 GB by default: RETRO_EXCHANGE_MB in
 ~/.config/dev-init/secrets.env, read when it is made; `winnt40 put FILE` and `winnt40 get` while the guest is
 off; `winnt40 exchange info`), E: the install CD (`winnt40 cd --windows FILE` swaps it), F: the program CD.
 
@@ -4617,6 +4679,34 @@ withholds exchange instead. Format/recreate exchange only from Linux: put/get re
 Start with `exchange info` and `get` to back up accessible files before considering `exchange recreate`.
 A deleted partition is not recovered by recreate; it makes an empty disk. Never format exchange in
 Windows, and never write the guest's qcow2/NTFS C: with host mtools.
+
+v100 guest hand procedures (Nov 5–6 owner findings): DOSBox-X full screen can lose keyboard
+focus after switching windows on ChromeOS. Click the picture; try the current mapper's Ctrl+F10
+mouse-release shortcut and Alt+Enter if mapped. New/absent host-key settings use Ctrl+Shift, so
+Ctrl+Shift+F toggles full screen; explicit owner mappings remain. Verify these on each guest during
+acceptance: the host key alone is not asserted to release the mouse. No maximize=true default is
+added. F11/F12 mappings are under ChromeOS Settings > Device > Keyboard and inputs > Customize
+keyboard keys; QEMU instead uses Ctrl+Alt+G for a captured PS/2 mouse and `<guest> keys ctrl-alt-del`
+for NT/2000 login.
+
+Change output/scaler in the config with the guest off, not through the Video menu while running,
+especially during Setup. One owner Windows 95 Setup run became unbootable after a live menu change.
+If the picture is lost in Windows 95, the owner's blind Start-menu shutdown sequence was Ctrl+Esc,
+U, Enter; it is not a universal DOS/win31/NT shutdown shortcut. Do not force a renderer change to
+recover it. Windows 3.1 floppy setup queues all .IMG/.IMA files on A: in filename order; DOS > Swap
+floppy advances the queue. At the end choose Return to MS-DOS, then restart with win31.
+
+For NT/2000, reach the installed desktop, shut down, exchange enable, then put/get with the guest
+off. A reported D: is a convention; check the exchange volume's actual letter in older installs.
+In Disk Management assign an unused letter to an existing FAT volume with no letter, without
+formatting. If it says unallocated, stop: recreating it on Linux makes an empty disk and does not
+recover a deleted partition. Never format exchange in Windows; mtools expects the Linux-created
+FAT layout. Avoid writing C: directly from Linux: qcow2/NTFS are not exchange FAT disks and writes
+must never race a guest. Windows 2000 Setup's FAT choice above 2 GB means FAT32; after a backup,
+an optional in-guest `convert C: /fs:ntfs` changes it later (use the actual Windows system letter,
+which may differ on old installs). Conversion is never part of dev-test or automatic acceptance.
+Windows 2000 has no built-in Explorer ZIP support: unzip your archive on Linux into the guest
+workspace, then put the resulting folder. No extra ZIP software/media is downloaded by the bundle.
 
 ## First boot, NT 4.0
 1. Text-mode setup: create the system partition on the 4 GB disk (NT 4.0 cannot format more), FAT or NTFS.

@@ -9928,8 +9928,8 @@ fi
 # Nothing is downloaded for any operating system: the media and product keys are yours, in each
 # ~/<guest>/install folder (Delphi 1 in ~/win31/install/apps). No disk image is created here: '<cmd> setup'
 # creates its disk after a free-space check (min(10 GB, 15% of the Linux disk) must stay free; RETRO_MIN_FREE_GB
-# overrides it). QEMU uses KVM where /dev/kvm exists (you are added to the group that owns it) and software
-# emulation otherwise. '<guest> fonts' puts the TrueType core fonts and Tahoma from the Wine prefixes on a
+# overrides it). v100 (Nov 5 2026): QEMU selection is per guest; win2000 defaults to TCG, NT stays auto
+# (KVM when usable, otherwise TCG). '<guest> fonts' puts the core fonts and Tahoma from Wine prefixes on a
 # guest, with a README on installing them and on font smoothing (none of these Windows has ClearType); DOS
 # programs draw their text screens in a TrueType font (DOSBox-X output=ttf, ~/.config/dev-retro/dos.conf);
 # delphi1 sets Integrated debugging off and the editor font in DELPHI.INI. 'retro help' lists every subcommand.
@@ -10483,7 +10483,7 @@ exch_put() {   # exch_put GUEST PATH...: copy files or folders into the exchange
     for p in "$@"; do
         [ -e "$p" ] || die "no such file: $p"
         mcopy -i "$WS/exchange.img@@$EXCH_OFF" -s -o -Q "$p" :: || die "could not copy $p (is the exchange disk full? '$GUEST get' lists it)"
-        echo "put $(basename "$p") -> D:\\$(basename "$p")"
+        echo "put $(basename "$p") -> exchange disk (normally D:\\$(basename "$p"); use its assigned Windows letter)"
     done
 }
 exch_get() {   # exch_get GUEST [NAME]: copy NAME (or everything) out into WS/from-guest
@@ -11153,7 +11153,9 @@ qemu_launch() {   # qemu_launch BOOT(c|d|a) [CD] [FLOPPY]
     fi
     if [ -n "$app" ]; then
         args+=(-drive "file=$(qq "$app"),if=ide,index=3,media=cdrom,readonly=on")
-        echo "F: $(basename "$app")"
+        # v100 (Nov 5–6 2026): CD letters are provisional while exchange is withheld during setup.
+        if [ "${QEMU_SETUP:-0}" = 1 ]; then echo "App CD: $(basename "$app") on IDE index 3 (Setup assigns its letter)."
+        else echo "App CD: $(basename "$app") (normally F:; check Windows drive letters)."; fi
     else
         args+=(-drive "if=ide,index=3,media=cdrom")
     fi
@@ -11189,7 +11191,7 @@ nt_cmd() {
             installed "$GUEST" || die "$TITLE is not installed yet ('$GUEST setup')."
             exchange_gate check || die "Exchange is withheld: after completing Windows and shutting down, run '$GUEST exchange enable'."
             exch_put "$GUEST" "$f" > /dev/null || exit 1
-            echo "$(basename "$f") is on the exchange disk: D:\\$(basename "$f") inside $TITLE."
+            echo "$(basename "$f") is on the exchange disk (normally D:\\$(basename "$f") inside $TITLE; use its assigned drive letter)."
             qemu_launch c "$(install_iso)" ;;
         setup)
             shift
@@ -12442,9 +12444,11 @@ DEVRETRO_EOF
     mv -f ~/.local/lib/dev-retro/dev-retro.new ~/.local/lib/dev-retro/dev-retro
     # v100 (Nov 5 2026): only our default reset is bundled (12B); no Breeze Dark color data.
     mkdir -p ~/.local/lib/dev-retro/colors
+    # v100 (Nov 6 2026 review): fresh temp output survives interruption after chmod made an older temp read-only.
+    RETRO_COLOR_TMP=$(mktemp ~/.local/lib/dev-retro/colors/.default.reg.XXXXXX)
     # v100: build the registry-format header separately so CI's bundle-version scan sees only v100.
-    printf 'Windows Registry Editor %s\n\n' 'Version'' 5.00' > ~/.local/lib/dev-retro/colors/default.reg.new
-    cat >> ~/.local/lib/dev-retro/colors/default.reg.new << 'RETRO_COLOR_DEFAULT'
+    printf 'Windows Registry Editor %s\n\n' 'Version'' 5.00' > "$RETRO_COLOR_TMP"
+    cat >> "$RETRO_COLOR_TMP" << 'RETRO_COLOR_DEFAULT'
 ; v100 (Nov 5 2026): Wine defaults by removing known overrides; no third-party palette.
 [HKEY_CURRENT_USER\Control Panel\Colors]
 "ActiveBorder"=-
@@ -12478,8 +12482,8 @@ DEVRETRO_EOF
 "WindowFrame"=-
 "WindowText"=-
 RETRO_COLOR_DEFAULT
-    chmod 444 ~/.local/lib/dev-retro/colors/default.reg.new
-    mv -f ~/.local/lib/dev-retro/colors/default.reg.new ~/.local/lib/dev-retro/colors/default.reg
+    chmod 444 "$RETRO_COLOR_TMP"
+    mv -f "$RETRO_COLOR_TMP" ~/.local/lib/dev-retro/colors/default.reg
     # v100 (Nov 5 2026): companion location for retained font logs, refreshed when the bundle moves.
     printf '%s\n' "$ASSETS" > ~/.local/lib/dev-retro/assets-path.new
     mv -f ~/.local/lib/dev-retro/assets-path.new ~/.local/lib/dev-retro/assets-path

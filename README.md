@@ -27,7 +27,7 @@ the whole lab, as it is.
 
 All four take the same flags, so `install-web install-node` means the same thing to each of them.
 
-> **Current version: v100.** [CHANGELOG.md](CHANGELOG.md) has the full history.
+> **Current version: v100.** Built in stages; owner acceptance is pending. [CHANGELOG.md](CHANGELOG.md) has the full history.
 
 v99 implements the [final plan](docs/plans/v99-plan.md): bounded bulk-install retries, stage/EXIT
 reports and focused Playwright, password, model-hint and package-permission fixes. The owner accepted
@@ -170,6 +170,10 @@ heavy engines run one at a time, because Linux gets about 6.4 GB of an 8 GB Chro
 | `install-asm-arm` | AArch64 cross toolchain + qemu-user |
 | `install-cloudflared` | Cloudflare Tunnel (puts local services on the internet) |
 | `install-ansible-core` | Ansible without the community collections |
+
+Retro guest hand checks and the qualified Delphi 1/3 install, wheel, recovery and file-transfer findings
+are in [docs/dev-demo.md](docs/dev-demo.md) and the generated STEPS files. Inspector remains under
+its separate investigation gate in [the v100 plan](docs/plans/v100-plan.md); no v100 acceptance is claimed.
 
 ## Requirements
 

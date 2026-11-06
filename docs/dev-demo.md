@@ -98,7 +98,7 @@ The MCP demo (`net/mcp-hello`, shown with `install-lan`, v84) is a small MCP ser
 
 The COM and retro demos (`com/hello-com` with `install-com`, `retro/matrix` with `install-retro`, v85) are generated in place and build on demand, so their `~/dev-demo` footprint is under 1 MB each; the compilers (Open Watcom, mingw), Wine and DOSBox-X come from setup, and the Wine prefix lives in `~/.local/share/wine/com`. `run-hello-com.sh` builds a COM component with widl + mingw and drives it under Wine: an in-process DLL (`regsvr32` + `CoCreateInstance`), an out-of-process EXE (the DCOM activation path, with distinct client and server pids), the 32-bit build, the generated type library, and unregister. `run-matrix.sh` builds one program each for DOS 16, DOS/4GW 32, Win16, Win32 and Win64 and runs each on its engine — DOS in a DOSBox-X window, Windows under Wine — plus a `delphi1` item (v92: rewritten around 'delphi1 setup' and 'delphi1', with the Wine route's limits: no integrated debugger, Database Desktop or BDE tables) whose `STEPS-delphi1.md` covers both the Wine quick route and the DOSBox-X + Windows 3.11 faithful route (Windows media is your own, in `~/win31/install`).
 
-Since v92 `run-matrix.sh` also runs its builds inside the retro guests through `retro run --in`: `in-win31` (the Win16 build in Windows 3.1), `in-win95`, `in-winnt40` and `in-win2000` (the Win32 build, on the guest's exchange disk, D:), each only when that guest is installed; `which` shows what `retro run` picks for each build and why, and `winnt` prints `STEPS-winnt.md` (the NT 4.0 and 2000 first boots). Both STEPS files are rewritten on every dev-demo run, so a matrix folder from an earlier version gets the v92 notes. `base/voting-app` now opens the results page first and the vote page last, and says to resize the window if a vote button will not click (the upstream page's label can sit over the buttons).
+Since v92 `run-matrix.sh` also runs its builds inside the retro guests through `retro run --in`: `in-win31` (the Win16 build in Windows 3.1), `in-win95`, `in-winnt40` and `in-win2000` (the Win32 build, on the guest's exchange disk (normally D:, after NT/2000 completion and exchange enable)), each only when that guest is installed; `which` shows what `retro run` picks for each build and why, and `winnt` prints `STEPS-winnt.md` (the NT 4.0 and 2000 first boots). All three STEPS files are rewritten on every dev-demo run, so a matrix folder from an earlier version gets the v92 notes. `base/voting-app` now opens the results page first and the vote page last, and says to resize the window if a vote button will not click (the upstream page's label can sit over the buttons).
 
 The personal-agent demos (`agents/hermes` with `install-hermes`, `agents/openclaw` with `install-openclaw`, v86) download nothing; the agents themselves come from setup (roughly 0.6–1 GB in `~/.hermes`, 900 MB for OpenClaw's npm package). Both launchers have a `chat` item, an `offline` item that runs one turn against `mockllm.py`, a stand-in model on this machine, and prints what the agent sent it (its tools and the size of its prompt), and a `skill` item that copies `dev-bundle`, a skill written here, into `~/.hermes/skills` or `~/.openclaw/skills`. `run-openclaw.sh dashboard` runs the gateway on loopback and opens the Control UI until you press Enter, and `audit` runs OpenClaw's security audit. `chat` needs a model from init: a cloud key or a bigger machine's Ollama, since both agents need a 64K-token context.
 
@@ -263,3 +263,47 @@ host is normally 10.0.2.2. Try a known host service and another laptop by its ex
 address first. Plain HTTP may work; period browser HTTPS/TLS support is limited. MagicDNS, inbound
 access, ping responses and DCOM are not promised. No host forwarding or win31 networking is added;
 the broad guest network test matrix remains deferred to v101. Shut Windows down before off/on.
+
+v100 owner observations (Nov 5–6 2026), not a claim that every Delphi version/component works:
+Delphi 3 Client/Server installed under Wine from loose CD files and its IDE ran. Once installed,
+plain `delphi 3 setup` reapplies settings; to revisit the CD menu for Local InterBase or InstallShield
+Express use `delphi 3 setup "$HOME/delphi/install/3/INSTALL.EXE"`. Setup now preserves manual colors.
+The four Internet Solutions Pack controls HTTPCT.OCX, POPCT.OCX, SMTPCT.OCX and WINSCK.OCX reported
+registration errors in that install. Clicking OK let Delphi install/run; those optional controls
+may still be unavailable. This is not advice to ignore unrelated installer errors or a claim that
+all add-ons work. Delphi 4–7 remain unverified on the owner's media.
+
+Delphi 1 and Delphi 3 IDEs predate normal wheel support and ignored the wheel under Wine, while
+Notepad in the same prefix scrolled. Use Ctrl+Up/Down and Page Up/Down in the IDE. Delphi 1 files
+belong in a folder such as `~/win31/install/apps/Delphi1` (a name containing delphi helps discovery);
+Delphi 3–7 use `~/delphi/install/N`, as loose CD files or an ISO. The Delphi 3–7 IDE launchers appear
+after their `delphi N setup`, not merely install-retro. The bare DOSBox-X launcher is Debian's own
+entry; use win31/win95/retro commands for bundle guest settings.
+
+v100 guest hand procedures (Nov 5–6 owner findings): DOSBox-X full screen can lose keyboard
+focus after switching windows on ChromeOS. Click the picture; try the current mapper's Ctrl+F10
+mouse-release shortcut and Alt+Enter if mapped. New/absent host-key settings use Ctrl+Shift, so
+Ctrl+Shift+F toggles full screen; explicit owner mappings remain. Verify these on each guest during
+acceptance: the host key alone is not asserted to release the mouse. No maximize=true default is
+added. F11/F12 mappings are under ChromeOS Settings > Device > Keyboard and inputs > Customize
+keyboard keys; QEMU instead uses Ctrl+Alt+G for a captured PS/2 mouse and `<guest> keys ctrl-alt-del`
+for NT/2000 login.
+
+Change output/scaler in the config with the guest off, not through the Video menu while running,
+especially during Setup. One owner Windows 95 Setup run became unbootable after a live menu change.
+If the picture is lost in Windows 95, the owner's blind Start-menu shutdown sequence was Ctrl+Esc,
+U, Enter; it is not a universal DOS/win31/NT shutdown shortcut. Do not force a renderer change to
+recover it. Windows 3.1 floppy setup queues all .IMG/.IMA files on A: in filename order; DOS > Swap
+floppy advances the queue. At the end choose Return to MS-DOS, then restart with win31.
+
+For NT/2000, reach the installed desktop, shut down, exchange enable, then put/get with the guest
+off. A reported D: is a convention; check the exchange volume's actual letter in older installs.
+In Disk Management assign an unused letter to an existing FAT volume with no letter, without
+formatting. If it says unallocated, stop: recreating it on Linux makes an empty disk and does not
+recover a deleted partition. Never format exchange in Windows; mtools expects the Linux-created
+FAT layout. Avoid writing C: directly from Linux: qcow2/NTFS are not exchange FAT disks and writes
+must never race a guest. Windows 2000 Setup's FAT choice above 2 GB means FAT32; after a backup,
+an optional in-guest `convert C: /fs:ntfs` changes it later (use the actual Windows system letter,
+which may differ on old installs). Conversion is never part of dev-test or automatic acceptance.
+Windows 2000 has no built-in Explorer ZIP support: unzip your archive on Linux into the guest
+workspace, then put the resulting folder. No extra ZIP software/media is downloaded by the bundle.

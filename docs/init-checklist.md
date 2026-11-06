@@ -142,7 +142,7 @@ The same expansion is used by all three scripts, so a flag set that installs is 
 | `install-java` | default-jdk (21 on trixie, the same JDK the Android stacks use) and JAVA\_HOME, Maven from apt, Gradle from Homebrew (v63, part of install-languages) |
 | `install-asm-arm` | AArch64 cross toolchain and qemu-user; opt-in only, not part of install-all (v63) |
 | `install-com` | COM / DCOM / ActiveX development under Wine: wine (64 + 32-bit, i386 multiarch), mingw-w64 with widl, libwine-dev (the system .idl files) and stdole2.tlb, winetricks. A WoW64 Wine prefix at \~/.local/share/wine/com (the wine-com wrapper runs programs in it) and DEV\_COM\_\* in \~/.bashrc. Build a server with widl + mingw, register it with regsvr32, create it with CoCreateInstance, in-process or out-of-process. ATL/MFC (MSVC only) and a cross-machine DCOM server (that side belongs on a Windows laptop) are not covered. Opt-in, in no group (v85) |
-| `install-retro` | DOS and old Windows: Open Watcom v2 in /opt/watcom (wcl for 16-bit DOS, wcl386 for DOS/4GW 32-bit and, with -bt=nt, Win32; -bt=windows for Win16), and five guests from your own media, each with a command and a launcher icon: win31 (Windows 3.1x) and win95 (Windows 95, FAT32 on OSR2) on DOSBox-X, winnt40 (NT 4.0) and win2000 on QEMU (KVM where /dev/kvm exists; setup adds you to the group that owns it), delphi1 (Delphi 1 alone, in its own 32-bit Wine prefix). Media goes in \~/\<guest>/install (Delphi 1: \~/win31/install/apps); '\<cmd> setup' creates the guest's disk after a free-space check. 'retro run FILE' runs one program on the engine its header calls for. Adds qemu-system-x86, qemu-system-gui, qemu-utils, mtools, dosfstools and (v93) libarchive-tools. Pulls in install-com. Opt-in, in no group (v85; QEMU, win95, winnt40, win2000, delphi1 and retro since v92; program CDs as F:, the disk-size settings, win95 snapshots and the delphi command for Delphi 3, 4, 5, 6 and 7 since v93) |
+| `install-retro` | DOS and old Windows: Open Watcom v2 in /opt/watcom (wcl for 16-bit DOS, wcl386 for DOS/4GW 32-bit and, with -bt=nt, Win32; -bt=windows for Win16), and five guests from your own media, each with a command and a launcher icon: win31 (Windows 3.1x) and win95 (Windows 95, FAT32 on OSR2) on DOSBox-X, winnt40 (NT 4.0) and win2000 on QEMU (NT auto/KVM when usable, win2000 defaults to TCG; setup handles KVM group membership), delphi1 (Delphi 1 alone, in its own 32-bit Wine prefix). Media goes in \~/\<guest>/install (Delphi 1: \~/win31/install/apps); '\<cmd> setup' creates the guest's disk after a free-space check. 'retro run FILE' runs one program on the engine its header calls for. Adds qemu-system-x86, qemu-system-gui, qemu-utils, mtools, dosfstools and (v93) libarchive-tools. Pulls in install-com. Opt-in, in no group (v85; QEMU, win95, winnt40, win2000, delphi1 and retro since v92; program CDs as F:, the disk-size settings, win95 snapshots and the delphi command for Delphi 3, 4, 5, 6 and 7 since v93) |
 | `install-hermes` | Hermes Agent (Nous Research), a personal agent with memory, skills and a messaging gateway: its own installer from GitHub, code in \~/.hermes/hermes-agent, the hermes command in \~/.local/bin, data in \~/.hermes. No setup wizard, gateway service, desktop-control driver or browser tools (HERMES\_BROWSER=1 adds the browser). It keeps to its own logins, so it never borrows Claude Code's. Needs a model with a 64K-token context: init sets one from secrets.env. Opt-in, in no group (v86) |
 | `install-openclaw` | OpenClaw, a personal agent with a gateway and Control UI: the npm package openclaw (about 900 MB) on nvm's Node 24.16+ or 26.1+, so it pulls in install-node. No gateway service; the gateway stays on loopback with a token; anonymous feature statistics recorded off (the daily update check stays on). No ClawHub skills. OpenClaw runs shell commands without asking by default; init sets tools.exec.mode=ask. Needs a model with a 64K-token context: init sets one from secrets.env. Opt-in, in no group (v86) |
 
@@ -613,7 +613,7 @@ Since v93 the laptops talk over Tailscale: Linux on these Chromebooks now runs a
 
 COM and retro (`install-com`, `install-retro`, v85) need no accounts. COM registers into a local Wine prefix (`~/.local/share/wine/com`); `wine-com` runs programs in it, and widl + mingw build a server that `regsvr32` registers and `CoCreateInstance` activates, in-process or out-of-process — the same activation path DCOM uses across machines, whose server side belongs on a Windows laptop. Retro builds DOS 16/32-bit (run in DOSBox-X) and Win16/Win32/Win64 (run under Wine) from Open Watcom and mingw; put Windows 3.1x media in `~/win31/install/windows` and installers like Delphi 1 in `~/win31/install/apps`, then `win31 setup`.
 
-Since v92 the retro guests need no account either, only your media and keys. Init reports each one as a skip (you may want only some): `win31` media in `~/win31/install/windows`, the Windows 95 CD's `.iso` in `~/win95/install` (OSR2 asks for the OEM key, `xxxxx-OEM-xxxxxxx-xxxxx`), the NT 4.0 and 2000 CD `.iso` files in `~/winnt40/install` and `~/win2000/install` (service-pack `.iso` files there become a second CD), then `<cmd> setup`. A setup refused for disk space says so in init and in `retro`. KVM is a todo only when `/dev/kvm` exists and the group that owns it (kvm on Debian) is not active yet (shut Linux down and reopen it); without `/dev/kvm` (dragonair) NT 4.0 and 2000 run in software emulation. At the NT login, `winnt40 keys ctrl-alt-del` (ChromeOS keeps the real keys). Delphi 1 under Wine: `delphi1 setup` (its SETUP.EXE in `~/win31/install/apps`), then `delphi1` or its launcher icon; it turns Integrated debugging off and sets the editor font (Courier New 10) in `DELPHI.INI`, which lives in `C:\WINDOWS`, by itself, and `delphi1 ini save` keeps any other options you change. Fonts for the other guests: `<guest> fonts` puts the core fonts and Tahoma in `C:\FONTS` (win31) or `D:\FONTS`, with a README on installing them and on font smoothing (grayscale at most: ClearType began with Windows XP). The Wine route has no integrated debugger, no Database Desktop and no BDE table access: those stay in `win31`. The steps are in `~/dev-demo/retro/matrix/STEPS-delphi1.md` and `STEPS-winnt.md`.
+Since v92 the retro guests need no account either, only your media and keys. Init reports each one as a skip (you may want only some): `win31` media in `~/win31/install/windows`, the Windows 95 CD's `.iso` in `~/win95/install` (OSR2 asks for the OEM key, `xxxxx-OEM-xxxxxxx-xxxxx`), the NT 4.0 and 2000 CD `.iso` files in `~/winnt40/install` and `~/win2000/install` (service-pack `.iso` files there become a second CD), then `<cmd> setup`. A setup refused for disk space says so in init and in `retro`. KVM is a todo only when `/dev/kvm` exists and the group that owns it (kvm on Debian) is not active yet (shut Linux down and reopen it); auto/kvm falls back to TCG without usable `/dev/kvm`, while new win2000 defaults explicitly choose TCG regardless of availability. At the NT login, `winnt40 keys ctrl-alt-del` (ChromeOS keeps the real keys). Delphi 1 under Wine: `delphi1 setup` (its SETUP.EXE in `~/win31/install/apps`), then `delphi1` or its launcher icon; it turns Integrated debugging off and sets the editor font (Courier New 10) in `DELPHI.INI`, which lives in `C:\WINDOWS`, by itself, and `delphi1 ini save` keeps any other options you change. Fonts for the other guests: `<guest> fonts` puts the core fonts and Tahoma in `C:\FONTS` (win31) or `D:\FONTS`, with a README on installing them and on font smoothing (grayscale at most: ClearType began with Windows XP). The Wine route has no integrated debugger, no Database Desktop and no BDE table access: those stay in `win31`. The steps are in `~/dev-demo/retro/matrix/STEPS-delphi1.md` and `STEPS-winnt.md`.
 
 Since v96, `delphi N build PROJECT.dpr` compiles a Delphi 3–7 project with that version's `dcc32.exe` under Wine, console only, from the project's folder, so it reads the `.dpr` and the `.cfg` the IDE writes next to it (search paths, defines) and builds what the IDE would; Wine's `Z:\` and `C:\` paths in its messages become Linux paths. `delphi N vscode [dir]` writes `.vscode/tasks.json` with that build as the default build task (dcc32's errors land in Problems) and a run task (`delphi N run <Project>.exe`, in the Delphi desktop with its fonts), plus `extensions.json` (Pascal). There is no debugging from the editors, and no `launch.json`: Delphi writes Borland's own debug format, which gdb and lldb can't read, and Wine's debugger is minimal, so debugging stays in the Delphi IDE (Wine, or the real Windows guests). A Delphi project converted by Lazarus (Tools → Delphi Conversion) becomes a Lazarus project, with `lazmode vscode`'s build and debug.
 
@@ -754,3 +754,47 @@ host is normally 10.0.2.2. Try a known host service and another laptop by its ex
 address first. Plain HTTP may work; period browser HTTPS/TLS support is limited. MagicDNS, inbound
 access, ping responses and DCOM are not promised. No host forwarding or win31 networking is added;
 the broad guest network test matrix remains deferred to v101. Shut Windows down before off/on.
+
+v100 owner observations (Nov 5–6 2026), not a claim that every Delphi version/component works:
+Delphi 3 Client/Server installed under Wine from loose CD files and its IDE ran. Once installed,
+plain `delphi 3 setup` reapplies settings; to revisit the CD menu for Local InterBase or InstallShield
+Express use `delphi 3 setup "$HOME/delphi/install/3/INSTALL.EXE"`. Setup now preserves manual colors.
+The four Internet Solutions Pack controls HTTPCT.OCX, POPCT.OCX, SMTPCT.OCX and WINSCK.OCX reported
+registration errors in that install. Clicking OK let Delphi install/run; those optional controls
+may still be unavailable. This is not advice to ignore unrelated installer errors or a claim that
+all add-ons work. Delphi 4–7 remain unverified on the owner's media.
+
+Delphi 1 and Delphi 3 IDEs predate normal wheel support and ignored the wheel under Wine, while
+Notepad in the same prefix scrolled. Use Ctrl+Up/Down and Page Up/Down in the IDE. Delphi 1 files
+belong in a folder such as `~/win31/install/apps/Delphi1` (a name containing delphi helps discovery);
+Delphi 3–7 use `~/delphi/install/N`, as loose CD files or an ISO. The Delphi 3–7 IDE launchers appear
+after their `delphi N setup`, not merely install-retro. The bare DOSBox-X launcher is Debian's own
+entry; use win31/win95/retro commands for bundle guest settings.
+
+v100 guest hand procedures (Nov 5–6 owner findings): DOSBox-X full screen can lose keyboard
+focus after switching windows on ChromeOS. Click the picture; try the current mapper's Ctrl+F10
+mouse-release shortcut and Alt+Enter if mapped. New/absent host-key settings use Ctrl+Shift, so
+Ctrl+Shift+F toggles full screen; explicit owner mappings remain. Verify these on each guest during
+acceptance: the host key alone is not asserted to release the mouse. No maximize=true default is
+added. F11/F12 mappings are under ChromeOS Settings > Device > Keyboard and inputs > Customize
+keyboard keys; QEMU instead uses Ctrl+Alt+G for a captured PS/2 mouse and `<guest> keys ctrl-alt-del`
+for NT/2000 login.
+
+Change output/scaler in the config with the guest off, not through the Video menu while running,
+especially during Setup. One owner Windows 95 Setup run became unbootable after a live menu change.
+If the picture is lost in Windows 95, the owner's blind Start-menu shutdown sequence was Ctrl+Esc,
+U, Enter; it is not a universal DOS/win31/NT shutdown shortcut. Do not force a renderer change to
+recover it. Windows 3.1 floppy setup queues all .IMG/.IMA files on A: in filename order; DOS > Swap
+floppy advances the queue. At the end choose Return to MS-DOS, then restart with win31.
+
+For NT/2000, reach the installed desktop, shut down, exchange enable, then put/get with the guest
+off. A reported D: is a convention; check the exchange volume's actual letter in older installs.
+In Disk Management assign an unused letter to an existing FAT volume with no letter, without
+formatting. If it says unallocated, stop: recreating it on Linux makes an empty disk and does not
+recover a deleted partition. Never format exchange in Windows; mtools expects the Linux-created
+FAT layout. Avoid writing C: directly from Linux: qcow2/NTFS are not exchange FAT disks and writes
+must never race a guest. Windows 2000 Setup's FAT choice above 2 GB means FAT32; after a backup,
+an optional in-guest `convert C: /fs:ntfs` changes it later (use the actual Windows system letter,
+which may differ on old installs). Conversion is never part of dev-test or automatic acceptance.
+Windows 2000 has no built-in Explorer ZIP support: unzip your archive on Linux into the guest
+workspace, then put the resulting folder. No extra ZIP software/media is downloaded by the bundle.
