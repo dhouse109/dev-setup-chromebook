@@ -27,7 +27,7 @@ the whole lab, as it is.
 
 All four take the same flags, so `install-web install-node` means the same thing to each of them.
 
-> **Current version: v99.** [CHANGELOG.md](CHANGELOG.md) has the full history.
+> **Current version: v100.** [CHANGELOG.md](CHANGELOG.md) has the full history.
 
 v99 implements the [final plan](docs/plans/v99-plan.md): bounded bulk-install retries, stage/EXIT
 reports and focused Playwright, password, model-hint and package-permission fixes. The owner accepted
@@ -116,7 +116,7 @@ pull in what they need. For example, `install-web` brings `install-node` with it
 | Group | Members |
 |---|---|
 | `install-editors` | `install-vscode` `install-windsurf` (Windsurf, now Devin Desktop) `install-cursor` `install-lazarus` (Lazarus / Free Pascal; the IDE on Qt5 with light and dark profiles, docked or floating, switched with `lazmode`; `lazmode vscode` builds and debugs a project in VS Code, Cursor or Devin) |
-| `install-languages` | `install-rust` (with WASM) `install-node` (nvm, Node LTS, Claude Code, Codex, Gemini CLI, aider) `install-go` `install-pwsh` `install-ruby` (Jekyll) `install-cpp` `install-asm` `install-dotnet` (C#, VB.NET) `install-java` (JDK, Maven, Gradle) |
+| `install-languages` | `install-rust` (with WASM) `install-node` (nvm, Node LTS, Claude Code, Codex, Gemini CLI, aider) `install-go` `install-pwsh` `install-ruby` (Jekyll) `install-cpp` `install-asm` `install-dotnet` (C#, VB.NET; bundle NuGet operations use IPv4) `install-java` (JDK, Maven, Gradle) |
 | `install-ecosystems` | `install-antigravity` `install-media` (Flatpak, HandBrake, KDiff3) `install-gemma` (Gemma on Ollama + Gemini) `install-mobile` (Android SDK, Tauri, React Native/Expo, Flutter) `install-android-native` (Android Studio, Kotlin) `install-godot` (standard + .NET editors) |
 | `install-cloud` | `install-aws` `install-azure` `install-gcp` `install-vercel` `install-cloudflare` (wrangler) |
 | `install-iac` | Terraform, tflint, Bicep and `install-ansible-full` |

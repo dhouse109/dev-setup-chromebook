@@ -1,5 +1,5 @@
 #!/bin/bash
-# dev-setup-chromebook - Version 99
+# dev-setup-chromebook - Version 100
 # Version history: CHANGELOG.md, next to this script in the bundle
 # (one section per script, newest version first).
 
@@ -406,7 +406,7 @@ stage_exit() {   # Reporting must not replace the original failure/signal if the
         for name in "${STAGE_SKIPS[@]}"; do printf 'skip\tskipped\t\t%s\n' "$name"; done
     } > "$report" && cp "$report" "$ASSETS/setup-stages.tsv"
     echo '================================================================='
-    echo 'Setup stage summary (Version 99)'
+    echo 'Setup stage summary (Version 100)'
     for name in "${STAGE_ORDER[@]}"; do
         state=${STAGE_STATE[$name]}
         printf '  %-26s %s%s\n' "$name" "$state" "${STAGE_REASON[$name]:+: ${STAGE_REASON[$name]}}"
@@ -426,8 +426,8 @@ stage_exit() {   # Reporting must not replace the original failure/signal if the
     [ -z "$rerun" ] || printf 'Rerun: %q %s\n' "$SCRIPT_DIR/dev-setup-chromebook.sh" "$rerun"
     echo "Stage report: $report"
     if [ "$rc" = 0 ]; then
-        if [ "$failed" = 0 ] && [ "$pending" = 0 ]; then echo 'Setup Version 99 complete!'
-        else STAGE_EXIT_RC=1; echo 'Setup Version 99 complete with failures; see stages above.'; fi
+        if [ "$failed" = 0 ] && [ "$pending" = 0 ]; then echo 'Setup Version 100 complete!'
+        else STAGE_EXIT_RC=1; echo 'Setup Version 100 complete with failures; see stages above.'; fi
     fi
     echo '================================================================='
     return 0
@@ -529,7 +529,7 @@ stage_expect install-hermes install-hermes
 stage_expect install-openclaw install-openclaw
 stage_expect finalize
 
-echo "Starting comprehensive Chromebook Linux provisioning (Version 99)..."
+echo "Starting comprehensive Chromebook Linux provisioning (Version 100)..."
 
 stage network
 mkdir -p "$ASSETS/logs" "$ASSETS/downloads"
@@ -7133,8 +7133,9 @@ if [[ "$FLAGS" =~ " install-bdd " ]]; then
     echo "--- Gherkin / BDD runners (install-bdd)"
     if command -v dotnet > /dev/null 2>&1; then
         if dotnet new list reqnroll-project > /dev/null 2>&1; then
-            dotnet new update > /dev/null 2>&1 || echo "NOTICE: 'dotnet new update' failed (nuget.org unreachable?); the installed Reqnroll templates stay."
-        elif ! dotnet new install Reqnroll.Templates.DotNet > /dev/null 2>&1; then
+            # v100 (Nov 2 2026): NuGet can hang on the unusable IPv6 path; scope IPv4 to acquisition.
+            DOTNET_SYSTEM_NET_DISABLEIPV6=1 dotnet new update > /dev/null 2>&1 || echo "NOTICE: 'dotnet new update' failed (nuget.org unreachable?); the installed Reqnroll templates stay."
+        elif ! DOTNET_SYSTEM_NET_DISABLEIPV6=1 dotnet new install Reqnroll.Templates.DotNet > /dev/null 2>&1; then
             echo "NOTICE: 'dotnet new install Reqnroll.Templates.DotNet' failed (nuget.org unreachable?); rerun setup with install-bdd."
         fi
         dotnet new list reqnroll-project > /dev/null 2>&1 && echo "Reqnroll: 'dotnet new reqnroll-project -t nunit' (or mstest, xunit, tunit); 'dotnet new reqnroll-feature -n Name'."

@@ -86,6 +86,9 @@ to see it in context; the comment above each fix usually tells the story.
 
 ## Network
 
+- **NuGet / PowerShell Gallery hang on IPv6** (v100; Nov 2 2026). The owner confirmed IPv4 succeeds where api.nuget.org over IPv6 hangs. Bundle acquisition and implicit restore/build commands use `DOTNET_SYSTEM_NET_DISABLEIPV6=1` only in their child process; this includes generated demo runners and Godot .NET builds. No shell profile or system IPv6 policy is changed. Dev-test makes a bounded .NET service-index request and warns on network/DNS failure; it does not infer that every network error is IPv6.
+
+
 - **One dropped pip download ended the whole setup** (`install-agentic`, v99; Oct 31 2026). The v98 run
   ended at an unhandled ConnectionResetError; pip's own partial retry did not recover. **Fix:** exported
   pip retry/socket settings (resume retries when supported), three-attempt bulk-install retries with

@@ -1,5 +1,5 @@
 #!/bin/bash
-# dev-test-chromebook - Version 99
+# dev-test-chromebook - Version 100
 # Version history: CHANGELOG.md, next to this script in the bundle
 # (one section per script, newest version first).
 #
@@ -523,7 +523,7 @@ info()  { printf '  %-62s %s\n' "$1" "${DIM}INFO${RST} $2"; echo "--- $1: INFO $
 # v92: a check that cannot run because an earlier one already failed for the same cause (counted as SKIP).
 skipped() { printf '  %-62s %s\n' "$1" "${DIM}SKIP${RST} $2"; SKIP=$((SKIP + 1)); LAST=skip; echo "--- $1: SKIP $2" >> "$LOG"; }
 
-echo "Testing Chromebook Linux provisioning (Version 99)... log: $LOG"
+echo "Testing Chromebook Linux provisioning (Version 100)... log: $LOG"
 [ "$QUICK" = 1 ] && echo "(quick mode: slow functional tests will be skipped)"
 
 # v68: say so when dev-init has not applied the secrets file yet. Filling in secrets.env logs
@@ -1691,10 +1691,27 @@ if has install-dotnet; then
     check "packages-microsoft-prod repo configured"        'dpkg_has packages-microsoft-prod && ls /etc/apt/sources.list.d/ | grep -qi microsoft-prod'
     check "telemetry opt-out + tools PATH in ~/.bashrc"    'grep -q DOTNET_CLI_TELEMETRY_OPTOUT ~/.bashrc && grep -q ".dotnet/tools" ~/.bashrc'
     check "console template offers both C# and VB"         'dotnet new list console 2> /dev/null | grep -i "console" | grep -q "VB"'
-    slow  "C#: dotnet new console + build + run"           'dotnet new console -o hello_cs > /dev/null && cd hello_cs && dotnet run | grep -q "Hello, World!"' 600
+    # v100 (Nov 2 2026): each test child scopes IPv4 for explicit and implicit NuGet restores.
+    slow  "C#: dotnet new console + build + run"           'export DOTNET_SYSTEM_NET_DISABLEIPV6=1; dotnet new console -o hello_cs > /dev/null && cd hello_cs && dotnet run | grep -q "Hello, World!"' 600
+    # v100 (Nov 2 2026): bounded real .NET request; reachability is a network warning, never a repair.
+    cat > "$WORK/nuget-probe.cs" << 'NUGET_CS'
+using System;
+using System.Net.Http;
+using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
+try {
+    using var response = await client.GetAsync("https://api.nuget.org/v3/index.json");
+    response.EnsureSuccessStatusCode();
+    Console.WriteLine("NuGet IPv4 service index reachable");
+} catch (Exception error) {
+    Console.Error.WriteLine(error.GetType().Name + ": NuGet network/DNS request failed");
+    Environment.ExitCode = 1;
+}
+NUGET_CS
+    slowwarn "NuGet service index reachable via .NET IPv4" 'export DOTNET_SYSTEM_NET_DISABLEIPV6=1; dotnet new console -o nuget_probe --no-restore > /dev/null && cp nuget-probe.cs nuget_probe/Program.cs && dotnet build nuget_probe --nologo -v q && timeout -k 2 20 dotnet run --project nuget_probe --no-build --no-restore' 180
+    hint "NuGet network/DNS access failed; bundle restore commands already request IPv4. Check connectivity, then rerun; no global network setting was changed."
     # The VB template prints "Hello World!" (no comma), the C# one "Hello, World!"; accept either.
-    slow  "VB.NET: dotnet new console -lang VB + build + run" 'dotnet new console -lang VB -o hello_vb > /dev/null && cd hello_vb && dotnet run | grep -qE "Hello,? World!"' 600
-    slow  "VB app calling a C# class library (mixed-language build)" 'dotnet new classlib -o mixlib > /dev/null && printf "namespace MixLib;\npublic static class Greeter { public static string Hi() => \"hello from c# lib\"; }\n" > mixlib/Class1.cs && dotnet new console -lang VB -o mixapp > /dev/null && dotnet add mixapp reference mixlib > /dev/null && printf "Module Program\n    Sub Main()\n        Console.WriteLine(MixLib.Greeter.Hi())\n    End Sub\nEnd Module\n" > mixapp/Program.vb && dotnet run --project mixapp | grep -q "hello from c# lib"' 600
+    slow  "VB.NET: dotnet new console -lang VB + build + run" 'export DOTNET_SYSTEM_NET_DISABLEIPV6=1; dotnet new console -lang VB -o hello_vb > /dev/null && cd hello_vb && dotnet run | grep -qE "Hello,? World!"' 600
+    slow  "VB app calling a C# class library (mixed-language build)" 'export DOTNET_SYSTEM_NET_DISABLEIPV6=1; dotnet new classlib -o mixlib > /dev/null && printf "namespace MixLib;\npublic static class Greeter { public static string Hi() => \"hello from c# lib\"; }\n" > mixlib/Class1.cs && dotnet new console -lang VB -o mixapp > /dev/null && dotnet add mixapp reference mixlib > /dev/null && printf "Module Program\n    Sub Main()\n        Console.WriteLine(MixLib.Greeter.Hi())\n    End Sub\nEnd Module\n" > mixapp/Program.vb && dotnet run --project mixapp | grep -q "hello from c# lib"' 600
 fi
 
 # Java: JDK, Maven, Gradle
@@ -2257,7 +2274,7 @@ EOF
     # C#: the editor normally generates the .csproj/.sln from its menu; written by hand here. The
     # target framework follows the installed SDK, and Godot's bundled packages are added as a local
     # NuGet source next to nuget.org.
-    slow  "C# project builds with godot-mono and runs headless" 'cd gd-cs && ver=$(godot-mono --version | cut -d. -f1-3) && tf="net$(dotnet --version | cut -d. -f1).0" && printf "<Project Sdk=\"Godot.NET.Sdk/%s\">\n  <PropertyGroup>\n    <TargetFramework>%s</TargetFramework>\n    <EnableDynamicLoading>true</EnableDynamicLoading>\n  </PropertyGroup>\n</Project>\n" "$ver" "$tf" > devtestcs.csproj && printf "<?xml version=\"1.0\"?>\n<configuration><packageSources><add key=\"godot-bundled\" value=\"%s\" /></packageSources></configuration>\n" "$HOME/.local/opt/godot/current/mono/GodotSharp/Tools/nupkgs" > NuGet.config && dotnet new sln -n devtestcs > /dev/null && dotnet sln add devtestcs.csproj > /dev/null && echo "Godot.NET.Sdk $ver, $tf" && { godot-mono --headless --path . --build-solutions --quit > build.log 2>&1 || true; }; ls .godot/mono/temp/bin/Debug/devtestcs.dll > /dev/null 2>&1 || { echo "godot-mono --build-solutions produced no assembly; dotnet build says:"; dotnet build devtestcs.csproj 2>&1 | grep -E "error|Build succeeded" | sort -u | head -n 8; exit 1; }; godot-mono --headless --path . 2>&1 | tee run.log | grep -q "hello from c#" || { tail -n 15 run.log; exit 1; }' 900
+    slow  "C# project builds with godot-mono and runs headless" 'export DOTNET_SYSTEM_NET_DISABLEIPV6=1; cd gd-cs && ver=$(godot-mono --version | cut -d. -f1-3) && tf="net$(dotnet --version | cut -d. -f1).0" && printf "<Project Sdk=\"Godot.NET.Sdk/%s\">\n  <PropertyGroup>\n    <TargetFramework>%s</TargetFramework>\n    <EnableDynamicLoading>true</EnableDynamicLoading>\n  </PropertyGroup>\n</Project>\n" "$ver" "$tf" > devtestcs.csproj && printf "<?xml version=\"1.0\"?>\n<configuration><packageSources><add key=\"godot-bundled\" value=\"%s\" /></packageSources></configuration>\n" "$HOME/.local/opt/godot/current/mono/GodotSharp/Tools/nupkgs" > NuGet.config && dotnet new sln -n devtestcs > /dev/null && dotnet sln add devtestcs.csproj > /dev/null && echo "Godot.NET.Sdk $ver, $tf" && { godot-mono --headless --path . --build-solutions --quit > build.log 2>&1 || true; }; ls .godot/mono/temp/bin/Debug/devtestcs.dll > /dev/null 2>&1 || { echo "godot-mono --build-solutions produced no assembly; dotnet build says:"; dotnet build devtestcs.csproj 2>&1 | grep -E "error|Build succeeded" | sort -u | head -n 8; exit 1; }; godot-mono --headless --path . 2>&1 | tee run.log | grep -q "hello from c#" || { tail -n 15 run.log; exit 1; }' 900
     hint  "needs the .NET SDK (install-dotnet, pulled in by install-godot). If the build log rejects the target framework, Godot.NET.Sdk does not support this SDK major yet: install the SDK it names"
 fi
 
@@ -3078,7 +3095,7 @@ if has install-bdd; then
         hint  "rerun setup with install-bdd (dotnet new install Reqnroll.Templates.DotNet)"
         if [ "$LAST" = pass ]; then
             # v99 (Nov 1 2026): the template defaults to net8.0; this machine has runtime 10 only.
-            slow  "Reqnroll (C#, NUnit): dotnet new reqnroll-project, links.feature passes" 'cd testing && rm -rf reqnroll && sdk=$(dotnet --version) && tfm="net$(printf "%s" "$sdk" | cut -d. -f1,2)" && dotnet --list-runtimes | grep -Fq "Microsoft.NETCore.App ${tfm#net}." && echo "Reqnroll: SDK $sdk, target $tfm (installed runtime)" && dotnet new reqnroll-project --framework "$tfm" -t nunit -n LinksSpecs -o reqnroll > new.log 2>&1 || { echo "Reqnroll project generation/runtime selection failed"; tail -n 10 new.log; exit 1; }; cd reqnroll && rm -f Features/*.feature StepDefinitions/*.cs && mkdir -p Features StepDefinitions && cp ../links.feature Features/Links.feature && cat > StepDefinitions/LinksSteps.cs << "CS"
+            slow  "Reqnroll (C#, NUnit): dotnet new reqnroll-project, links.feature passes" 'export DOTNET_SYSTEM_NET_DISABLEIPV6=1; cd testing && rm -rf reqnroll && sdk=$(dotnet --version) && tfm="net$(printf "%s" "$sdk" | cut -d. -f1,2)" && dotnet --list-runtimes | grep -Fq "Microsoft.NETCore.App ${tfm#net}." && echo "Reqnroll: SDK $sdk, target $tfm (installed runtime)" && dotnet new reqnroll-project --framework "$tfm" -t nunit -n LinksSpecs -o reqnroll > new.log 2>&1 || { echo "Reqnroll project generation/runtime selection failed"; tail -n 10 new.log; exit 1; }; cd reqnroll && rm -f Features/*.feature StepDefinitions/*.cs && mkdir -p Features StepDefinitions && cp ../links.feature Features/Links.feature && cat > StepDefinitions/LinksSteps.cs << "CS"
 using System;
 using System.Collections.Generic;
 using System.Net.Http;
@@ -6205,7 +6222,7 @@ info "shell-agent ownership ledger" "$SHELL_AGENT_LEDGER"
 # =================================================================
 echo
 echo "================================================================="
-echo "Test Version 99 complete: ${GRN}PASS $PASS${RST}   ${RED}FAIL $FAIL${RST}   ${YEL}WARN $WARN${RST}   SKIP $SKIP"
+echo "Test Version 100 complete: ${GRN}PASS $PASS${RST}   ${RED}FAIL $FAIL${RST}   ${YEL}WARN $WARN${RST}   SKIP $SKIP"
 if [ ${#FAILED[@]} -gt 0 ]; then
     echo
     echo "Failed (must fix to get started):"

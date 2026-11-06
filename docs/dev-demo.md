@@ -4,6 +4,9 @@
 
 A full `dev-demo-chromebook.sh install-all` downloads about 1 GB; running every demo once adds roughly 20–25 GB, mostly outside `~/dev-demo`.
 
+
+Since v100, the C#/VB Spectre runners, VB project creation, PowerShell Gallery acquisition and Reqnroll restore/build runner scope `DOTNET_SYSTEM_NET_DISABLEIPV6=1` to their .NET child processes. Rerun dev-demo without refresh to rewrite runners while keeping projects/modules. Prove acquisition on an uncached dependency when checking the Nov 2 hang fix; cached runs alone are inconclusive.
+
 ## Download footprint
 
 The download itself is about 1 GB, and Godot's demo projects are half of it. Sizes come from a sandbox run of v75 with every demo fetched, except where marked as an estimate.

@@ -1,5 +1,5 @@
 #!/bin/bash
-# dev-demo-chromebook - Version 99
+# dev-demo-chromebook - Version 100
 # Version history: CHANGELOG.md, next to this script in the bundle
 # (one section per script, newest version first).
 #
@@ -82,7 +82,7 @@ net_retry() {   # net_retry SAFE_LABEL COMMAND [ARG...]; no expanded command/sec
 
 # Deliberately NO 'set -e': one demo failing to download must not stop the others.
 
-VERSION=99
+VERSION=100
 
 # =================================================================
 # FLAG EXPANSION (STACK SWITCHES)  -- copied verbatim from the installer
@@ -755,7 +755,8 @@ demo_need dotnet install-dotnet
 export DOTNET_ROLL_FORWARD=Major
 EX=(); for d in examples/Console/*/; do d=${d%/}; d=${d##*/}; [ "$d" = Showcase ] || EX+=("$d"); done
 while demo_menu "Which Spectre.Console example? (the first build restores packages)" Showcase "${EX[@]}"; do
-    dotnet run --project "examples/Console/$DEMO_CHOICE"
+    # v100 (Nov 2 2026): implicit NuGet restore needs IPv4 too, including regenerated runners.
+    DOTNET_SYSTEM_NET_DISABLEIPV6=1 dotnet run --project "examples/Console/$DEMO_CHOICE"
     [ -n "${1:-}" ] && break
 done
 EOF
@@ -769,8 +770,9 @@ EOF
     if [ ! -f "$DIR/VbSpectre.vbproj" ] || [ "$REFRESH" = 1 ]; then
         [ -e "$DIR" ] && stash_old
         echo "  creating a VB.NET console project and adding Spectre.Console..."
-        dotnet new console -lang VB -n VbSpectre -o "$DIR" > /dev/null \
-            && dotnet add "$DIR/VbSpectre.vbproj" package Spectre.Console > /dev/null \
+        # v100 (Nov 2 2026): no global network change; only these .NET/Gallery children use IPv4.
+        DOTNET_SYSTEM_NET_DISABLEIPV6=1 dotnet new console -lang VB -n VbSpectre -o "$DIR" > /dev/null \
+            && DOTNET_SYSTEM_NET_DISABLEIPV6=1 dotnet add "$DIR/VbSpectre.vbproj" package Spectre.Console > /dev/null \
             || { rm -rf "$DIR"; fail "dotnet new / add package failed"; return 0; }
         cat > "$DIR/Program.vb" << 'EOF'
 Imports System
@@ -826,7 +828,8 @@ EOF
     fi
     write_run << 'EOF'
 demo_need dotnet install-dotnet
-dotnet run
+# v100 (Nov 2 2026): dotnet run may restore NuGet packages.
+DOTNET_SYSTEM_NET_DISABLEIPV6=1 dotnet run
 EOF
     done_demo
 }
@@ -838,7 +841,8 @@ demo_pwsh() {
     if [ ! -d "$DIR/modules/PwshSpectreConsole" ] || [ "$REFRESH" = 1 ]; then
         rm -rf "$DIR/modules"; mkdir -p "$DIR/modules"
         echo "  saving the module into ~/dev-demo/pwsh/spectre-demo/modules (not your profile's module path)..."
-        DEST="$DIR/modules" pwsh -NoLogo -NoProfile -Command '
+        # v100 (Nov 2 2026): Gallery and its fallback run inside the same IPv4-only process.
+        DOTNET_SYSTEM_NET_DISABLEIPV6=1 DEST="$DIR/modules" pwsh -NoLogo -NoProfile -Command '
             try { Save-PSResource -Name PwshSpectreConsole -Path $env:DEST -TrustRepository -ErrorAction Stop }
             catch { Save-Module -Name PwshSpectreConsole -Path $env:DEST -Force -ErrorAction Stop }' \
             || { fail "could not save PwshSpectreConsole from the PowerShell Gallery"; return 0; }
@@ -9089,7 +9093,9 @@ run_behat() {
     ( cd behat && timed behat gherkin "Behat 4 + Mink BrowserKit (HTTP, no browser)" "features/bootstrap/FeatureContext.php" \
         vendor/bin/behat --format progress )
 }
-run_reqnroll() {
+run_reqnroll() (
+    # v100 (Nov 2 2026): scoped subshell covers implicit restores without affecting other runners.
+    export DOTNET_SYSTEM_NET_DISABLEIPV6=1
     demo_need dotnet install-dotnet
     if [ ! -f reqnroll/LinksBakeoff.csproj ]; then
         dotnet new list reqnroll-project > /dev/null 2>&1 || { echo "No Reqnroll templates: dev-setup with install-bdd."; return 1; }
@@ -9104,7 +9110,7 @@ run_reqnroll() {
     sync_feature reqnroll/Features
     ( cd reqnroll && { dotnet build --nologo -v q > "$DEMO_LOGS/reqnroll-build.log" 2>&1 || { tail -n 20 "$DEMO_LOGS/reqnroll-build.log"; exit 1; }; } && timed reqnroll gherkin "Reqnroll (NUnit) + Playwright for .NET (system Chrome)" "StepDefinitions/LinksSteps.cs" \
         dotnet test --no-build --nologo -v q )
-}
+)
 run_selenium() {
     ( cd selenium && timed selenium code "Selenium 4 + pytest (system Chrome, Selenium Manager)" "test_links.py" \
         env SE_AVOID_STATS=true uv run --no-project --quiet --with pytest --with selenium pytest -q -p no:cacheprovider test_links.py )
