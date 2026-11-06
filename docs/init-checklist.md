@@ -654,15 +654,18 @@ RAM reminder for the 8 GB machines: Ollama holds about 3.5 GB while a model is l
 
 v100 (Nov 5 findings): win95 boots image disks only; the separate IMGMAKE session still mounts X:.
 New win95 setup.conf/boot.conf use `output=surface` to fix maximized redraw. Keep guests off when
-editing output/scaler settings; do not change them from the Video menu during Setup. Existing explicit
-outputs are preserved, including opengl. All four DOSBox-X configs default to `[dosbox] hostkey=ctrlshift`
+editing output/scaler settings; do not change them from the Video menu during Setup. Untouched v99
+`output=opengl` lines upgrade to surface (trailing spaces allowed). Edited values/comments and
+duplicate assignments stay unchanged. All four DOSBox-X configs default to `[dosbox] hostkey=ctrlshift`
 (Ctrl+Shift+F for full screen); existing choices stay, and misplaced hostkey lines require manual review.
 Missing defaults are added only while the guest is stopped; win31 stays opengl and DOS stays ttf.
 Review owner-added folder mounts in win95 `[autoexec]` before booting; they are never removed automatically.
 
 v100 QEMU defaults and installation completion (Nov 5–6 findings): new win2000 configs use
-`ACCEL=tcg`, `DISPLAY_OPTS="gtk,zoom-to-fit=off"` and `SOUND=none`. Existing explicit assignments
-stay. NT 4.0 keeps auto acceleration, scaled GTK, PS/2 and sb16; if it is slow, try TCG with the guest
+`ACCEL=tcg`, `DISPLAY_OPTS="gtk,zoom-to-fit=off"` and `SOUND=none`. Untouched v99 ACCEL, DISPLAY_OPTS and SOUND
+lines upgrade too, matching the full original line including its comment (trailing spaces allowed).
+Edited values/comments/spacing and duplicate assignments stay unchanged; running guests defer.
+NT 4.0 keeps auto acceleration, scaled GTK, PS/2 and sb16; if it is slow, try TCG with the guest
 off (NT performance remains an owner check). KVM availability does not imply a guest selected KVM.
 `<guest> accel` reports the selection/reason; `<guest> preferences` reports preserved preferences.
 Raise the Windows screen area in Display Properties if the unscaled picture is too small. To try
@@ -689,8 +692,9 @@ Windows, and never write the guest's qcow2/NTFS C: with host mtools.
 
 v100 font diagnostics (Nov 5 finding): explicit `delphi1 setup` / `delphi N setup` checks Arial,
 Courier New, Tahoma and bold Tahoma files and retries acquisition once if the command fails or files
-are incomplete. The final FONT RESULT is prominent and nonfatal to the IDE. Both attempt statuses
-and output stay in `assets/logs/retro-fonts-<prefix>-<timestamp>.log`; setup records the bundle assets
+are incomplete. Each attempt has a five-minute timeout plus a ten-second kill grace; timeout
+statuses are saved and retry still happens only once. The final FONT RESULT is prominent and
+nonfatal to the IDE. Both attempt statuses and output stay in `assets/logs/retro-fonts-<prefix>-<timestamp>.log`; setup records the bundle assets
 location, so logs do not depend on the launch directory. `<prefix command> status` only reads font
 files. `win31 fonts` (or another guest's fonts command) collects existing fonts from all Delphi/COM
 prefixes or the existing winetricks download cache; it never downloads or repairs. If none are found:

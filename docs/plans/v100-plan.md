@@ -39,10 +39,10 @@ The owner approved this plan for the build with these choices:
 |---|---|
 | 2 | **2A:** command-scoped IPv4 (`DOTNET_SYSTEM_NET_DISABLEIPV6=1`) for the bundle's NuGet/Gallery acquisition and restore-capable build/runner paths; no IPv6 probe. |
 | 3 | **3A:** remove the win95 guest-boot folder mount; keep the standalone IMGMAKE and win31 mounts. |
-| 4 | **4A:** `output=surface` for new win95 configs; add only an absent `output`; preserve every explicit value. |
-| 5 | **5A:** win2000 defaults to TCG; winnt40 stays `auto`; explicit values preserved. |
-| 6 | **6A:** `zoom-to-fit=off` by default for win2000 only. |
-| 7 | **7A:** win2000 defaults to `SOUND=none`; winnt40 unchanged. |
+| 4 | **4A (Nov 6 follow-up):** win95 `output=surface`; add absent settings and upgrade exact v99 `output=opengl` lines; preserve edited lines and duplicates. |
+| 5 | **5A (Nov 6 follow-up):** win2000 defaults to TCG; upgrade its untouched v99 ACCEL line; preserve owner edits; winnt40 stays `auto`. |
+| 6 | **6A (Nov 6 follow-up):** win2000 defaults to `zoom-to-fit=off`, including its untouched v99 DISPLAY_OPTS line; preserve owner edits. |
+| 7 | **7A (Nov 6 follow-up):** win2000 defaults to `SOUND=none`, including its untouched v99 SOUND line; preserve owner edits; winnt40 unchanged. |
 | 8 | **8A:** exchange disk withheld during every `setup` and until `<guest> exchange enable`; existing installs need a one-time enable. |
 | 9 | **9A:** report the selected acceleration and its reason consistently in helper, setup, init and test. |
 | 10 | **10A:** one automatic font retry, saved diagnostics, a prominent non-fatal result, status and a prefix-qualified repair command. |
@@ -58,7 +58,10 @@ behaviour (Setup installs to C:, resumed boots stay detached, then `exchange ena
 the owner's first winnt40 install, which is a fresh install anyway. The existing win2000 guest is
 checked as an existing install: one-time `win2000 exchange enable`, then the exchange drive works.
 
-Item 1 keeps its own investigation-first decision gate and per-command approvals.
+Item 1 is **paused by the owner (Nov 6)**. Resume on a machine with `install-agentic`, using the
+bundle's own setup and its investigation-first gate with approval for each real command. Do not
+create an Inspector environment under `assets/tools`; a hand-built environment would not reproduce
+the bundle context. Stages 1–7 are built; Chromebook acceptance remains pending.
 
 ## Scope and baseline
 
@@ -207,15 +210,19 @@ General constraints for all of them:
   commands. Win31's config (10023–10047), packages (9946–9961), and QEMU config generation
   (11777–11801) are outside it. `win95_confs` and `dos_conf` run lazily in the helper; setup does
   not currently create their files.
-- **Migration rule:** preserve every active explicit value, even when equal to a v99 default.
-  An old default cannot be distinguished from an intentional owner choice. Add only absent keys,
-  in the correct section, without duplicate sections/keys or changing comments/line endings. Ignore
+- **Migration rule (owner amendment, Nov 6):** add absent keys and preserve owner edits. For
+  items 4–7 only, also upgrade a line byte-identical to the v99 template, including its value,
+  spacing and trailing comment; allow extra ASCII spaces at the end. This is an owner-authorized
+  exception to the earlier absent-only rule. Any other change (value, comment, case, indentation,
+  spacing or trailing tab) remains untouched. Duplicate target assignments require manual review
+  and stay unchanged; a duplicate target in win2000/config defers migration of that entire file. Match win95 output only under `[sdl]`. Retain line endings,
+  final-newline presence and modes. Add absent keys in the correct section without duplicates. Ignore
   commented-out assignments when deciding absence; recognize whitespace and case for DOSBox-X INI
   keys. For sourced shell configs recognize assignments with optional `export` and spaces around
   the line, and avoid appending a competing assignment when syntax is ambiguous. Report it for
   owner review. Never evaluate an existing config merely to migrate it. Skip writes while the
   affected guest runs and report the deferred update. Config updates use a same-directory temporary
-  file and atomic replacement, retaining file permissions. Apply missing-key migration from setup
+  file and atomic replacement, retaining file permissions. Apply default migration from setup
   for files already present, and from helper config creation/launch for lazy files.
 - **Validation boundary:** `check`/`slow` means FAIL for bundle-owned behaviour; `warn`/`slowwarn`
   means a user-changeable preference or optional font availability. Use isolated HOME/workspace
@@ -321,18 +328,21 @@ General constraints for all of them:
 - **Verified locations:** generated helper `win95_confs` 10528–10567, `base` output at
   10532 feeds both setup.conf and boot.conf. Win31 output at 10030 and `dos_conf` output at 11683
   are separate templates and remain as they are.
-- **Proposed change:** set only win95 base `output=surface`. Add absent `output` under `[sdl]`
-  in existing win95 configs, but preserve any explicit value, including `opengl`. This resolves the
-  old plan's migration option in favour of the no-overwrite rule. Tell existing owners to choose
-  `surface` themselves with the guest shut down. Never change the live renderer via the menu.
+- **Proposed change / existing machines (Nov 6 follow-up):** set only win95 base `output=surface`.
+  Add absent `output` under `[sdl]` in existing setup.conf and boot.conf. Also replace exactly
+  `output=opengl` (optionally followed by ASCII spaces), the v99 template line, with
+  `output=surface`. Keep every edited value/comment/spacing/case and duplicate assignment.
+  Defer the whole guest while running. Preserve CRLF, modes and final-newline presence; repeat
+  runs are stable. win31/DOS are unchanged. Never change the live renderer via the menu.
 - **Dev-test:** FAIL fresh-config fixtures unless both win95 configs say surface. Verify missing-
-  key migration, repeat-run stability and preservation of explicit opengl/custom outputs. On real
+  key migration, exact-v99 upgrades in both files, repeat-run stability, running-guest deferral,
+  and preservation of edited values/comments/duplicates. On real
   configs `warn` for an output other than surface, naming the recommendation, not a failed install.
   Owner checks maximized redraw and cold startup with his Windows 95 media; no automated UI claim.
 - **Docs:** shared contract; `docs/crostini-gotchas.md` rendering finding, `docs/dev-demo.md`,
   `STEPS-delphi.md` and item 16's shutdown-first guidance. No new disk usage.
-- **Owner choice:** **4A (recommended):** preserve every existing output assignment; document opt-in.
-  **4B:** owner manually selects surface on existing configs before acceptance (still no auto-rewrite).
+- **Owner choice:** **4A (approved, amended Nov 6):** upgrade untouched v99 lines and fill absent
+  output; preserve owner edits/duplicates. **4B:** manual-only migration (superseded by the amendment).
 
 ### 5. Windows 2000 crawls or hangs at "Starting up…" on nested KVM
 
@@ -351,17 +361,24 @@ General constraints for all of them:
   values and a v100 comment linking win2000's TCG default to the Nov 5 nested-KVM finding. Keep
   explicit auto/kvm supported. Replace “close to native” promises with capability/selection wording
   (item 9), including setup, init's retro note at 2261–2315, and test information.
-- **Existing machines:** add `ACCEL=tcg` only when absent from win2000/config; preserve auto,
-  kvm, tcg, and other explicit owner values. No change to existing NT config values. No KVM
-  performance extrapolation to NT 4.0, which has not been installed/tested by the owner.
+- **Existing machines (Nov 6 follow-up):** add absent `ACCEL=tcg`; also replace the exact v99
+  line `ACCEL=auto              # auto (KVM when /dev/kvm is usable), kvm or tcg`
+  with `ACCEL=tcg              # auto (KVM when usable), kvm or tcg; explicit owner values stay`.
+  Only optional trailing ASCII spaces may differ. Preserve edited values/comments/spacing and
+  duplicates; defer a running guest. v99 wrote this explicit line on every retro install, so
+  absent-only migration missed existing machines. NT configs stay unchanged; no NT KVM performance
+  claim. Use the shared conservative parser and atomic replacement, without sourcing the config.
 - **Dev-test:** FAIL fixture defaults/config templates that disagree; test explicit overrides and
-  missing-key migration. Real win2000 non-tcg selection is a `warn` explaining the fallback; do not
+  missing-key and untouched-v99 migration (full v99 config fixture), CRLF/modes, repeat runs, edited
+  values/comments/spacing, duplicates and running deferral. Real win2000 non-tcg selection is a
+  `warn` explaining the fallback; do not
   FAIL for usable KVM or benchmark it automatically. Owner verifies install, graphical reboot,
   login, idle and installed-system boot under TCG. NT installation remains owner-media verification.
 - **Docs:** shared contract; `docs/crostini-gotchas.md` Retro, `docs/dev-demo.md`, `STEPS-winnt.md`
   4441–4486 and `STEPS-delphi.md`: distinguish NT auto from 2000 tcg, and describe the optional NT
   fallback without claiming it was tested. No disk increase.
-- **Owner choice:** **5A (recommended):** win2000 tcg, NT auto, preserve explicit configs.
+- **Owner choice:** **5A (approved, amended Nov 6):** win2000 tcg, NT auto; upgrade untouched v99
+  lines and preserve edits/duplicates.
   **5B:** also default NT to tcg, requiring NT-specific evidence before adopting that extra change.
 
 ### 6. QEMU tablet pointer misaligned
@@ -378,14 +395,19 @@ General constraints for all of them:
   `gtk,zoom-to-fit=off`, NT `gtk,zoom-to-fit=on` (PS/2 unchanged). Use matching R_DISPLAY in the
   written config. Explain the smaller unscaled picture and raising screen area in Windows Display
   Properties; do not force a guest resolution or change MOUSE.
-- **Existing machines:** add an absent DISPLAY_OPTS only, preserving every explicit string,
-  including on and extra GTK options. Owner can switch off manually with the guest stopped.
+- **Existing machines (Nov 6 follow-up):** add absent DISPLAY_OPTS; replace only exact
+  `DISPLAY_OPTS=gtk,zoom-to-fit=on` (optional trailing ASCII spaces) with
+  `DISPLAY_OPTS="gtk,zoom-to-fit=off"`, matching the new template. Preserve edited values,
+  comments, quoting, spacing and extra GTK options; duplicates stay unchanged, running guests defer.
 - **Dev-test:** FAIL mismatched fresh defaults and QEMU captured `-display` arguments; preserve
-  custom options in fixtures. Real win2000 zoom on is a `warn`, NT on is expected. Owner verifies
+  custom options, edited comments and duplicates in fixtures. The shared full-v99 fixture upgrades
+  display alongside items 5/7 and checks running deferral/repeat runs. Real win2000 zoom on is a
+  `warn`, NT on is expected. Owner verifies
   tablet alignment at several picture positions and a larger guest resolution after cold launch.
 - **Docs:** shared contract; `docs/crostini-gotchas.md` pointer finding, `docs/dev-demo.md`,
   `STEPS-winnt.md`, `STEPS-delphi.md`, and helper-generated fonts README sharp-picture paragraph.
-- **Owner choice:** **6A (recommended):** change only win2000. **6B:** also unscale NT despite no
+- **Owner choice:** **6A (approved, amended Nov 6):** change only win2000, including untouched
+  v99 lines while preserving edits/duplicates. **6B:** also unscale NT despite no
   matching pointer finding (a separate preference, requiring owner confirmation).
 
 ### 7. win2000 sound: default `SOUND=none`
@@ -402,16 +424,22 @@ General constraints for all of them:
   so none adds no emulated sound card or audio backend. Document opting back into AC97 with the
   guest stopped, driver installation from the owner's CD, and possible PulseAudio errors. Preserve
   the historical finding that disabling audio did not solve the boot slowdown.
-- **Existing machines:** insert SOUND=none only if missing from win2000/config. Do not rewrite
-  AC97, sb16, none or a custom card. NT sb16 remains unchanged without evidence.
+- **Existing machines (Nov 6 follow-up):** add absent SOUND; replace only exact
+  `SOUND=AC97             # sb16, AC97 or none (drivers on the install CDs)` with
+  `SOUND=none             # sb16, AC97 or none (drivers on the install CDs)`. Optional trailing
+  ASCII spaces are allowed. Preserve edited values/comments/spacing and duplicates; running guests
+  defer. A bare owner `SOUND=AC97` remains an override. NT sb16 stays unchanged.
 - **Dev-test:** FAIL fresh/default fixture mismatch; captured win2000 launch must omit `-audiodev`
-  and sound `-device` when none. Assert explicit AC97 override still reaches audio_args. A real
+  and sound `-device` when none. The full-v99 fixture upgrades all three settings; edited values,
+  comments, duplicates, modes/CRLF and running deferral are tested. Assert explicit AC97 override
+  still reaches audio_args. A real
   enabled win2000 card is `warn` with the quiet default recommendation, not a bundle failure.
   Owner confirms quiet boot and application use; working guest audio is deferred.
 - **Docs:** shared contract; `docs/crostini-gotchas.md` audio finding, `docs/dev-demo.md`,
   `STEPS-winnt.md` (remove automatic AC97 assumption for 2000), `STEPS-delphi.md` if referring to
   audio. No new disk row.
-- **Owner choice:** **7A (recommended):** silence win2000 only, preserving explicit choices.
+- **Owner choice:** **7A (approved, amended Nov 6):** silence win2000 only; upgrade untouched
+  v99 lines and preserve owner edits/duplicates.
   **7B:** additionally silence NT, pending separate NT audio evidence.
 
 ### 8. Exchange disk takes C: (and loses its letter) during NT/2000 Setup
@@ -514,7 +542,9 @@ General constraints for all of them:
 - **Proposed change:** factor prefix-specific corefonts/tahoma installation into one helper; check
   real expected `.ttf` files case-insensitively (Arial, Courier New and Tahoma plus bold Tahoma),
   not only winetricks exit status or its verb registry. Retry once only after nonzero/incomplete
-  result, retain both attempts' output and statuses in `assets/logs/retro-fonts-<prefix>-<timestamp>.log`.
+  result. **Nov 6 follow-up:** bound each attempt with `timeout -k 10 300` (five minutes plus
+  ten-second kill grace); retry once after timeout too. Retain both attempts' output, timeout
+  notices and producer statuses (124/137 included) in `assets/logs/retro-fonts-<prefix>-<timestamp>.log`.
   Pass the bundle assets location into the generated helper at build time; do not derive it from cwd.
   On failure print a prominent “INCOMPLETE: fonts missing” final summary with a log path and the exact
   prefix-qualified repair command. Font failure remains nonfatal to an otherwise usable Delphi IDE.
@@ -528,7 +558,8 @@ General constraints for all of them:
   registry choices and guest config remain intact. No automatic fonts install on bundle setup;
   fontsmooth handling keeps its diagnostic too. Repeated status is strictly observational.
 - **Dev-test:** FAIL stub regressions for first-success/no retry, retry recovery, exhausted failures,
-  missing winetricks, zero-status but absent font files, prefix-specific repair text and collection
+  missing winetricks, zero-status but absent font files, simulated timeout/kill (124/137, exactly two
+  attempts with the configured bound), prefix-specific repair text and collection
   from a Delphi 3-only fixture. `warn` incomplete fonts in actual existing prefixes; absent optional
   prefixes are info/SKIP. No network font acquisition or mutation of real prefixes in tests. Owner
   checks the repaired prefix supplies `win31 fonts`, then installs/uses fonts inside his guest.
@@ -858,7 +889,7 @@ Breeze Dark values (`HKEY_CURRENT_USER\Control Panel\Colors`, "R G B"):
    together to v100 in this first implementation commit, update every version string/README, and
    create entries under all four CHANGELOG sections (version bump only where appropriate).
 2. **DOSBox-X boot/defaults/keys (3, 4, 13):** helper argument fix, correct-section host key,
-   missing-key migration and preserved-config fixtures. Keep win31/DOS renderer choices. Refresh
+   missing-key/exact-v99 migration and owner-edit preservation fixtures. Keep win31/DOS renderer choices. Refresh
    corresponding docs/STEP prose and CHANGELOG descriptions in this commit.
 3. **QEMU defaults, attachment and reporting (5–9):** combine guest-specific defaults, exchange
    completion record/commands and truthful messages because launch argument tests cover them
@@ -919,15 +950,16 @@ version bump, release branch, merge or real script execution is part of this pla
    | DOS | `retro run --in dos FILE` with a local DOS sample; Ctrl+Shift+F/full-screen and focus/release shortcuts work; dos.conf renderer stays ttf. |
    | win31 | `win31 setup` only in the agreed test workspace if installation is needed; queue/swap floppy images and Return to MS-DOS. `win31` reaches Program Manager; renderer remains owner-selected. After font repair, `win31 fonts` supplies C:\FONTS; install fonts in Windows, check focus and Delphi 1 run/debug using owner's media. |
    | win95 | `win95 setup` first and resumed phases, then `win95`: desktop loads with no X: folder IDE drive. Check maximized surface redraw, app CD and put/get/run; never change Video menu during Setup. `win95 snapshot save pre-net` while off; `win95 net on`, install NE2000/TCP-IP in Windows, confirm resource values and DHCP via winipcfg; reach a known owner service by IPv4. Shut down, `win95 net off`, cold boot shows network disabled; app CD and normal boot still work. |
-   | win2000 | Existing install (owner decision: no fresh reinstall workspace): after the upgrade, normal boot is detached until shutdown and `win2000 exchange enable`, then boot; the exchange drive appears (assign a letter in Disk Management if needed, without formatting); off-guest put/get round-trip. TCG is the default for new configs; the owner's explicit config values stay. Verify unscaled tablet alignment, larger screen area, quiet boot, `win2000 keys ctrl-alt-del`, Delphi install from generated app ISO and sample compile/run. Existing installs only adopt config changes the owner chooses and explicitly enable exchange. |
+   | win2000 | Existing install (owner decision: no fresh reinstall workspace): after the upgrade, normal boot is detached until shutdown and `win2000 exchange enable`, then boot; the exchange drive appears (assign a letter in Disk Management if needed, without formatting); off-guest put/get round-trip. TCG is the default; untouched v99 ACCEL/SOUND/DISPLAY_OPTS lines upgrade, owner edits stay. Verify unscaled tablet alignment, larger screen area, quiet boot, `win2000 keys ctrl-alt-del`, Delphi install from generated app ISO and sample compile/run. Existing installs adopt untouched-template/absent defaults, preserve edits and explicitly enable exchange. |
    | winnt40 | Item 8's fresh-install acceptance (owner's first NT install): `winnt40 setup` and resumed setup run without the exchange disk attached; Windows installs to C:; normal boot stays detached until shutdown and `winnt40 exchange enable`, then the exchange drive works; with own NT media; keep auto acceleration, PS/2, sb16 and scaled display. Test login keys, pointer release, exchange round-trip and app CD. If KVM is slow, document an owner-selected TCG fallback; no claim of NT acceptance without the run. |
    | Delphi Wine | `delphi1 setup`, `delphi 3 setup` with own files; verify final font summary/status and prefix-qualified repair if needed. Item 12 (12B): add the owner's local Breeze Dark `.reg` as a user scheme, then list/save/use default and it in each existing idle prefix; restart IDE, verify No Theme, colors and per-prefix separation. Rerun setup: manual colors survive. Rerun Delphi 3 CD menu explicitly; qualify OCX observations, check IDE keys and compile/run. Other versions only if owner has media. |
 
    `exchange recreate`, restoring snapshots, and `convert C:` are optional recovery/maintenance
    actions requiring separate owner intent, not routine acceptance commands. To inspect repaired
    existing exchange media, start with `exchange info`/`get`; never format it in Windows.
-4. Item 1 retains its isolated cold/online/offline/new-session/full-workflow checks and its own
-   individual command approvals. Do not clear the owner's npm cache to make the test cold.
+4. Item 1 is paused until a machine has `install-agentic` from the bundle's setup. Then resume its
+   cold/online/offline/new-session/full-workflow gate with individual command approvals. Do not
+   hand-build an environment under `assets/tools` or clear the owner's npm cache.
 5. After focused checks, proposed full acceptance repeats **init → setup → init → test** with the
    established six flags on each script:
 

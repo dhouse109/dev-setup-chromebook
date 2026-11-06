@@ -276,7 +276,7 @@ to see it in context; the comment above each fix usually tells the story.
 
 ## Retro
 
-- **Win95 IDE boot hang and redraw** (v100; Nov 5 2026). win95 boots image disks only; the separate IMGMAKE session still mounts X:. New win95 setup.conf/boot.conf use `output=surface` to fix maximized redraw. Keep guests off when editing output/scaler settings; do not change them from the Video menu during Setup. Existing explicit outputs are preserved, including opengl. All four DOSBox-X configs default to `[dosbox] hostkey=ctrlshift` (Ctrl+Shift+F for full screen); existing choices stay, and misplaced hostkey lines require manual review. Missing defaults are added only while the guest is stopped; win31 stays opengl and DOS stays ttf. Review owner-added folder mounts in win95 `[autoexec]` before booting; they are never removed automatically.
+- **Win95 IDE boot hang and redraw** (v100; Nov 5 2026). win95 boots image disks only; the separate IMGMAKE session still mounts X:. New win95 setup.conf/boot.conf use `output=surface` to fix maximized redraw. Keep guests off when editing output/scaler settings; do not change them from the Video menu during Setup. Untouched v99 `output=opengl` lines upgrade to surface (trailing spaces allowed); edited values/comments and duplicate assignments stay unchanged. All four DOSBox-X configs default to `[dosbox] hostkey=ctrlshift` (Ctrl+Shift+F for full screen); existing choices stay, and misplaced hostkey lines require manual review. Missing defaults are added only while the guest is stopped; win31 stays opengl and DOS stays ttf. Review owner-added folder mounts in win95 `[autoexec]` before booting; they are never removed automatically.
 
 
 - **Delphi 1's IDE crashes in a shared Wine prefix** (`install-retro`). It fails with a `winevdm.exe` page
@@ -287,7 +287,9 @@ to see it in context; the comment above each fix usually tells the story.
   `<guest> accel` reports selection/reason. Windows 3.1/95 use DOSBox-X and do not need KVM.
 
 - **Windows 2000 boot stalls, tablet scaling and noisy audio** (v100; Nov 5–6 2026).
-  New defaults are TCG, zoom-to-fit off and no sound; explicit owner choices stay. TCG completed
+  New defaults are TCG, zoom-to-fit off and no sound. Untouched v99 ACCEL, DISPLAY_OPTS and
+  SOUND lines upgrade too: the full original value/comment/spacing must match (trailing spaces
+  allowed). Edited lines and duplicate assignments stay unchanged; running guests defer. TCG completed
   Setup where the previous selection stalled. Disabling sound alone did not fix the boot.
   NT 4.0 remains auto, with TCG documented as an untested fallback. QEMU exchange attachment is
   deferred until installed desktop + shutdown + exchange enable, preventing a preformatted disk

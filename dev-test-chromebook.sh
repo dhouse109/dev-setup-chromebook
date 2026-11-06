@@ -5684,6 +5684,27 @@ with tempfile.TemporaryDirectory(prefix='retro-config-', dir=base) as tmp:
         if p.parent.name == 'win95': assert b'output=surface\r\n' in p.read_bytes()
     call('retro', 'config-defaults')
     assert snapshots == {p: p.read_bytes() for p in files}
+    # v100 (Nov 6 2026): upgrade only the exact v99 renderer line; owner edits and duplicates win.
+    for name in ('setup.conf', 'boot.conf'):
+        target = home / 'win95' / name
+        for suffix in ('', '   '):
+            old = ('[sdl]\r\noutput=opengl' + suffix + '\r\n[dosbox]\r\nhostkey=ctrlshift\r\n').encode()
+            target.write_bytes(old)
+            call('retro', 'config-defaults')
+            assert target.read_bytes() == old.replace(('output=opengl' + suffix).encode(), b'output=surface')
+            assert target.stat().st_mode & 0o777 == 0o640
+            upgraded = target.read_bytes(); call('retro', 'config-defaults')
+            assert target.read_bytes() == upgraded
+        for setting in ('output=texture', 'output=opengl # owner', ' output=opengl',
+                        'output=opengl\t', 'Output=opengl', 'output=opengl\noutput=opengl'):
+            old = ('[sdl]\n' + setting + '\n[dosbox]\nhostkey=ctrlshift\n').encode()
+            target.write_bytes(old); call('retro', 'config-defaults'); assert target.read_bytes() == old
+    (home / 'win95/.pid').write_text(str(os.getpid()))
+    for name in ('setup.conf', 'boot.conf'):
+        target = home / 'win95' / name
+        old = b'[sdl]\noutput=opengl\n[dosbox]\nhostkey=ctrlshift\n'
+        target.write_bytes(old); call('retro', 'config-defaults'); assert target.read_bytes() == old
+    (home / 'win95/.pid').unlink()
     custom = home / 'win95/boot.conf'
     original = b'[sdl]\r\n output = opengl\r\n[dosbox]\r\n HostKey = mapper\r\n'
     custom.write_bytes(original); call('retro', 'config-defaults'); assert custom.read_bytes() == original
@@ -5695,9 +5716,9 @@ with tempfile.TemporaryDirectory(prefix='retro-config-', dir=base) as tmp:
     custom.write_text('[sdl]\n[dosbox]\n')
     (home / 'win95/.pid').write_text(str(os.getpid()))
     call('retro', 'config-defaults'); assert custom.read_text() == '[sdl]\n[dosbox]\n'
-print('config fixtures: absent defaults, CRLF/mode, custom/misplaced/duplicate keys, repeat and running guards PASS')
+print('config fixtures: untouched v99 upgrade, edited values/comments/duplicates, absent defaults, CRLF/mode, custom/misplaced/duplicate keys, repeat and running guards PASS')
 RETRO_CONFIG_CHECK_PY
-    check "retro missing-default migration preserves owner configs (isolated)" 'RETRO_HELPER="$HOME/.local/lib/dev-retro/dev-retro" python3 "$WORK/retro-config-check.py"'
+    check "retro default migration preserves owner edits (isolated)" 'RETRO_HELPER="$HOME/.local/lib/dev-retro/dev-retro" python3 "$WORK/retro-config-check.py"'
     # v100 (Nov 5 2026): fake engine captures each invocation, without Windows media or a guest start.
     cat > "$WORK/retro-args-check.py" << 'RETRO_ARGS_CHECK_PY'
 import os, subprocess, tempfile
@@ -5819,7 +5840,7 @@ with tempfile.TemporaryDirectory(prefix='qemu-fixture-', dir=os.environ['WORK'])
         (ws / '.pid').write_text(str(os.getpid()))
         call(g, 'exchange', 'enable', ok=False); call(g, 'exchange', 'disable', ok=False)
         (ws / '.pid').unlink()
-    # Missing-only migration: complex shell and explicit assignments survive; status never repairs.
+    # v100 (Nov 6 2026): absent/default migration; edited lines survive and status never repairs.
     ws = home / 'win2000'; config = ws / 'config'
     config.write_bytes(b'# owner\r\nMEM=320\r\n'); config.chmod(0o640)
     before = config.read_bytes(); call('win2000', 'preferences'); assert config.read_bytes() == before
@@ -5832,6 +5853,48 @@ with tempfile.TemporaryDirectory(prefix='qemu-fixture-', dir=os.environ['WORK'])
     call('retro', 'config-defaults'); assert config.read_bytes() == data
     for text in ('export ACCEL=auto\nSOUND=AC97\nDISPLAY_OPTS="gtk,zoom-to-fit=on"\n', 'if true; then ACCEL=auto; fi\n'):
         config.write_text(text); call('retro', 'config-defaults'); assert config.read_text() == text
+    # Full v99 write-once template, verified against 60c891f; no real guest config is read.
+    legacy = '''# ~/win2000/config - written by dev-setup (install-retro) once; edit freely, setup leaves it alone.
+# Read by 'win2000' each time it starts QEMU.
+MEM=256                # MB
+CPU=pentium3            # pentium if setup blue-screens on this model
+MACHINE=pc
+HPET=on               # on cuts Windows 2000's idle CPU use
+DISK_GB=8              # the size 'win2000 setup' creates (NT 4.0 setup cannot format over 4 GB)
+DISK_FORMAT=qcow2       # qcow2 (snapshots), or raw: 'win2000 setup --raw' (NT 4.0's old qcow2 boot bug)
+VIDEO=cirrus            # both ship a Cirrus driver; skip NT 4.0's display "Test" button, which can hang
+NIC=pcnet               # AMD PCnet, user-mode networking; none turns it off
+SOUND=AC97             # sb16, AC97 or none (drivers on the install CDs)
+MOUSE=tablet             # ps2 (captured; Ctrl+Alt+G releases it) or tablet (USB: Windows 2000)
+ACCEL=auto              # auto (KVM when /dev/kvm is usable), kvm or tcg
+DISPLAY_OPTS=gtk,zoom-to-fit=on
+EXTRA_ARGS=""           # more QEMU options, e.g. "-smp 2"
+'''
+    replacements = [('ACCEL=auto              # auto (KVM when /dev/kvm is usable), kvm or tcg', 'ACCEL=tcg              # auto (KVM when usable), kvm or tcg; explicit owner values stay'), ('DISPLAY_OPTS=gtk,zoom-to-fit=on', 'DISPLAY_OPTS="gtk,zoom-to-fit=off"'), ('SOUND=AC97             # sb16, AC97 or none (drivers on the install CDs)', 'SOUND=none             # sb16, AC97 or none (drivers on the install CDs)')]
+    modern = legacy
+    for old, new in replacements: modern = modern.replace(old, new)
+    for ending, suffix in (('\n', ''), ('\r\n', '   '), ('', '')):
+        data = legacy
+        for old, _ in replacements: data = data.replace(old, old + suffix)
+        data = data.replace('\n', '\r\n') if ending == '\r\n' else data
+        expected = modern.replace('\n', '\r\n') if ending == '\r\n' else modern
+        if not ending: data, expected = data.rstrip('\n'), expected.rstrip('\n')
+        config.write_bytes(data.encode()); config.chmod(0o640)
+        call('retro', 'config-defaults'); assert config.read_bytes() == expected.encode()
+        assert config.stat().st_mode & 0o777 == 0o640
+        call('retro', 'config-defaults'); assert config.read_bytes() == expected.encode()
+    for old, new in replacements:
+        key, value = old.split('=', 1)
+        for edited in (key + '=owner', old + ' # owner', ' ' + old, old + '\t',
+                       'export ' + old, old.replace('=', ' = ', 1)):
+            data = modern.replace(new, edited).encode()
+            config.write_bytes(data); call('retro', 'config-defaults'); assert config.read_bytes() == data
+        data = (legacy + old + '\n').encode()
+        config.write_bytes(data); call('retro', 'config-defaults'); assert config.read_bytes() == data
+    config.write_bytes(legacy.encode())
+    (ws / '.pid').write_text(str(os.getpid()))
+    call('retro', 'config-defaults'); assert config.read_bytes() == legacy.encode()
+    (ws / '.pid').unlink()
     # Override propagation (audio backend may be silent, but the explicit card must remain).
     config.write_text('ACCEL=tcg\nSOUND=AC97\nDISPLAY_OPTS="gtk,zoom-to-fit=on"\n')
     call('win2000'); assert any('AC97,audiodev=snd0' == x for x in args())
@@ -5846,7 +5909,7 @@ with tempfile.TemporaryDirectory(prefix='qemu-fixture-', dir=os.environ['WORK'])
             expected = 'selected by ACCEL=tcg' if want == 'tcg' else ('selected by ACCEL=' + want if state == 'usable' else ('present but not usable' if state == 'present' else 'unavailable'))
             assert expected in r.stdout, r.stdout
             assert ('group' in r.stdout) == (want != 'tcg' and state == 'present')
-print('QEMU fixtures: defaults, overrides, gate/identity, fresh/resumed/CD/floppy/raw setup, run/put guards and 9 acceleration cases PASS')
+print('QEMU fixtures: untouched v99 upgrade, edited values/comments/duplicates/running preservation, defaults, overrides, gate/identity, fresh/resumed/CD/floppy/raw setup, run/put guards and 9 acceleration cases PASS')
 RETRO_QEMU_CHECK_PY
     check "QEMU defaults, exchange completion and acceleration (isolated)" 'RETRO_HELPER="$HOME/.local/lib/dev-retro/dev-retro" python3 "$WORK/retro-qemu-check.py"' 180
     # v100 (Nov 5–6 2026): read-only preferences warn; a disk does not prove Windows installation.
@@ -6019,6 +6082,19 @@ mkdir -p "$WINEPREFIX/drive_c/windows/fOnTs"
 for n in ARIAL CoUr Tahoma TAHOMABD; do printf font > "$WINEPREFIX/drive_c/windows/fOnTs/$n.TtF"; done
 exit 0
 '''); p.chmod(0o755)
+    # v100 (Nov 6 2026): fake timeout validates the bound and simulates a stall without waiting.
+    p = bindir / 'timeout'
+    p.write_text('''#!/bin/bash
+[ "$1 $2 $3" = '-k 10 300' ] || exit 98
+shift 3
+if [ "$MODE" = timeout ] || [ "$MODE" = killed ]; then
+    n=0; [ ! -f "$WORK/count" ] || n=$(cat "$WORK/count"); echo "$((n+1))" > "$WORK/count"
+    echo 'fixture diagnostic attempt timed out'
+    [ "$MODE" != killed ] || exit 137
+    exit 124
+fi
+exec "$@"
+'''); p.chmod(0o755)
     env = dict(HOME=str(home), WORK=str(root), PATH=str(bindir) + ':/usr/bin:/bin', LC_ALL='C.UTF-8', XDG_CACHE_HOME=str(root / 'cache'))
     assets = root / 'assets'; assets.mkdir()
     (root / 'assets-path').write_text(str(assets) + '\n')
@@ -6032,7 +6108,7 @@ case "$1" in
 esac
 '''
     h.write_text(original.rsplit('main "$@"; exit $?', 1)[0] + dispatch)
-    for mode, attempts, success in [('first', 1, True), ('recover', 2, True), ('never', 2, False), ('empty', 2, False), ('missing', 0, False)]:
+    for mode, attempts, success in [('first', 1, True), ('recover', 2, True), ('never', 2, False), ('empty', 2, False), ('timeout', 2, False), ('killed', 2, False), ('missing', 0, False)]:
         prefix = home / '.local/share/wine' / mode
         (root / 'count').unlink(missing_ok=True)
         env['MODE'] = mode; env['NO_TOOL'] = '1' if mode == 'missing' else '0'
@@ -6047,6 +6123,9 @@ esac
         if attempts:
             assert text.count('winetricks exit=') == attempts
             assert text.count('fixture diagnostic attempt') == attempts
+        if mode in ('timeout', 'killed'):
+            assert text.count('Font acquisition timed out') == 2
+            assert text.count('winetricks exit=' + ('124' if mode == 'timeout' else '137')) == 2
         if success:
             subprocess.run(['bash', str(h), 'acquire', str(prefix)], env=env, check=True, capture_output=True)
             assert int((root / 'count').read_text()) == attempts
@@ -6068,7 +6147,7 @@ esac
     r = subprocess.run(['bash', str(h), 'win31', 'fonts'], env=env, text=True, capture_output=True)
     assert r.returncode != 0 and 'WINEPREFIX=' in r.stderr and "win31 fonts" in r.stderr
     assert (root / 'count').read_text() == count
-print('font fixtures: success/retry/exhaustion/missing tool/empty success, logs, prefix repair, Delphi 3 collection and read-only status PASS')
+print('font fixtures: bounded timeout/kill, success/retry/exhaustion/missing tool/empty success, logs, prefix repair, Delphi 3 collection and read-only status PASS')
 RETRO_FONT_CHECK_PY
     check "Retro font retry, diagnostics and collection (isolated)" 'RETRO_HELPER="$HOME/.local/lib/dev-retro/dev-retro" python3 "$WORK/retro-font-check.py"' 180
     # v100 (Nov 5 2026): synthetic registry and executable Wine stubs; no real prefix mutation.

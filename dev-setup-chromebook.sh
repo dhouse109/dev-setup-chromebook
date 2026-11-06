@@ -10255,8 +10255,9 @@ PY
 }
 
 # v100 (Nov 5 2026): write-once guest configs gain only absent defaults, never changed owner values.
-# The parser preserves existing bytes/line endings; duplicates and misplaced hostkey require manual review.
-ini_setting() {   # ensure|read FILE SECTION KEY [DEFAULT]
+# v100 (Nov 6 2026): exact v99 template lines also upgrade; any edit, duplicate or misplaced hostkey stays.
+# The parser preserves other bytes/line endings and modes; ambiguous configs require manual review.
+ini_setting() {   # ensure|read FILE SECTION KEY [DEFAULT [EXACT_V99_LINE]]
     python3 - "$@" << 'RETRO_INI_PY'
 import os, re, stat, sys, tempfile
 from pathlib import Path
@@ -10284,13 +10285,20 @@ if len(sections.get(section, [])) > 1 or len(found) > 1 or misplaced:
 if op == 'read':
     if not found: sys.exit(1)
     print(found[0][2]); sys.exit(0)
-if found: sys.exit(0)
+# v100 (Nov 6 2026): only a byte-identical v99 template line (plus trailing spaces) is untouched.
+if found:
+    old = lines[found[0][3]].rstrip('\r\n')
+    if len(values) < 2 or old.rstrip(' ') != values[1]: sys.exit(0)
 if p.is_symlink():
     print(f'NOTE: {p.name}: symlink config left unchanged; add {key} manually.', file=sys.stderr)
     sys.exit(0)
 nl = '\r\n' if b'\r\n' in raw else '\n'
 addition = f'{key}={values[0]}{nl}'
-if section in sections:
+if found:
+    at = found[0][3]
+    ending = lines[at][len(old):]
+    lines[at] = f'{key}={values[0]}' + ending
+elif section in sections:
     at = sections[section][0] + 1
     if at and not lines[at - 1].endswith(("\r", "\n")): lines[at - 1] += nl
     lines.insert(at, addition)
@@ -10320,7 +10328,7 @@ dosbox_defaults() {   # migrate only existing files; setup and lazy helper paths
         win31) f="$HOME/win31/dosbox-x.conf"; ini_setting ensure "$f" dosbox hostkey ctrlshift ;;
         win95)
             for f in "$HOME/win95/setup.conf" "$HOME/win95/boot.conf"; do
-                ini_setting ensure "$f" sdl output surface || return
+                ini_setting ensure "$f" sdl output surface output=opengl || return
                 ini_setting ensure "$f" dosbox hostkey ctrlshift || return
             done ;;
         dos) ini_setting ensure "$HOME/.config/dev-retro/dos.conf" dosbox hostkey ctrlshift ;;
@@ -11023,13 +11031,36 @@ assignment = re.compile(r'^\s*(?:export\s+)?[A-Za-z_][A-Za-z_0-9]*=')
 if p.is_symlink() or any(not assignment.match(line) or any(c in line for c in ('`', '$(', '\\\n')) for line in active):
     print('NOTE: win2000/config: complex or symlink config left unchanged; review absent defaults.', file=sys.stderr)
     sys.exit(0)
+# v100 (Nov 6 2026): v99 wrote these explicit defaults on every retro install. Compare the
+# whole line, including its original comment/spacing; any owner edit wins. Never evaluate it.
+legacy = {
+    'ACCEL': ('ACCEL=auto              # auto (KVM when /dev/kvm is usable), kvm or tcg',
+              'ACCEL=tcg              # auto (KVM when usable), kvm or tcg; explicit owner values stay'),
+    'DISPLAY_OPTS': ('DISPLAY_OPTS=gtk,zoom-to-fit=on', 'DISPLAY_OPTS="gtk,zoom-to-fit=off"'),
+    'SOUND': ('SOUND=AC97             # sb16, AC97 or none (drivers on the install CDs)',
+              'SOUND=none             # sb16, AC97 or none (drivers on the install CDs)'),
+}
 want = {'ACCEL': 'tcg', 'DISPLAY_OPTS': '"gtk,zoom-to-fit=off"', 'SOUND': 'none'}
-missing = {key: val for key, val in want.items() if not any(re.search(r'\b' + key + r'\s*=', line) for line in active)}
-if not missing: sys.exit(0)
+counts = {key: sum(len(re.findall(r'\b' + key + r'\s*=', line)) for line in active) for key in want}
+if any(count > 1 for count in counts.values()):
+    print('NOTE: win2000/config: duplicate assignment; review manually (left unchanged).', file=sys.stderr)
+    sys.exit(0)
+changed = False
+for i, line in enumerate(lines):
+    content = line.rstrip('\r\n')
+    for old, new in legacy.values():
+        if content.rstrip(' ') == old:
+            lines[i] = new + line[len(content):]
+            changed = True
+            break
+missing = {key: val for key, val in want.items() if not counts[key]}
+if not changed and not missing: sys.exit(0)
+text = ''.join(lines)
 nl = '\r\n' if '\r\n' in text else '\n'
-if text and not text.endswith(('\r', '\n')): text += nl
-text += '# v100 (Nov 5 2026): absent win2000 defaults; explicit owner choices are preserved.' + nl
-text += ''.join(key + '=' + value + nl for key, value in missing.items())
+if missing:
+    if text and not text.endswith(('\r', '\n')): text += nl
+    text += '# v100 (Nov 5 2026): absent win2000 defaults; explicit owner choices are preserved.' + nl
+    text += ''.join(key + '=' + value + nl for key, value in missing.items())
 fd, temp = tempfile.mkstemp(prefix='.config.', dir=p.parent)
 try:
     with os.fdopen(fd, 'wb') as f: f.write(text.encode('latin-1'))
@@ -11327,7 +11358,9 @@ install_fonts() {   # PREFIX; nonfatal caller prints fonts_summary after all oth
     fi
     for attempt in 1 2; do
         echo "Font acquisition attempt $attempt/2" >> "$FONT_LOG"
-        WINEPREFIX="$prefix" winetricks -q corefonts tahoma >> "$FONT_LOG" 2>&1; rc=$?
+        # v100 (Nov 6 2026): stalled font downloads must not hold unattended setup forever.
+        WINEPREFIX="$prefix" timeout -k 10 300 winetricks -q corefonts tahoma >> "$FONT_LOG" 2>&1; rc=$?
+        case "$rc" in 124|137) echo 'Font acquisition timed out (300 seconds; 10-second kill grace).' >> "$FONT_LOG" ;; esac
         font_state "$prefix" >> "$FONT_LOG"; files_rc=$?
         printf 'winetricks exit=%s; required-font files exit=%s\n' "$rc" "$files_rc" >> "$FONT_LOG"
         if [ "$rc" = 0 ] && [ "$files_rc" = 0 ]; then
