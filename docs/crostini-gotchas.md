@@ -291,3 +291,8 @@ to see it in context; the comment above each fix usually tells the story.
   NT 4.0 remains auto, with TCG documented as an untested fallback. QEMU exchange attachment is
   deferred until installed desktop + shutdown + exchange enable, preventing a preformatted disk
   taking C: during Setup. See the init checklist and STEPS-winnt.md for existing installs/recovery.
+
+- **Windows 95 NE2000 and COM2** (v100; Nov 5 2026).
+  `win95 net on` uses slirp without raw-network permissions; IRQ3 requires COM2 disabled. Only an
+  absent serial2 is filled; custom conflicts/blocks require manual review. Use Tailscale IPv4
+  addresses for other laptops; guest NAT is not an inbound bridge. See the checklist/STEPS-delphi.md.

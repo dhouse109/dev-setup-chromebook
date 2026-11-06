@@ -5586,6 +5586,74 @@ if has install-retro; then
     check "genisoimage Joliet/Rock Ridge filename round-trip" 'mkdir -p "$WORK/iso-source" && printf fixture > "$WORK/iso-source/Long app filename.txt" && genisoimage -quiet -J -r -V FIXTURE -o "$WORK/retro-fixture.iso" "$WORK/iso-source" && bsdtar -tf "$WORK/retro-fixture.iso" | grep -F "Long app filename.txt" && [ "$(bsdtar -xOf "$WORK/retro-fixture.iso" "Long app filename.txt")" = fixture ]'
     warn  "bsdtar (libarchive-tools): 'delphi N setup' unpacks a CD's .iso" 'command -v bsdtar && bsdtar --version | head -n 1'
     hint  "rerun dev-setup with install-retro; without it, copy the Delphi CD's files (not the .iso) into ~/delphi/install/N"
+    # v100 (Nov 5 2026): executable metadata/emulator stubs ensure this fixture never starts DOSBox-X.
+    cat > "$WORK/retro-net-check.py" << 'RETRO_NET_CHECK_PY'
+import os, subprocess, tempfile
+from pathlib import Path
+original = Path(os.environ['RETRO_HELPER']).read_text()
+with tempfile.TemporaryDirectory(prefix='net-fixture-', dir=os.environ['WORK']) as tmp:
+    root = Path(tmp); home = root / 'home'; home.mkdir(); bindir = root / 'bin'; bindir.mkdir()
+    def exe(name, body):
+        p = bindir / name; p.write_text('#!/bin/sh\n' + body + '\n'); p.chmod(0o755)
+    exe('dosbox-x', 'echo "Unexpected emulator invocation" >&2; exit 97')
+    exe('readelf', '[ "${SUPPORT:-1}" = 1 ] || exit 1; echo "NEEDED libslirp.so.0"')
+    exe('strings', '[ "${SUPPORT:-1}" = 1 ] || exit 1; echo "SlirpEthernetConnection"')
+    exe('pgrep', 'exit 1')
+    h = root / 'helper'; h.write_text(original)
+    env = dict(HOME=str(home), WORK=str(root), PATH=str(bindir) + ':/usr/bin:/bin', LC_ALL='C.UTF-8')
+    ws = home / 'win95'; ws.mkdir(); config = ws / 'boot.conf'
+    def run(*args, ok=True):
+        r = subprocess.run(['bash', str(h), *args], env=env, text=True, capture_output=True)
+        assert (r.returncode == 0) == ok, r.stdout + r.stderr
+        return r
+    def call(*args, ok=True): return run('win95', 'net', *args, ok=ok)
+    call(); assert not config.exists()
+    run('retro', 'slirp-support')
+    env['SUPPORT'] = '0'; call('on', ok=False); assert not config.exists(); env['SUPPORT'] = '1'
+    call('on'); assert config.exists() and not (ws / 'setup.conf').exists()
+    call('off')
+    originals = [b'[sdl]\noutput=surface\n[dosbox]\nhostkey=ctrlshift\n', b'; owner\r\n[sdl]\r\noutput=opengl\r\n', b'[serial]\nserial1=dummy\n', b'[serial]', b'[serial]\n serial2 = disabled\n', b'']
+    for data in originals:
+        config.write_bytes(data); config.chmod(0o640)
+        call('on'); changed = config.read_bytes()
+        assert b'ne2000=true' in changed and b'backend=slirp' in changed and b'nicbase=300' in changed and b'nicirq=3' in changed
+        assert 'Network on' in call().stdout
+        call('on'); assert config.read_bytes() == changed
+        call('check'); call('off'); assert config.read_bytes() == data, (data, config.read_bytes())
+        assert config.stat().st_mode & 0o777 == 0o640
+        call('off'); assert config.read_bytes() == data
+    for data in (b'[ne2000]\nne2000=true\nbackend=pcap\nnicirq=10\n', b'[ne2000]\nne2000=false\n', b'[ne2000]\nne2000=true\nne2000=false\n', b'[serial]\nserial2=dummy\n', b'[sdl]\n[sdl]\n'):
+        config.write_bytes(data)
+        call('on', ok=False); assert config.read_bytes() == data
+        if b'ne2000=false\n' == data.split(b'[ne2000]\n')[-1]: call('off')
+    config.write_text('[ne2000]\nne2000=true\nbackend=pcap\nnicirq=10\n')
+    call('off', ok=False); call('check')
+    config.write_text('[ne2000]\nne2000=true\nbackend=slirp\nnicirq=3\n[serial]\nserial2=dummy\n')
+    call('check', ok=False)
+    for change in ('nicirq=10', 'serial2=dummy', 'extra'):
+        config.write_text('[sdl]\n'); call('on'); data = config.read_text()
+        if change == 'extra': data += 'macaddr=AC:DE:48:00:00:01\n'
+        elif change.startswith('nicirq'): data = data.replace('nicirq=3', change)
+        else: data = data.replace('serial2=disabled', change)
+        config.write_text(data); call('off', ok=False); assert config.read_text() == data
+    config.write_text('[sdl]\n')
+    (ws / '.pid').write_text(str(os.getpid()))
+    call('on', ok=False); call('off', ok=False); call('status'); assert config.read_text() == '[sdl]\n'
+    (ws / '.pid').unlink()
+    # Owner serial settings added while on keep their section when the managed line is removed.
+    config.write_text('[sdl]\n'); call('on')
+    config.write_text(config.read_text().replace('# <<< dev-retro v100 serial2 <<<\n', '# <<< dev-retro v100 serial2 <<<\nserial1=dummy\n'))
+    call('off'); assert '[serial]\nserial1=dummy\n' in config.read_text()
+    # The unsupported-build guard performs no edit even with a writable config.
+    before = config.read_bytes(); env['SUPPORT'] = '0'; call('on', ok=False); assert config.read_bytes() == before
+    run('win31', 'net', 'on', ok=False)
+print('network fixtures: atomic on/off, repeat/CRLF/mode/EOF, support/running guards, custom/duplicate/edited blocks and COM2 preservation PASS')
+RETRO_NET_CHECK_PY
+    check "win95 network transaction and owner-config preservation (isolated)" 'RETRO_HELPER="$HOME/.local/lib/dev-retro/dev-retro" python3 "$WORK/retro-net-check.py"' 180
+    # v100 (Nov 5 2026): binary support is separate from guest connectivity; off is a normal choice.
+    check "DOSBox-X build includes NE2000 slirp support" '~/.local/lib/dev-retro/dev-retro retro slirp-support'
+    info "win95 network configuration" "$(~/.local/lib/dev-retro/dev-retro win95 net status)"
+    warn "win95 networking: no edited blocks or resource conflicts" '~/.local/lib/dev-retro/dev-retro win95 net check'
     # v100 (Nov 5 2026): config preferences warn; fixture failures are bundle regressions.
     warn "DOSBox-X host key, win95 renderer and custom boot mounts" '~/.local/lib/dev-retro/dev-retro retro config-status'
     hint "With guests stopped, choose [dosbox] hostkey=ctrlshift and win95 [sdl] output=surface; explicit choices are preserved. Review folder mounts in win95 autoexec."
@@ -5657,7 +5725,7 @@ install_iso() { echo "$WORK/windows.iso"; }; app_cd() { echo "$WORK/app.iso"; }
         elif image.exists(): image.unlink()
         capture = root / 'args'; capture.write_bytes(b'')
         code = h + stub + f'\nSIM_INSTALLED={installed}\nwin95_cmd {mode} "$WORK/file.exe"\n'
-        r = subprocess.run(['bash', '-c', code], env=env, capture_output=True, text=True)
+        r = subprocess.run(['bash', '-s'], input=code, env=env, capture_output=True, text=True)
         assert r.returncode == 0, r.stdout + r.stderr
         calls = [[x.decode() for x in call.split(b'\0')] for call in capture.read_bytes().split(b'\0\0') if call]
         assert len(calls) == (1 if disk else 2), calls
@@ -5773,7 +5841,7 @@ with tempfile.TemporaryDirectory(prefix='qemu-fixture-', dir=os.environ['WORK'])
     for want in ('auto', 'kvm', 'tcg'):
         for state in ('usable', 'present', 'missing'):
             code = defs + f'\nkvm_state() {{ KVM_STATE={state}; }}\nACCEL={want}; pick_accel; printf "%s\\n" "$ACCEL_NOTE" "${{ACCEL_ARGS[@]}}"\n'
-            r = subprocess.run(['bash', '-c', code], env=env, text=True, capture_output=True)
+            r = subprocess.run(['bash', '-s'], input=code, env=env, text=True, capture_output=True)
             assert r.returncode == 0
             expected = 'selected by ACCEL=tcg' if want == 'tcg' else ('selected by ACCEL=' + want if state == 'usable' else ('present but not usable' if state == 'present' else 'unavailable'))
             assert expected in r.stdout, r.stdout

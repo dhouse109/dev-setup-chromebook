@@ -4311,7 +4311,7 @@ BUILD_EOF
 # Delphi 1.0 on this Chromebook (dev-demo v93)
 
 DOSBox-X v100: [dosbox] hostkey=ctrlshift for new/absent settings; Ctrl+Shift+F toggles full screen. Existing choices remain. QEMU shortcuts differ; see STEPS-winnt.md.
-(Delphi 3, 4, 5, 6 and 7: STEPS-delphi.md.)
+(Delphi 3, 4, 5, 6 and 7: STEPS-delphi.md; win95 net on/off and manual NE2000/TCP-IP steps there too.)
 
 Delphi 1 is a 16-bit Windows 3.1 application. Two routes, both set up by install-retro. Put the Delphi 1
 install files (the disks' contents or the CD's, SETUP.EXE with them) in ~/win31/install/apps first.
@@ -4529,6 +4529,22 @@ outputs are preserved, including opengl. All four DOSBox-X configs default to `[
 (Ctrl+Shift+F for full screen); existing choices stay, and misplaced hostkey lines require manual review.
 Missing defaults are added only while the guest is stopped; win31 stays opengl and DOS stays ttf.
 Review owner-added folder mounts in win95 `[autoexec]` before booting; they are never removed automatically.
+
+v100 win95 networking (Nov 5 finding): `win95 net` / `win95 net status` shows next-boot config,
+not connectivity. With Windows shut down, `win95 net on` adds the managed NE2000 block in boot.conf:
+ne2000=true, backend=slirp, nicbase=300, nicirq=3. It adds serial2=disabled only if absent to avoid
+COM2's IRQ3 conflict. Explicit serial2 values are kept; an enabled/custom COM2 must be resolved
+manually before on. `win95 net off` removes only unchanged helper-owned additions. Unmanaged or
+hand-edited network blocks are reported for manual review; no custom settings are overwritten.
+Setup.conf is untouched. Networking starts off; no drivers are installed automatically. The backend
+is checked from binary linkage/strings without starting DOSBox-X; an unsupported build refuses on.
+
+Windows 95 steps after on: add NE2000 Compatible manually (not Plug and Play), I/O 0300 / IRQ3;
+ensure no COM2 conflict; add TCP/IP, obtain an address by DHCP, reboot, inspect `winipcfg`. The Linux
+host is normally 10.0.2.2. Try a known host service and another laptop by its explicit Tailscale IPv4
+address first. Plain HTTP may work; period browser HTTPS/TLS support is limited. MagicDNS, inbound
+access, ping responses and DCOM are not promised. No host forwarding or win31 networking is added;
+the broad guest network test matrix remains deferred to v101. Shut Windows down before off/on.
 
 Delphi 3 or 4 in Windows 95 (DOSBox-X):
 

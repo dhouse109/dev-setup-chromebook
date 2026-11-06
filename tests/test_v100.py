@@ -42,7 +42,7 @@ class Fixture(unittest.TestCase):
 
     def bash(self, code, good=True):
         result = subprocess.run(
-            ["bash", "--noprofile", "--norc", "-o", "pipefail", "-c", code],
+            ["bash", "--noprofile", "--norc", "-o", "pipefail", "-s"], input=code,
             cwd=self.work, env=self.env, text=True, capture_output=True, timeout=30,
         )
         if good:
@@ -177,6 +177,15 @@ class Colors(Fixture):
         script = source('test').split("<< 'RETRO_COLOR_CHECK_PY'\n", 1)[1].split('\nRETRO_COLOR_CHECK_PY', 1)[0]
         self.env.update(RETRO_HELPER=str(h), RETRO_DEFAULT=str(reset))
         result = subprocess.run(['/usr/bin/python3', '-c', script], env=self.env, text=True, capture_output=True, timeout=180)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+
+class Networking(Fixture):
+    def test_shared_devtest_net_fixture(self):
+        h = self.work / 'helper'; h.write_text(helper())
+        script = source('test').split("<< 'RETRO_NET_CHECK_PY'\n", 1)[1].split('\nRETRO_NET_CHECK_PY', 1)[0]
+        self.env['RETRO_HELPER'] = str(h)
+        result = subprocess.run(['/usr/bin/python3', '-c', script], env=self.env, text=True, capture_output=True, timeout=90)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
 

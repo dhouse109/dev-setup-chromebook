@@ -738,3 +738,19 @@ ThemeActive/colors are preserved (only an absent ThemeActive is initialized). Se
 the desktop to black or reapplies a saved scheme over manual changes. The selection is a label:
 dev-test warns on manual drift or an active theme and never repairs it. Existing COM prefixes are
 not changed. The disposable real-Wine integration check uses only a test-owned scratch prefix.
+
+v100 win95 networking (Nov 5 finding): `win95 net` / `win95 net status` shows next-boot config,
+not connectivity. With Windows shut down, `win95 net on` adds the managed NE2000 block in boot.conf:
+ne2000=true, backend=slirp, nicbase=300, nicirq=3. It adds serial2=disabled only if absent to avoid
+COM2's IRQ3 conflict. Explicit serial2 values are kept; an enabled/custom COM2 must be resolved
+manually before on. `win95 net off` removes only unchanged helper-owned additions. Unmanaged or
+hand-edited network blocks are reported for manual review; no custom settings are overwritten.
+Setup.conf is untouched. Networking starts off; no drivers are installed automatically. The backend
+is checked from binary linkage/strings without starting DOSBox-X; an unsupported build refuses on.
+
+Windows 95 steps after on: add NE2000 Compatible manually (not Plug and Play), I/O 0300 / IRQ3;
+ensure no COM2 conflict; add TCP/IP, obtain an address by DHCP, reboot, inspect `winipcfg`. The Linux
+host is normally 10.0.2.2. Try a known host service and another laptop by its explicit Tailscale IPv4
+address first. Plain HTTP may work; period browser HTTPS/TLS support is limited. MagicDNS, inbound
+access, ping responses and DCOM are not promised. No host forwarding or win31 networking is added;
+the broad guest network test matrix remains deferred to v101. Shut Windows down before off/on.

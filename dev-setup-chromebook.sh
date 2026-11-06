@@ -10107,6 +10107,8 @@ EOF_DBX
 #   <cmd> floppy IMG|eject                    swap the floppy while running
 #   <cmd> keys ctrl-alt-del                   keys ChromeOS keeps for itself (the NT login needs this one)
 #   <cmd> snapshot save NAME | restore NAME | list | delete NAME      undo points on the qcow2 disk
+# win95 (v100, Nov 5 2026):
+#   win95 net [status|on|off]   next normal boot; IRQ3/I-O300 NE2000 with slirp, guest off to change
 # win95 (v93):
 #   win95 snapshot save NAME | restore NAME [--yes] | list | delete NAME
 #                            undo points: sparse copies of hdd.img in ~/win95/snapshots, guest off only
@@ -10682,14 +10684,158 @@ int13fakev86io=true
 int13fakeio=true
 int13fakev86io=true
 cd-rom insertion delay=4000'
+    if [ "${1:-}" != boot-only ]; then
     [ -f "$WS/setup.conf" ] || printf '%s\n' "# ~/win95/setup.conf - written by dev-setup (install-retro) once; edit freely." \
         "# Installing: the normal core, as DOSBox-X's Windows 95 guide requires." "$base" | sed 's/^cputype=pentium_mmx$/cputype=pentium_mmx\ncore=normal/; s/^\[dosbox\]$/[dosbox]\ntitle=Windows 95 setup (dev-retro)/' > "$WS/setup.conf"
+    fi
     [ -f "$WS/boot.conf" ] || printf '%s\n' "# ~/win95/boot.conf - written by dev-setup (install-retro) once; edit freely." \
         "# Running: the faster dynamic core ('win95 --core normal' for a DOS prompt window inside Windows 95)." \
-        "# Networking (NE2000 through slirp) is off; to turn it on, add:  [ne2000] ne2000=true backend=slirp" "$base" \
+        "# v100 (Nov 5 2026): Networking defaults off; win95 net on|off manages boot.conf with the guest off." "$base" \
         | sed 's/^cputype=pentium_mmx$/cputype=pentium_mmx\ncore=dynamic_x86/; s/^\[dosbox\]$/[dosbox]\ntitle=Windows 95 (dev-retro)/' > "$WS/boot.conf"
-    dosbox_defaults win95
+    if [ "${1:-}" = boot-only ]; then
+        ini_setting ensure "$WS/boot.conf" sdl output surface
+        ini_setting ensure "$WS/boot.conf" dosbox hostkey ctrlshift
+    else
+        dosbox_defaults win95
+    fi
 }
+# v100 (Nov 5 2026): support is inspected without starting DOSBox-X, as upstream documents.
+slirp_support() {
+    local bin
+    bin=$(command -v dosbox-x) || return 1
+    # grep consumes all output: grep -q would SIGPIPE strings under pipefail.
+    readelf -d "$bin" 2> /dev/null | grep 'NEEDED.*libslirp' > /dev/null || return 1
+    strings "$bin" | grep 'SlirpEthernetConnection' > /dev/null
+}
+win95_net() {
+    local op=${1:-status}
+    case "$op" in
+        status|check) ;;
+        on|off)
+            need_stopped win95
+            if [ "$op" = on ]; then
+                slirp_support || die "DOSBox-X slirp support unavailable/unconfirmed; no changes made. Check the installed Debian build; do not start an emulator probe without owner approval."
+                [ -f "$WS/boot.conf" ] || win95_confs boot-only
+            fi ;;
+        *) die "usage: win95 net [status|on|off]" ;;
+    esac
+    python3 - "$WS/boot.conf" "$op" << 'RETRO_NET_PY'
+# v100 (Nov 5 2026): manage only our intact additions, with the guest off; preserve all custom data.
+import fcntl, os, re, stat, sys, tempfile
+from pathlib import Path
+p, op = Path(sys.argv[1]), sys.argv[2]
+def fail(message): raise ValueError(message)
+try:
+    if p.is_symlink(): fail('Symlink boot.conf left unchanged; manage networking manually')
+    if not p.exists():
+        if op in ('status', 'check', 'off'):
+            print('Network off (boot.conf not created yet); next-boot configuration only'); sys.exit(0)
+        fail('Create boot.conf before enabling networking')
+    with p.open('rb') as locked:
+        if op in ('on', 'off'):
+            try: fcntl.flock(locked, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError: fail('boot.conf is busy; retry with the guest off')
+        initial = p.stat()
+        if (initial.st_dev, initial.st_ino) != (os.fstat(locked.fileno()).st_dev, os.fstat(locked.fileno()).st_ino): fail('boot.conf changed; retry')
+        raw = locked.read(); text = raw.decode('latin-1')
+        nl = '\r\n' if b'\r\n' in raw else '\n'
+        current, sections, values, locations = '', {}, {}, {}
+        position = 0
+        for line in text.splitlines(keepends=True):
+            stripped = line.strip()
+            m = re.fullmatch(r'\[([^]]+)\]\s*(?:[#;].*)?', stripped)
+            if m:
+                current = m[1].strip().casefold()
+                if current in sections: fail('Duplicate sections; review boot.conf manually (unchanged)')
+                sections[current] = position + len(line)
+            elif '=' in line and not stripped.startswith(('#', ';')):
+                key, val = line.split('=', 1); pair = (current, key.strip().casefold())
+                if pair in values: fail('Duplicate keys; review boot.conf manually (unchanged)')
+                values[pair] = val.strip(); locations[pair] = position
+            position += len(line)
+        network = {key: val for (section, key), val in values.items() if section == 'ne2000'}
+        enabled = network.get('ne2000', 'false').casefold() in ('true', '1')
+        backend = network.get('backend', 'auto').casefold()
+        base = network.get('nicbase', '300'); irq = network.get('nicirq', '3')
+        serial = values.get(('serial', 'serial2'), 'default').casefold()
+        def net_block(final):
+            return nl.join([f'# >>> dev-retro v100 net (final-newline={final}) >>>', '[ne2000]', 'ne2000=true', 'backend=slirp', 'nicbase=300', 'nicirq=3', '# <<< dev-retro v100 net <<<', ''])
+        serial_start, serial_end = '# >>> dev-retro v100 serial2 >>>', '# <<< dev-retro v100 serial2 <<<'
+        serial_inline = nl.join([serial_start, 'serial2=disabled', serial_end, ''])
+        serial_section = nl.join([serial_start, '[serial]', 'serial2=disabled', serial_end, ''])
+        net_owned, restore_final = None, 'yes'
+        for final in ('yes', 'no'):
+            candidate = net_block(final)
+            if candidate in text and text.count(candidate) == 1:
+                net_owned, restore_final = candidate, final
+        marker = '# >>> dev-retro v100 net'
+        malformed_net = marker in text and (net_owned is None or text.count(marker) != 1)
+        if net_owned and network != {'ne2000': 'true', 'backend': 'slirp', 'nicbase': '300', 'nicirq': '3'}: malformed_net = True
+        serial_owned = serial_section if serial_section in text else (serial_inline if serial_inline in text else None)
+        malformed_serial = (serial_start in text or serial_end in text) and (serial_owned is None or text.count(serial_start) != 1 or text.count(serial_end) != 1)
+        kind = 'managed' if net_owned and not malformed_net else ('custom' if network or 'ne2000' in sections else 'unconfigured')
+        summary = f'Network {"on" if enabled else "off"}; backend={backend}; I/O={base}; IRQ={irq}; COM2={serial}; {kind}; next-boot config only (not reachability)'
+        if op in ('status', 'check'):
+            print(summary)
+            bad = malformed_net or malformed_serial
+            if enabled:
+                bad = bad or backend not in ('auto', 'slirp', 'pcap') or (irq == '3' and serial != 'disabled')
+                bad = bad or base.upper() not in ('200','220','240','260','280','2C0','300','320','340','360') or irq not in ('3','4','5','9','10','11','12','14','15')
+            if network.get('ne2000', 'false').casefold() not in ('true', 'false', '1', '0'): bad = True
+            if op == 'check' and bad: fail('Custom/edited or conflicting network settings; review manually, left unchanged')
+            sys.exit(0)
+        if malformed_net or malformed_serial: fail('Managed block was edited; review manually, left unchanged')
+        if op == 'on':
+            if net_owned:
+                if serial != 'disabled': fail('IRQ3 conflicts with COM2; resolve serial2 manually, left unchanged')
+                print('Already on; ' + summary); sys.exit(0)
+            if network or 'ne2000' in sections or any(key in ('ne2000','nicbase','nicirq') and section != 'ne2000' for section, key in values):
+                fail('Custom network settings exist; enable manually, left unchanged. ' + summary)
+            if serial not in ('default', 'disabled') or (('serial', 'serial2') in values and serial == 'default'):
+                fail('IRQ3 conflicts with owner serial2; set it to disabled manually before net on (unchanged)')
+            if serial_start in text or serial_end in text: fail('Orphan managed serial block; review manually')
+            restore_final = 'yes' if not text or text.endswith(('\r', '\n')) else 'no'
+            if restore_final == 'no': text += nl
+            if ('serial', 'serial2') not in values:
+                if 'serial' in sections:
+                    at = sections['serial']
+                    # A header at EOF gained the separator newline above; insert after that newline.
+                    if at == len(raw) and restore_final == 'no': at += len(nl)
+                    text = text[:at] + serial_inline + text[at:]
+                else: text += serial_section
+            text += net_block(restore_final)
+        elif op == 'off':
+            if net_owned is None:
+                if enabled: fail('Custom network settings exist; disable manually, left unchanged. ' + summary)
+                print('Already off; ' + summary); sys.exit(0)
+            # No network keys outside the exact owned block may lose their section header.
+            start, end = text.index(net_owned), text.index(net_owned) + len(net_owned)
+            if any(section == 'ne2000' and not start <= locations[(section,key)] < end for section, key in values):
+                fail('Owner additions in the network section require manual review (unchanged)')
+            text = text.replace(net_owned, '', 1)
+            if serial_owned:
+                if serial != 'disabled': fail('Owner edited serial2; left unchanged')
+                other_serial = any(section == 'serial' and key != 'serial2' for section, key in values)
+                replacement = '[serial]' + nl if serial_owned == serial_section and other_serial else ''
+                text = text.replace(serial_owned, replacement, 1)
+            if restore_final == 'no' and text.endswith(nl): text = text[:-len(nl)]
+        else: fail('usage: win95 net [status|check|on|off]')
+        # Recheck concurrent edits before committing both NIC and serial changes as one replacement.
+        current_stat = p.stat()
+        if (current_stat.st_dev, current_stat.st_ino, current_stat.st_mtime_ns) != (initial.st_dev, initial.st_ino, initial.st_mtime_ns): fail('boot.conf changed concurrently; retry (unchanged)')
+        if initial.st_uid != os.getuid(): fail('Config is not owned by this user; review manually')
+        fd, tmp = tempfile.mkstemp(prefix='.boot.conf.net.', dir=p.parent)
+        try:
+            with os.fdopen(fd, 'wb') as f: f.write(text.encode('latin-1'))
+            os.chmod(tmp, stat.S_IMODE(initial.st_mode)); os.replace(tmp, p)
+        finally:
+            if os.path.exists(tmp): os.unlink(tmp)
+        print('Network ' + op + '; applied to boot.conf for next normal boot. Windows driver/TCP-IP setup remains manual.')
+except (OSError, ValueError) as error:
+    print('win95 net: ' + str(error), file=sys.stderr); sys.exit(1)
+RETRO_NET_PY
+}
+
 win95_cmd() {
     local mode=boot core="" iso args conf f app dmb
     while [ $# -gt 0 ]; do
@@ -12123,6 +12269,7 @@ status_cmd() {   # one line: installed? running? sizes
     esac
     printf '%-8s %-15s %-9s %-14s %-8s %s\n' "$1" "$TITLE" "$ENGINE" "$inst" "$run" "${size:+$size used}"
     case "$1" in winnt40|win2000) echo "         exchange: $(exchange_gate state) (setup always withholds it)" ;; esac
+    [ "$1" != win95 ] || win95_net status
     case "$1" in
         delphi1) font_state "$DELPHI_PREFIX" || : ;;
         delphi3|delphi4|delphi5|delphi6|delphi7) font_state "$DN_PREFIX" || : ;;
@@ -12246,6 +12393,7 @@ retro_cmd() {
         sizes) sizes_cmd ;;
         config-defaults) config_defaults ;;
         config-status) dosbox_config_status ;;
+        slirp-support) slirp_support ;;
         help|-h|--help) help_cmd ;;
         *) die "usage: retro [list] | retro run [--in GUEST] FILE | retro which FILE | retro sizes | retro help" ;;
     esac
@@ -12274,6 +12422,7 @@ main() {
         fonts) [ "$GUEST" = delphi1 ] && die "delphi1 has them already ('delphi1 setup': winetricks corefonts tahoma, fontsmooth=rgb)."; fonts_cmd "$GUEST"; exit ;;
         put) [ "$GUEST" = win31 ] || [ "$GUEST" = delphi1 ] && die "$GUEST reaches your files directly: '$GUEST run FILE'."; shift; exch_put "$GUEST" "$@"; exit ;;
         get) [ "$GUEST" = win31 ] || [ "$GUEST" = delphi1 ] && die "$GUEST has no exchange disk."; shift; exch_get "$GUEST" "$@"; exit ;;
+        net) [ "$GUEST" = win95 ] || die "net is win95-only."; win95_net "${2:-status}"; exit ;;
         # v93: the app CD, the exchange disk's size, win95's undo points
         cd) [ "$GUEST" = delphi1 ] && die "delphi1 reads its media from ~/win31/install/apps ('delphi1 setup')."; shift; cd_cmd "$GUEST" "$@"; exit ;;
         exchange) case "$GUEST" in win95|winnt40|win2000) ;; *) die "$GUEST has no exchange disk." ;; esac
