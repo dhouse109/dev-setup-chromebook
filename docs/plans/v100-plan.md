@@ -1,6 +1,6 @@
 # dev-setup-chromebook v100 plan
 
-Nov 1, 2026 (item 1) · Nov 6, 2026 (items 2–16 added) · **draft for owner review; planning only**
+Nov 1, 2026 (item 1) · Nov 6, 2026 (items 2–16 added; owner choices recorded) · **final: approved for the build on `release/v100`**
 
 ## Items at a glance
 
@@ -30,6 +30,35 @@ list owner choices. They are recommendations for review, not build approval.
 
 Deferred to v101 (recorded at the end): the Delphi DCOM/multi-tier database demo and the guest
 network test plan.
+
+## Owner decisions (Nov 6, 2026)
+
+The owner approved this plan for the build with these choices:
+
+| Item | Choice |
+|---|---|
+| 2 | **2A:** command-scoped IPv4 (`DOTNET_SYSTEM_NET_DISABLEIPV6=1`) for the bundle's NuGet/Gallery acquisition and restore-capable build/runner paths; no IPv6 probe. |
+| 3 | **3A:** remove the win95 guest-boot folder mount; keep the standalone IMGMAKE and win31 mounts. |
+| 4 | **4A:** `output=surface` for new win95 configs; add only an absent `output`; preserve every explicit value. |
+| 5 | **5A:** win2000 defaults to TCG; winnt40 stays `auto`; explicit values preserved. |
+| 6 | **6A:** `zoom-to-fit=off` by default for win2000 only. |
+| 7 | **7A:** win2000 defaults to `SOUND=none`; winnt40 unchanged. |
+| 8 | **8A:** exchange disk withheld during every `setup` and until `<guest> exchange enable`; existing installs need a one-time enable. |
+| 9 | **9A:** report the selected acceleration and its reason consistently in helper, setup, init and test. |
+| 10 | **10A:** one automatic font retry, saved diagnostics, a prominent non-fatal result, status and a prefix-qualified repair command. |
+| 11 | **11A:** install `genisoimage` and document ISO creation; `cd` stays ISO-only (`cd FOLDER` not in v100). |
+| 12 | **12B:** ship the `delphi1 colors` / `delphi N colors` switcher with the `default` scheme and support for validated owner-supplied `.reg` schemes; **do not bundle breeze-dark** (no license grant observed). The owner keeps his Breeze Dark file locally as a user scheme. Preserve existing themes until an explicit switch. The values table in item 12 stays as the record of the owner's local scheme, not shipped data. |
+| 13 | **13A:** `hostkey=ctrlshift` under `[dosbox]`; preserve existing choices; report a misplaced `hostkey` rather than moving it. |
+| 14 | **14A:** keep IRQ 3; add `[serial] serial2=disabled` only when absent; refuse custom conflicts; manage only helper-owned blocks. |
+| 15 | **15A:** publish the qualified Delphi 1/3 observations, including the limited OCX finding. |
+| 16 | **16A:** publish the qualified manual procedures; verify shortcuts during acceptance. |
+
+**Acceptance scope for item 8:** no separate fresh win2000 reinstall workspace. Item 8's fresh-install
+behaviour (Setup installs to C:, resumed boots stay detached, then `exchange enable`) is accepted on
+the owner's first winnt40 install, which is a fresh install anyway. The existing win2000 guest is
+checked as an existing install: one-time `win2000 exchange enable`, then the exchange drive works.
+
+Item 1 keeps its own investigation-first decision gate and per-command approvals.
 
 ## Scope and baseline
 
@@ -837,10 +866,10 @@ Breeze Dark values (`HKEY_CURRENT_USER\Control Panel\Colors`, "R G B"):
    the fixture matrix. Validate setup continuation and safe attachment before any owner installation.
 4. **Media/fonts (10, 11):** package, collection/retry/status/log handling and fixture ISO/font
    regressions, docs/STEP repairs, disk accounting and CHANGELOG entries.
-5. **Colors (12), gated on the owner's license/scope choice:** prefix-preserving settings,
-   commands/data and isolated registry tests, docs/STEP and disk-report changes. If permission is
-   unresolved, stop this stage and obtain the owner's scope decision; do not silently substitute a
-   different palette or declare requested Breeze Dark shipped.
+5. **Colors (12), owner choice 12B:** the switcher with the `default` scheme and validated
+   owner-supplied `.reg` schemes; no bundled breeze-dark data. Prefix-preserving settings, commands
+   and isolated registry tests, docs/STEP and disk-report changes. Do not substitute a different
+   palette or describe Breeze Dark as shipped.
 6. **Win95 networking (14):** managed config transaction, support/IRQ guard, off/on fixtures and
    guest instructions. Recheck installed build support read-only at implementation time. No guest
    startup implicit in setup.
@@ -890,9 +919,9 @@ version bump, release branch, merge or real script execution is part of this pla
    | DOS | `retro run --in dos FILE` with a local DOS sample; Ctrl+Shift+F/full-screen and focus/release shortcuts work; dos.conf renderer stays ttf. |
    | win31 | `win31 setup` only in the agreed test workspace if installation is needed; queue/swap floppy images and Return to MS-DOS. `win31` reaches Program Manager; renderer remains owner-selected. After font repair, `win31 fonts` supplies C:\FONTS; install fonts in Windows, check focus and Delphi 1 run/debug using owner's media. |
    | win95 | `win95 setup` first and resumed phases, then `win95`: desktop loads with no X: folder IDE drive. Check maximized surface redraw, app CD and put/get/run; never change Video menu during Setup. `win95 snapshot save pre-net` while off; `win95 net on`, install NE2000/TCP-IP in Windows, confirm resource values and DHCP via winipcfg; reach a known owner service by IPv4. Shut down, `win95 net off`, cold boot shows network disabled; app CD and normal boot still work. |
-   | win2000 | Fresh install test: `win2000 setup` then resumed setup without exchange attached; C: is system, all phases finish with TCG. Normal boot remains detached until desktop is confirmed, shutdown, `win2000 exchange enable`, then boot. Assign exchange D: if available without formatting; off-guest put/get round-trip. Verify unscaled tablet alignment, larger screen area, quiet boot, `win2000 keys ctrl-alt-del`, Delphi install from generated app ISO and sample compile/run. Existing installs only adopt config changes the owner chooses and explicitly enable exchange. |
-   | winnt40 | Same detach/resume/enable/C: acceptance with own NT media; keep auto acceleration, PS/2, sb16 and scaled display. Test login keys, pointer release, exchange round-trip and app CD. If KVM is slow, document an owner-selected TCG fallback; no claim of NT acceptance without the run. |
-   | Delphi Wine | `delphi1 setup`, `delphi 3 setup` with own files; verify final font summary/status and prefix-qualified repair if needed. Subject to item 12's gate: list/save/use default and breeze-dark in each existing idle prefix; restart IDE, verify No Theme, colors and per-prefix separation. Rerun setup: manual colors survive. Rerun Delphi 3 CD menu explicitly; qualify OCX observations, check IDE keys and compile/run. Other versions only if owner has media. |
+   | win2000 | Existing install (owner decision: no fresh reinstall workspace): after the upgrade, normal boot is detached until shutdown and `win2000 exchange enable`, then boot; the exchange drive appears (assign a letter in Disk Management if needed, without formatting); off-guest put/get round-trip. TCG is the default for new configs; the owner's explicit config values stay. Verify unscaled tablet alignment, larger screen area, quiet boot, `win2000 keys ctrl-alt-del`, Delphi install from generated app ISO and sample compile/run. Existing installs only adopt config changes the owner chooses and explicitly enable exchange. |
+   | winnt40 | Item 8's fresh-install acceptance (owner's first NT install): `winnt40 setup` and resumed setup run without the exchange disk attached; Windows installs to C:; normal boot stays detached until shutdown and `winnt40 exchange enable`, then the exchange drive works; with own NT media; keep auto acceleration, PS/2, sb16 and scaled display. Test login keys, pointer release, exchange round-trip and app CD. If KVM is slow, document an owner-selected TCG fallback; no claim of NT acceptance without the run. |
+   | Delphi Wine | `delphi1 setup`, `delphi 3 setup` with own files; verify final font summary/status and prefix-qualified repair if needed. Item 12 (12B): add the owner's local Breeze Dark `.reg` as a user scheme, then list/save/use default and it in each existing idle prefix; restart IDE, verify No Theme, colors and per-prefix separation. Rerun setup: manual colors survive. Rerun Delphi 3 CD menu explicitly; qualify OCX observations, check IDE keys and compile/run. Other versions only if owner has media. |
 
    `exchange recreate`, restoring snapshots, and `convert C:` are optional recovery/maintenance
    actions requiring separate owner intent, not routine acceptance commands. To inspect repaired
