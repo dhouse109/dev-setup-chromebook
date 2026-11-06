@@ -10116,6 +10116,8 @@ EOF_DBX
 #                            CD's files), then apply the settings below; FILE picks another installer
 #   delphi N                 start the IDE in a virtual desktop sized to the screen
 #   delphi N run FILE        another program in the same desktop
+#   delphi N colors list|use NAME|save NAME   per-prefix registry colors; default + owner .reg schemes (12B)
+#   delphi1 colors list|use NAME|save NAME    same switcher, separate prefix; close all prefix apps first
 #   delphi N launcher        point Delphi's own launcher entries at 'delphi N'
 #   delphi N ini save        keep the IDE's options (HKCU\Software\Borland in the prefix's registry) in
 #                            ~/.config/dev-retro/delphiN.reg; 'delphi N setup' restores them
@@ -10125,7 +10127,7 @@ EOF_DBX
 #   delphi N vscode [DIR|PROJECT.dpr] [--force]
 #                            v96: .vscode/tasks.json (build, run) for VS Code, Cursor and Devin; no debugging there
 #   Settings per prefix: the Windows version Wine reports (3: win95, 4: win98, 5: win2k, 6: win2k, 7: winxp), black
-#   desktop, TEMP=C:\TEMP, MS Sans Serif -> Tahoma, corefonts + tahoma, fontsmooth=rgb. The integrated
+#   desktop preserved (colors use NAME switches explicitly), TEMP=C:\TEMP, MS Sans Serif -> Tahoma, corefonts + tahoma, fontsmooth=rgb. The integrated
 #   debugger stays on: 'delphi N help' notes what was found with each version.
 # retro:
 #   retro                    the guests: installed or not, running or stopped (Delphi 3-7 once set up)
@@ -11195,17 +11197,225 @@ fonts_summary() {
     fi
 }
 
+# v100 (Nov 5 2026): 12B switcher; explicit use selects No Theme, setup never replays a palette.
+colors_cmd() {   # PREFIX list|save|use|check|init-new|init-existing [NAME]
+    local prefix=$1; shift
+    python3 - "$prefix" "${SELF%/*}/colors/default.reg" "${1:-list}" "${@:2}" << 'RETRO_COLORS_PY'
+# v100 (Nov 5 2026): 12B ships no palette. Only validated, allowlisted RGB values reach Wine.
+import fcntl, json, os, re, subprocess, sys, tempfile
+from pathlib import Path
+prefix, builtin, operation, *arguments = sys.argv[1:]
+prefix, builtin = Path(prefix), Path(builtin)
+folder = Path.home() / '.config/dev-retro/colors'
+label = prefix.name
+selected = folder / (label + '.selected.json')
+keys = '''ActiveBorder ActiveTitle AppWorkSpace Background ButtonAlternativeFace ButtonDkShadow
+ButtonFace ButtonHilight ButtonLight ButtonShadow ButtonText GradientActiveTitle GradientInactiveTitle
+GrayText Hilight HilightText InactiveBorder InactiveTitle InactiveTitleText InfoText InfoWindow Menu
+MenuBar MenuHilight MenuText Scrollbar TitleText Window WindowFrame WindowText'''.split()
+allowed = {key.casefold(): key for key in keys}
+colors = r'HKEY_CURRENT_USER\Control Panel\Colors'
+theme = r'HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\ThemeManager'
+env = dict(os.environ, WINEPREFIX=str(prefix), WINEARCH='win32', LC_ALL='C',
+           WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree,mshtml=')
+def fail(message):
+    raise ValueError(message)
+def decode(path):
+    if path.is_symlink(): fail('Symlink scheme/registry data refused')
+    data = path.read_bytes()
+    return data.decode('utf-16' if data.startswith((b'\xff\xfe', b'\xfe\xff')) else 'utf-8-sig')
+def parse(path, reset=False, exported=False):
+    current, header, result = None, False, {}
+    for line in decode(path).splitlines():
+        line = line.strip()
+        if not line or line.startswith(';'): continue
+        if not header:
+            if line.casefold() not in ('windows registry editor version 5.00', 'regedit4'):
+                fail('Invalid registry file header')
+            header = True; continue
+        if line.startswith('['):
+            if line.casefold() != ('[' + colors + ']').casefold():
+                if exported: current = None; continue
+                fail('Only HKCU Control Panel Colors is allowed')
+            current = colors; continue
+        if current is None:
+            if exported: continue
+            fail('Value outside the Colors section')
+        m = re.fullmatch(r'"([^"\\]+)"\s*=\s*(?:"([0-9]+\s+[0-9]+\s+[0-9]+)"|(-))', line)
+        if not m or m[1].casefold() not in allowed:
+            if exported and not any(line.casefold().startswith('"' + key + '"') for key in allowed): continue
+            fail('Unsupported name/type or malformed RGB triplet')
+        key = allowed[m[1].casefold()]
+        if key in result: fail('Duplicate color value')
+        if m[3]:
+            if not reset: fail('User schemes cannot delete registry values')
+            result[key] = None
+        else:
+            values = [int(n) for n in m[2].split()]
+            if any(n > 255 for n in values): fail('RGB values must be 0 through 255')
+            result[key] = ' '.join(map(str, values))
+    if not header or (not result and not exported): fail('Empty scheme')
+    if reset and result != dict.fromkeys(keys): fail('Built-in default has been changed; rerun install-retro')
+    return result
+
+def registry_snapshot():
+    # Stream only the two relevant sections/values; never export/copy a complete Wine registry.
+    sections, values, current = set(), {}, None
+    with (prefix / 'user.reg').open(encoding='utf-8', errors='strict') as f:
+        for line in f:
+            m = re.match(r'^\[([^]]+)\]', line)
+            if m:
+                name = m[1].replace('\\\\', '\\')
+                current = next((key for key in (colors, theme) if key.removeprefix('HKEY_CURRENT_USER\\').casefold() == name.casefold()), None)
+                if current: sections.add(current)
+            elif current:
+                m = re.match(r'^"([^"\\]+)"=', line.strip())
+                if m:
+                    key = allowed.get(m[1].casefold()) if current == colors else ('ThemeActive' if m[1].casefold() == 'themeactive' else None)
+                    if key:
+                        value = re.fullmatch(r'"[^"\\]+"="([^"\\]*)"\s*', line.strip())
+                        values[(current, key)] = value[1] if value else '<non-REG_SZ>'
+    return sections, values
+
+def process(args):
+    r = subprocess.run(args, env=env, capture_output=True, text=True, timeout=120)
+    if r.returncode: fail('Wine command failed: ' + ' '.join(args[:3]))
+    return r.stdout
+
+def idle():
+    marker = prefix / '.pid'
+    if marker.is_file():
+        try: os.kill(int(marker.read_text().strip()), 0)
+        except ProcessLookupError: pass
+        except (ValueError, PermissionError): fail('Uncertain prefix state; close its Wine applications first')
+        else: fail('Prefix is running; close its Wine applications first')
+    # Installed wineserver documentation: -w waits for the existing server, including apps outside helper.
+    # A timeout stops only this waiting client; the Wine server/apps are never killed to obtain access.
+    try:
+        r = subprocess.run(['wineserver', '-w'], env=env, capture_output=True, timeout=5)
+    except subprocess.TimeoutExpired: fail('Prefix is busy; close all its Wine applications first')
+    if r.returncode: fail('Cannot establish an idle prefix; close its Wine applications first')
+
+def winpath(path):
+    return process(['winepath', '-w', str(path)]).strip()
+def export(key, path):
+    process(['wine', 'reg', 'export', key, winpath(path), '/y'])
+def import_file(path):
+    process(['wine', 'reg', 'import', winpath(path)])
+def reg_text(values):
+    return 'Windows Registry Editor Version' + ' 5.00\n\n[' + colors + ']\n' + ''.join('"' + key + '"=' + ('-' if val is None else '"' + val + '"') + '\n' for key, val in values.items())
+def atomic(path, data, exclusive=False):
+    fd, tmp = tempfile.mkstemp(prefix='.' + path.name + '.', dir=path.parent)
+    try:
+        with os.fdopen(fd, 'w') as f: f.write(data)
+        if exclusive: os.link(tmp, path)
+        else: os.replace(tmp, path)
+    finally:
+        if os.path.exists(tmp): os.unlink(tmp)
+
+try:
+    operation = operation or 'list'
+    if selected.is_symlink(): fail('Symlink selection record refused')
+    if operation == 'list':
+        if arguments: fail('usage: colors list | use NAME | save NAME')
+        print('default (built-in Wine defaults; removes only known color overrides)')
+        if folder.is_dir():
+            for p in sorted(folder.glob('*.reg')):
+                if p.stem != 'default' and re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]*', p.stem): print(p.stem + ' (owner scheme; validated on use)')
+        if selected.is_file(): print('Selected label: ' + json.loads(selected.read_text())['name'] + ' (manual edits are preserved by setup)')
+        else: print('Selected label: none; existing theme/colors preserved')
+        sys.exit(0)
+    if operation in ('use', 'save'):
+        if len(arguments) != 1 or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]*', arguments[0]): fail('Use a scheme name with letters/digits, dot, dash or underscore; no path components')
+        name = arguments[0]
+        path = builtin if name == 'default' else folder / (name + '.reg')
+        if operation == 'save' and (name == 'default' or path.exists()): fail('Scheme name is reserved or already exists; choose another')
+        # Validate the entire file before even starting Wine; canonical apply data is kept in memory.
+        wanted = parse(path, reset=name == 'default') if operation == 'use' else None
+    elif operation not in ('check', 'init-new', 'init-existing'): fail('usage: colors list | use NAME | save NAME')
+    if (prefix / 'user.reg').is_symlink(): fail('Symlink prefix registry refused')
+    if not (prefix / 'system.reg').is_file() or not (prefix / 'user.reg').is_file():
+        fail('No existing prefix; run the appropriate Delphi setup first')
+    sections, current = registry_snapshot()
+    if operation == 'check':
+        if current.get((theme, 'ThemeActive')) not in (None, '0'):
+            fail('Theme is active; registry colors may be overridden. Explicit colors use NAME selects No Theme')
+        if selected.is_file():
+            record = json.loads(selected.read_text())
+            if any(current.get((colors, key)) != value for key, value in record['values'].items()):
+                fail('Manual colors differ from selected label; retained, not repaired')
+        print('Theme/color observations agree (no changes made)'); sys.exit(0)
+    if operation == 'init-existing' and (theme, 'ThemeActive') in current:
+        if current[(theme, 'ThemeActive')] != '0': print('NOTE: active theme preserved; colors use NAME explicitly selects No Theme.')
+        sys.exit(0)
+    idle()
+    folder.mkdir(parents=True, exist_ok=True)
+    with (folder / ('.' + label + '.lock')).open('a') as lock:
+        try: fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError: fail('Another color operation for this prefix is in progress')
+        idle()
+        if operation in ('init-new', 'init-existing'):
+            process(['wine', 'reg', 'add', theme, '/v', 'ThemeActive', '/t', 'REG_SZ', '/d', '0', '/f'])
+            print('No Theme initialized; existing colors preserved')
+        else:
+            backups = folder / 'backups'; backups.mkdir(exist_ok=True)
+            backup = Path(tempfile.mkdtemp(prefix=label + '-', dir=backups))
+            snapshots = {}
+            for i, key in enumerate((colors, theme)):
+                snapshots[key] = backup / (str(i) + '.reg') if key in sections else None
+                if snapshots[key] is not None: export(key, snapshots[key])
+            if operation == 'save':
+                if snapshots[colors] is None: fail('No color overrides to save')
+                saved = parse(snapshots[colors], exported=True)
+                if not saved: fail('No allowlisted RGB color overrides to save')
+                atomic(path, reg_text(saved), exclusive=True)
+                print('Saved owner scheme ' + name + '; original registry untouched')
+            else:
+                apply = backup / 'apply.reg'
+                apply.write_text(reg_text(wanted) + '\n[' + theme + ']\n"ThemeActive"="0"\n' + ''.join('"' + key + '"=-\n' for key in ('ColorName', 'SizeName', 'DllName', 'LoadedBefore')))
+                try:
+                    import_file(apply)
+                    check = backup / 'readback.reg'; export(colors, check)
+                    actual = parse(check, exported=True)
+                    if any(actual.get(key) != value for key, value in wanted.items()): fail('Color registry readback did not match')
+                    check_theme = backup / 'theme-readback.reg'; export(theme, check_theme)
+                    if not re.search(r'^"ThemeActive"="0"\s*$', decode(check_theme), re.M): fail('No Theme readback did not match')
+                    atomic(selected, json.dumps({'name': name, 'values': wanted}) + '\n')
+                except Exception as error:
+                    rollback_errors = []
+                    for key, snapshot in snapshots.items():
+                        # The full targeted key is restored, including custom values. No other registry tree is touched.
+                        r = subprocess.run(['wine', 'reg', 'delete', key, '/f'], env=env, capture_output=True, timeout=120)
+                        if r.returncode: rollback_errors.append(key)
+                        if snapshot is not None:
+                            try: import_file(snapshot)
+                            except Exception: rollback_errors.append(key)
+                    if rollback_errors: fail('Apply failed; rollback incomplete. Targeted backups retained at ' + str(backup))
+                    fail('Apply failed; previous color/theme keys restored; selection unchanged: ' + str(error))
+                print('Applied ' + name + '; No Theme selected. Restart the prefix applications to observe it.')
+        # Let servers started only for this operation finish naturally; never kill owner applications.
+        try: subprocess.run(['wineserver', '-w'], env=env, capture_output=True, timeout=5, check=True)
+        except (subprocess.TimeoutExpired, subprocess.CalledProcessError): print('NOTE: prefix is still busy; close its applications before another color operation.')
+except (OSError, ValueError, subprocess.SubprocessError, KeyError) as error:
+    print('colors: ' + str(error), file=sys.stderr)
+    sys.exit(1)
+RETRO_COLORS_PY
+}
+
 delphi_setup() {
-    local setup_exe="${1:-$(delphi_media)}" sys ok=1
+    local setup_exe="${1:-$(delphi_media)}" sys ok=1 new_prefix=0
     [ -n "$setup_exe" ] && [ -f "$setup_exe" ] || { tell "No Delphi 1 setup in ~/win31/install/apps: copy the Delphi 1 disks or CD there (SETUP.EXE with its files), then 'delphi1 setup'."; exit 1; }
     command -v wine > /dev/null || die "Wine is missing: rerun dev-setup with install-retro (it pulls in install-com)."
     if [ ! -f "$DELPHI_PREFIX/system.reg" ]; then
+        new_prefix=1
         echo "Creating the 32-bit Wine prefix $DELPHI_PREFIX (no Wine menu entries from wineboot)..."
         mkdir -p "$(dirname "$DELPHI_PREFIX")"
         WINEPREFIX="$DELPHI_PREFIX" WINEARCH=win32 WINEDEBUG=-all WINEDLLOVERRIDES="winemenubuilder.exe=d;mscoree,mshtml=" wineboot -i > /dev/null 2>&1
         WINEPREFIX="$DELPHI_PREFIX" timeout 120 wineserver -w 2> /dev/null
         [ -f "$DELPHI_PREFIX/system.reg" ] || die "wineboot did not create the prefix: 'WINEPREFIX=$DELPHI_PREFIX WINEARCH=win32 wineboot -i' shows why."
     fi
+    if [ "$new_prefix" = 1 ]; then colors_cmd "$DELPHI_PREFIX" init-new; else colors_cmd "$DELPHI_PREFIX" init-existing; fi \
+        || echo "NOTE: No Theme initialization failed; use delphi1 colors use NAME with the prefix closed."
     if installed delphi1; then
         echo "Delphi 1 is already installed in the prefix ($(delphi_bin)); applying the settings again."
     else
@@ -11220,8 +11430,8 @@ delphi_setup() {
     fi
     sys=$(find "$DELPHI_PREFIX/drive_c/windows" -maxdepth 1 -iname system -type d | head -n 1)
     [ -n "$(find "$sys" -maxdepth 1 -iname compobj.dll 2> /dev/null)" ] || { echo "NOTE: no COMPOBJ.DLL in C:\\WINDOWS\\SYSTEM: Delphi's setup normally copies its 16-bit OLE2 there; the IDE will crash without it."; ok=0; }
-    echo "Applying the settings: black desktop, a short TEMP, MS Sans Serif -> Tahoma, ClearType-style fonts..."
-    delphi_reg 'HKCU\Control Panel\Colors' /v Background /t REG_SZ /d '0 0 0'
+    echo "Applying the settings: preserved colors, a short TEMP, MS Sans Serif -> Tahoma, ClearType-style fonts..."
+    # v100 (Nov 5 2026): leave manually chosen and selected scheme colors intact.
     mkdir -p "$DELPHI_PREFIX/drive_c/TEMP"
     delphi_reg 'HKCU\Environment' /v TEMP /t REG_EXPAND_SZ /d 'C:\TEMP'
     delphi_reg 'HKCU\Environment' /v TMP /t REG_EXPAND_SZ /d 'C:\TEMP'
@@ -11367,6 +11577,7 @@ delphi_cmd() {
             delphi_desktop DELPHI.EXE ;;
         setup) shift; delphi_setup "${1:-}" ;;
         run) shift; [ -f "${1:-}" ] || die "usage: delphi1 run PROGRAM.EXE"; delphi_desktop "$(readlink -f "$1")" "${@:2}" ;;
+        colors) colors_cmd "$DELPHI_PREFIX" "${2:-list}" "${@:3}" ;;
         launcher) delphi_launcher ;;
         ini)
             case "${2:-}" in
@@ -11387,7 +11598,7 @@ delphi_cmd() {
 # =================================================================================================
 # delphi N (v93): Delphi 3, 4, 5, 6 and 7 under Wine, one 32-bit prefix each. The delphi1 recipe without its
 # 16-bit pieces (these are 32-bit programs, so no native OLE2): a virtual desktop sized to the screen, the
-# Windows version of the Delphi's own era, black desktop, TEMP=C:\TEMP, MS Sans Serif -> Tahoma, smoothed
+# Windows version of the Delphi's own era, preserved colors (v100, Nov 5 2026), TEMP=C:\TEMP, MS Sans Serif -> Tahoma, smoothed
 # core fonts. The CD (an .iso unpacked once, or its files) is drive D: in the prefix, typed as a CD-ROM,
 # so the installer and later add-ons find it. Each version's own fixes are worked out on the real discs, as
 # Delphi 1's were; the integrated debugger is left on. Real Windows guests for each version: STEPS-delphi.md
@@ -11460,18 +11671,22 @@ dn_desktop() {   # dn_desktop PROGRAM ARGS...: run in the version's virtual desk
     rm -f "$WS/.pid"; return $rc
 }
 dn_prefix() {   # create the 32-bit prefix once, and report the Windows version of the Delphi's era
+    local new_prefix=0
     if [ ! -f "$DN_PREFIX/system.reg" ]; then
+        new_prefix=1
         echo "Creating the 32-bit Wine prefix $DN_PREFIX (no Wine menu entries from wineboot)..."
         mkdir -p "$(dirname "$DN_PREFIX")"
         WINEPREFIX="$DN_PREFIX" WINEARCH=win32 WINEDEBUG=-all WINEDLLOVERRIDES="winemenubuilder.exe=d;mscoree,mshtml=" wineboot -i > /dev/null 2>&1
         WINEPREFIX="$DN_PREFIX" timeout 120 wineserver -w 2> /dev/null
         [ -f "$DN_PREFIX/system.reg" ] || die "wineboot did not create the prefix: 'WINEPREFIX=$DN_PREFIX WINEARCH=win32 wineboot -i' shows why."
     fi
+    if [ "$new_prefix" = 1 ]; then colors_cmd "$DN_PREFIX" init-new; else colors_cmd "$DN_PREFIX" init-existing; fi \
+        || echo "NOTE: No Theme initialization failed; use delphi $DN colors use NAME with the prefix closed."
     WINEDEBUG=-all dn_wine wine winecfg -v "$DN_WINVER" > /dev/null 2>&1 || echo "NOTE: 'winecfg -v $DN_WINVER' failed; Wine reports its default Windows version."
 }
 dn_settings() {
-    echo "Applying the settings: Windows version $DN_WINVER, black desktop, a short TEMP, MS Sans Serif -> Tahoma, smoothed fonts..."
-    dn_reg 'HKCU\Control Panel\Colors' /v Background /t REG_SZ /d '0 0 0'
+    echo "Applying the settings: Windows version $DN_WINVER, preserved colors, a short TEMP, MS Sans Serif -> Tahoma, smoothed fonts..."
+    # v100 (Nov 5 2026): leave manually chosen and selected scheme colors intact.
     mkdir -p "$DN_PREFIX/drive_c/TEMP"
     dn_reg 'HKCU\Environment' /v TEMP /t REG_EXPAND_SZ /d 'C:\TEMP'
     dn_reg 'HKCU\Environment' /v TMP /t REG_EXPAND_SZ /d 'C:\TEMP'
@@ -11687,6 +11902,7 @@ delphi_n_cmd() {   # delphi [N [setup|run|build|vscode|launcher|ini|where|status
         run) shift; [ -f "${1:-}" ] || die "usage: delphi $DN run PROGRAM.EXE"; dn_desktop "$(readlink -f "$1")" "${@:2}" ;;
         build) shift; dn_build "$@" ;;
         vscode) shift; dn_vscode "$@" ;;
+        colors) colors_cmd "$DN_PREFIX" "${2:-list}" "${@:3}" ;;
         launcher) dn_launcher ;;
         where) where_cmd "delphi$DN" ;;
         status) status_cmd "delphi$DN" ;;
@@ -12075,6 +12291,46 @@ main "$@"; exit $?
 DEVRETRO_EOF
     chmod +x ~/.local/lib/dev-retro/dev-retro.new
     mv -f ~/.local/lib/dev-retro/dev-retro.new ~/.local/lib/dev-retro/dev-retro
+    # v100 (Nov 5 2026): only our default reset is bundled (12B); no Breeze Dark color data.
+    mkdir -p ~/.local/lib/dev-retro/colors
+    # v100: build the registry-format header separately so CI's bundle-version scan sees only v100.
+    printf 'Windows Registry Editor %s\n\n' 'Version'' 5.00' > ~/.local/lib/dev-retro/colors/default.reg.new
+    cat >> ~/.local/lib/dev-retro/colors/default.reg.new << 'RETRO_COLOR_DEFAULT'
+; v100 (Nov 5 2026): Wine defaults by removing known overrides; no third-party palette.
+[HKEY_CURRENT_USER\Control Panel\Colors]
+"ActiveBorder"=-
+"ActiveTitle"=-
+"AppWorkSpace"=-
+"Background"=-
+"ButtonAlternativeFace"=-
+"ButtonDkShadow"=-
+"ButtonFace"=-
+"ButtonHilight"=-
+"ButtonLight"=-
+"ButtonShadow"=-
+"ButtonText"=-
+"GradientActiveTitle"=-
+"GradientInactiveTitle"=-
+"GrayText"=-
+"Hilight"=-
+"HilightText"=-
+"InactiveBorder"=-
+"InactiveTitle"=-
+"InactiveTitleText"=-
+"InfoText"=-
+"InfoWindow"=-
+"Menu"=-
+"MenuBar"=-
+"MenuHilight"=-
+"MenuText"=-
+"Scrollbar"=-
+"TitleText"=-
+"Window"=-
+"WindowFrame"=-
+"WindowText"=-
+RETRO_COLOR_DEFAULT
+    chmod 444 ~/.local/lib/dev-retro/colors/default.reg.new
+    mv -f ~/.local/lib/dev-retro/colors/default.reg.new ~/.local/lib/dev-retro/colors/default.reg
     # v100 (Nov 5 2026): companion location for retained font logs, refreshed when the bundle moves.
     printf '%s\n' "$ASSETS" > ~/.local/lib/dev-retro/assets-path.new
     mv -f ~/.local/lib/dev-retro/assets-path.new ~/.local/lib/dev-retro/assets-path

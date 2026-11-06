@@ -4340,10 +4340,38 @@ guest. `<guest> cd` still takes ISO files, not folders. Original files stay unch
 roughly another source-folder-sized allocation inside the guest workspace, already counted by its
 disk report. The generated retro demo itself remains under 1 MB; guest/media/log storage is separate.
 
+v100 colors (owner choice 12B): `delphi1 colors` and `delphi N colors` list `default` plus your
+own schemes in `~/.config/dev-retro/colors/NAME.reg`. No Breeze Dark data is bundled or downloaded:
+no license grant was observed. You can place your own local file there and select its name. Only
+REG_SZ RGB triplets (0–255) for the known HKCU Control Panel Colors values are accepted; other
+registry sections/types/deletions, duplicate values and invalid names are rejected before writing.
+
+    delphi1 colors list
+    delphi1 colors save before-change
+    delphi1 colors use default
+    delphi 3 colors use NAME
+
+Names use letters/digits, dot, dash or underscore and must start with a letter/digit; pass a name,
+not a path or filename extension. Save refuses an existing name and `default`. Schemes can be shared
+between prefixes, but switching/selection is per prefix. Close **all** apps in that prefix, including
+Wine apps started outside the helper; a wineserver wait check and per-prefix lock refuse busy or
+uncertain state. The helper never kills apps to obtain access. List needs no installed prefix/Wine.
+
+Explicit use sets ThemeManager ThemeActive to REG_SZ 0 (winecfg Theme: No Theme), removes inactive
+style settings, applies only validated colors and verifies registry readback. Default removes only
+known color overrides to let Wine choose colors; custom unrelated values remain. Targeted Colors
+and ThemeManager backups are in `~/.config/dev-retro/colors/backups`; failure restores them and leaves
+the selection label unchanged, or reports rollback incomplete with the retained backup path. Restart
+apps after switching; Delphi's own editor colors are separate. New prefixes get No Theme; existing
+ThemeActive/colors are preserved (only an absent ThemeActive is initialized). Setup no longer resets
+the desktop to black or reapplies a saved scheme over manual changes. The selection is a label:
+dev-test warns on manual drift or an active theme and never repairs it. Existing COM prefixes are
+not changed. The disposable real-Wine integration check uses only a test-owned scratch prefix.
+
 ## Wine: the `delphi1` command (forms, code, non-database programs)
 
     delphi1 setup      # a 32-bit Wine prefix (~/.local/share/wine/delphi1), Delphi's SETUP.EXE in a
-                       # virtual desktop (install into C:\DELPHI), then: black desktop, TEMP=C:\TEMP,
+                       # virtual desktop (install into C:\DELPHI), then: preserved colors, TEMP=C:\TEMP,
                        # MS Sans Serif -> Tahoma, smoothed fonts, launcher icons pointed at delphi1
     delphi1            # the IDE, in a virtual desktop the size of the screen
     delphi1 run X.EXE  # another program (Image Editor, a compiled project) in the same desktop
@@ -4437,6 +4465,34 @@ disk report. The generated retro demo itself remains under 1 MB; guest/media/log
     ~/<guest>/install/apps        the same CD as an .iso for a real Windows guest: it is F: there
 
 One .iso can serve both: copy it to both places, or link it (`ln ~/delphi/install/7/d7.iso ~/win2000/install/apps/`).
+
+v100 colors (owner choice 12B): `delphi1 colors` and `delphi N colors` list `default` plus your
+own schemes in `~/.config/dev-retro/colors/NAME.reg`. No Breeze Dark data is bundled or downloaded:
+no license grant was observed. You can place your own local file there and select its name. Only
+REG_SZ RGB triplets (0–255) for the known HKCU Control Panel Colors values are accepted; other
+registry sections/types/deletions, duplicate values and invalid names are rejected before writing.
+
+    delphi1 colors list
+    delphi1 colors save before-change
+    delphi1 colors use default
+    delphi 3 colors use NAME
+
+Names use letters/digits, dot, dash or underscore and must start with a letter/digit; pass a name,
+not a path or filename extension. Save refuses an existing name and `default`. Schemes can be shared
+between prefixes, but switching/selection is per prefix. Close **all** apps in that prefix, including
+Wine apps started outside the helper; a wineserver wait check and per-prefix lock refuse busy or
+uncertain state. The helper never kills apps to obtain access. List needs no installed prefix/Wine.
+
+Explicit use sets ThemeManager ThemeActive to REG_SZ 0 (winecfg Theme: No Theme), removes inactive
+style settings, applies only validated colors and verifies registry readback. Default removes only
+known color overrides to let Wine choose colors; custom unrelated values remain. Targeted Colors
+and ThemeManager backups are in `~/.config/dev-retro/colors/backups`; failure restores them and leaves
+the selection label unchanged, or reports rollback incomplete with the retained backup path. Restart
+apps after switching; Delphi's own editor colors are separate. New prefixes get No Theme; existing
+ThemeActive/colors are preserved (only an absent ThemeActive is initialized). Setup no longer resets
+the desktop to black or reapplies a saved scheme over manual changes. The selection is a label:
+dev-test warns on manual drift or an active theme and never repairs it. Existing COM prefixes are
+not changed. The disposable real-Wine integration check uses only a test-owned scratch prefix.
 
 ## Wine: the `delphi` command
 

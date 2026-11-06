@@ -169,5 +169,16 @@ class FontsAndMedia(Fixture):
         self.bash(command)
 
 
+class Colors(Fixture):
+    def test_shared_devtest_color_fixture(self):
+        h = self.work / 'helper'; h.write_text(helper())
+        reset = self.work / 'default.reg'
+        reset.write_text("Windows Registry Editor Version 5.00\n\n" + source('setup').split("<< 'RETRO_COLOR_DEFAULT'\n", 1)[1].split('\nRETRO_COLOR_DEFAULT', 1)[0])
+        script = source('test').split("<< 'RETRO_COLOR_CHECK_PY'\n", 1)[1].split('\nRETRO_COLOR_CHECK_PY', 1)[0]
+        self.env.update(RETRO_HELPER=str(h), RETRO_DEFAULT=str(reset))
+        result = subprocess.run(['/usr/bin/python3', '-c', script], env=self.env, text=True, capture_output=True, timeout=180)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -5900,7 +5900,7 @@ EOF
     if [ -n "$(find "$D1P/drive_c" -maxdepth 3 -ipath '*/delphi/bin/delphi.exe' 2> /dev/null | head -n 1)" ]; then
         check "delphi1: Delphi's native 16-bit OLE2 in C:\\WINDOWS\\SYSTEM (what the IDE starts on)" 'cd "$HOME/.local/share/wine/delphi1/drive_c/windows" || exit 1; sys=$(find . -maxdepth 1 -iname system -type d | head -n 1); m=""; for d in compobj ole2 ole2disp ole2nls storage typelib; do [ -n "$(find "$sys" -maxdepth 1 -iname "$d.dll")" ] || m="$m $d.dll"; done; [ -z "$m" ] || { echo "missing:$m"; exit 1; }; echo all six'
         hint  "Delphi's setup copies them; without them the IDE dies in compobj.dll16 (CoGetMalloc16). 'delphi1 setup' again"
-        warn  "delphi1: the 32-bit prefix and its settings (black desktop, TEMP=C:\\TEMP, DELPHI.INI)" 'grep -q "#arch=win32" "$HOME/.local/share/wine/delphi1/system.reg" && grep -q "\"Background\"=\"0 0 0\"" "$HOME/.local/share/wine/delphi1/user.reg" && grep -qi "\"TEMP\"=.*C:\\\\\\\\TEMP" "$HOME/.local/share/wine/delphi1/user.reg" || exit 1; ini=$(find "$HOME/.local/share/wine/delphi1/drive_c/windows" -maxdepth 1 -iname delphi.ini | head -n 1); [ -n "$ini" ] && tr -d "\r" < "$ini" | grep -qix "integrateddebugging=0" || { echo "DELPHI.INI does not have IntegratedDebugging=0 (Run fails under Wine with it on)"; exit 1; }; echo ok'
+        warn  "delphi1: the 32-bit prefix and its settings (preserved colors, TEMP=C:\\TEMP, DELPHI.INI)" 'grep -q "#arch=win32" "$HOME/.local/share/wine/delphi1/system.reg" && grep -qi "\"TEMP\"=.*C:\\\\\\\\TEMP" "$HOME/.local/share/wine/delphi1/user.reg" || exit 1; ini=$(find "$HOME/.local/share/wine/delphi1/drive_c/windows" -maxdepth 1 -iname delphi.ini | head -n 1); [ -n "$ini" ] && tr -d "\r" < "$ini" | grep -qix "integrateddebugging=0" || { echo "DELPHI.INI does not have IntegratedDebugging=0 (Run fails under Wine with it on)"; exit 1; }; echo ok'
         hint  "'delphi1 setup' applies them again"
     else
         info  "delphi1" "not set up yet: Delphi 1's SETUP.EXE in ~/win31/install/apps, then 'delphi1 setup' (the media is yours)"
@@ -5917,7 +5917,6 @@ case "$2" in
         [ -n "$f" ] || { echo "no delphi32.exe: 'delphi $1 setup' did not finish"; exit 1; }
         echo "$f" ;;
     settings)
-        grep -q '"Background"="0 0 0"' "$P/user.reg" || { echo "no black desktop"; exit 1; }
         grep -qi '"TEMP"=.*C:\\\\TEMP' "$P/user.reg" || { echo "TEMP is not C:\\TEMP"; exit 1; }
         [ -f "$HOME/.local/share/applications/dev-retro-delphi$1.desktop" ] \
             || grep -rqs "/.local/bin/delphi $1" "$HOME/.local/share/applications/wine" || { echo "no launcher entry"; exit 1; }
@@ -5928,7 +5927,7 @@ DN_EOF
         if [ -d "$HOME/.local/share/wine/delphi$DN" ]; then
             check "delphi $DN: 32-bit prefix, Windows version, the IDE (delphi32.exe)" "bash delphi_check.sh $DN ide"
             hint  "'delphi $DN setup' again (its CD in ~/delphi/install/$DN)"
-            warn  "delphi $DN: settings (black desktop, TEMP) and a launcher entry" "bash delphi_check.sh $DN settings"
+            warn  "delphi $DN: settings (preserved colors, TEMP) and a launcher entry" "bash delphi_check.sh $DN settings"
             hint  "'delphi $DN setup' applies them again; 'delphi $DN launcher' rewrites the entries"
         elif [ -n "$(find ~/delphi/install/$DN -mindepth 1 -maxdepth 1 ! -name '.*' 2> /dev/null | head -n 1)" ]; then
             info  "delphi $DN" "media in ~/delphi/install/$DN, not set up yet: 'delphi $DN setup'"
@@ -6004,6 +6003,160 @@ esac
 print('font fixtures: success/retry/exhaustion/missing tool/empty success, logs, prefix repair, Delphi 3 collection and read-only status PASS')
 RETRO_FONT_CHECK_PY
     check "Retro font retry, diagnostics and collection (isolated)" 'RETRO_HELPER="$HOME/.local/lib/dev-retro/dev-retro" python3 "$WORK/retro-font-check.py"' 180
+    # v100 (Nov 5 2026): synthetic registry and executable Wine stubs; no real prefix mutation.
+    cat > "$WORK/retro-color-check.py" << 'RETRO_COLOR_CHECK_PY'
+import fcntl, json, os, subprocess, tempfile
+from pathlib import Path
+original = Path(os.environ['RETRO_HELPER']).read_text()
+reset = Path(os.environ['RETRO_DEFAULT']).read_text()
+C = r'HKEY_CURRENT_USER\Control Panel\Colors'
+T = r'HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\ThemeManager'
+with tempfile.TemporaryDirectory(prefix='color-fixture-', dir=os.environ['WORK']) as tmp:
+    root = Path(tmp); home = root / 'home'; home.mkdir(); bindir = root / 'bin'; bindir.mkdir()
+    def exe(name, text):
+        p = bindir / name; p.write_text(text); p.chmod(0o755)
+    for engine in ('dosbox-x', 'qemu-system-i386', 'wineboot', 'winetricks'):
+        exe(engine, '#!/bin/sh\nexit 97\n')
+    exe('wineserver', '#!/bin/sh\nexit "${BUSY:-0}"\n')
+    exe('winepath', '#!/bin/sh\nprintf "%s\\n" "$2"\n')
+    exe('wine', r'''#!/usr/bin/python3
+import json, os, re, sys
+from pathlib import Path
+p = Path(os.environ['WINEPREFIX']); db = json.loads((p / 'fixture.json').read_text())
+args = sys.argv[1:]
+with Path(os.environ['WORK'] + '/wine-calls').open('a') as f: f.write(args[0] + '\n')
+def flush():
+    (p / 'fixture.json').write_text(json.dumps(db))
+    text = 'WINE REGISTRY Version' + ' 2\n\n'
+    for key, vals in db.items():
+        if not key.startswith('HKEY_CURRENT_USER\\'): continue
+        text += '[' + key.removeprefix('HKEY_CURRENT_USER\\').replace('\\', '\\\\') + '] 1\n'
+        text += ''.join(json.dumps(k) + '=' + json.dumps(v) + '\n' for k, v in vals.items())
+    (p / 'user.reg').write_text(text)
+if args[0] != 'reg': sys.exit(97)
+op = args[1]
+if op == 'export':
+    if args[2] not in db: sys.exit(1)
+    Path(args[3]).write_text('Windows Registry Editor Version' + ' 5.00\n\n[' + args[2] + ']\n' + ''.join(json.dumps(k) + '=' + json.dumps(v) + '\n' for k, v in db[args[2]].items()))
+elif op == 'delete':
+    if args[2] not in db: sys.exit(1)
+    del db[args[2]]; flush()
+elif op == 'add':
+    db.setdefault(args[2], {})[args[args.index('/v')+1]] = args[args.index('/d')+1]; flush()
+elif op == 'import':
+    current = None
+    for line in Path(args[2]).read_text().splitlines():
+        if line.startswith('['): current = line[1:-1]; db.setdefault(current, {})
+        elif current and line.startswith('"'):
+            k, v = line.split('=',1); k = json.loads(k)
+            if v == '-': db[current].pop(k, None)
+            else: db[current][k] = json.loads(v)
+    flush()
+    if Path(args[2]).name == 'apply.reg' and os.environ.get('FAIL_APPLY') == '1': sys.exit(42)
+else: sys.exit(97)
+''')
+    env = dict(HOME=str(home), WORK=str(root), PATH=str(bindir) + ':/usr/bin:/bin', LC_ALL='C.UTF-8')
+    helper = root / 'helper'
+    helper.write_text(original.rsplit('main "$@"; exit $?', 1)[0] + '\nif [ "$1" = fixture-settings ]; then dn_info 3; GUEST=delphi3; WS="$DN_PREFIX"; dn_settings; exit $?; fi\nmain "$@"; exit $?\n')
+    data = root / 'colors'; data.mkdir(); (data / 'default.reg').write_text(reset)
+    def prefix(n): return home / ('.local/share/wine/delphi' + str(n))
+    def db(n): return json.loads((prefix(n) / 'fixture.json').read_text())
+    def seed(n):
+        p = prefix(n); p.mkdir(parents=True); (p / 'system.reg').touch()
+        initial = {C: {'Background': '10 20 30', 'Window': '40 50 60', 'OwnerCustom': 'keep'}, T: {'ThemeActive': '1', 'DllName': 'owner.msstyles', 'ColorName': 'NormalColor'}, 'HKEY_CURRENT_USER\\Other': {'Retain': 'yes'}}
+        (p / 'fixture.json').write_text(json.dumps(initial))
+        text = 'WINE REGISTRY Version' + ' 2\n\n'
+        for key, values in initial.items():
+            text += '[' + key.removeprefix('HKEY_CURRENT_USER\\').replace('\\', '\\\\') + '] 1\n'
+            text += ''.join(json.dumps(k) + '=' + json.dumps(v) + '\n' for k, v in values.items())
+        (p / 'user.reg').write_text(text)
+        return initial
+    first, third = seed(1), seed(3)
+    def call(n, *args, ok=True):
+        cmd = ['delphi1'] if n == 1 else ['delphi', str(n)]
+        r = subprocess.run(['bash', str(helper), *cmd, 'colors', *args], env=env, text=True, capture_output=True)
+        assert (r.returncode == 0) == ok, r.stdout + r.stderr
+        return r
+    # List works without a prefix and never invokes Wine.
+    call(4, 'list'); assert not prefix(4).exists() and not (root / 'wine-calls').exists()
+    call(1, 'save', 'saved'); assert db(1) == first
+    folder = home / '.config/dev-retro/colors'
+    saved = folder / 'saved.reg'; assert 'OwnerCustom' not in saved.read_text() and str(saved.stat().st_mode & 0o777) == str(0o600)
+    before = (root / 'wine-calls').read_bytes()
+    for name in ('default', 'saved', '../escape', '-bad'):
+        call(1, 'save', name, ok=False)
+    assert (root / 'wine-calls').read_bytes() == before
+    # Strict user data validation happens before any Wine command.
+    header = 'Windows Registry Editor Version' + ' 5.00\n\n[' + C + ']\n'
+    bad = folder / 'invalid.reg'
+    for text in (header + '"Window"="256 2 3"\n', header + '"Window"=-\n', header + '"Unknown"="1 2 3"\n', header + '"Window"=dword:00000000\n', header + '"Window"="1 2 3"\n"Window"="4 5 6"\n', header + '[' + T + ']\n"ThemeActive"="0"\n'):
+        bad.write_text(text); call(1, 'use', 'invalid', ok=False)
+    assert (root / 'wine-calls').read_bytes() == before
+    call(1, 'use', 'default')
+    assert db(1)[C] == {'OwnerCustom': 'keep'} and db(1)[T] == {'ThemeActive': '0'}
+    assert db(1)['HKEY_CURRENT_USER\\Other'] == first['HKEY_CURRENT_USER\\Other']
+    call(1, 'use', 'saved'); assert db(1)[C] == first[C] and db(3) == third
+    assert (folder / 'delphi1.selected.json').is_file() and not (folder / 'delphi3.selected.json').exists()
+    # Outside-helper Wine apps and helper markers both block writes.
+    before = db(1); env['BUSY'] = '1'; call(1, 'use', 'default', ok=False); env.pop('BUSY')
+    (prefix(1) / '.pid').write_text(str(os.getpid())); call(1, 'use', 'default', ok=False); (prefix(1) / '.pid').unlink()
+    with (folder / '.delphi1.lock').open('a') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB); call(1, 'use', 'default', ok=False)
+    assert db(1) == before
+    # Deliberate partial apply failure restores both targeted keys and preserves the selection.
+    record = (folder / 'delphi1.selected.json').read_bytes()
+    env['FAIL_APPLY'] = '1'; r = call(1, 'use', 'default', ok=False); env.pop('FAIL_APPLY')
+    assert 'restored' in r.stderr and db(1) == before and (folder / 'delphi1.selected.json').read_bytes() == record
+    # Existing setup choices are never overwritten or replayed, even after manual color edits.
+    call(3, 'init-existing'); assert db(3) == third
+    r = subprocess.run(['bash', str(helper), 'fixture-settings'], env=env, text=True, capture_output=True)
+    assert r.returncode == 0 and db(3)[C] == third[C] and db(3)[T] == third[T], r.stdout + r.stderr
+    call(3, 'init-new'); assert db(3)[T]['ThemeActive'] == '0' and db(3)[C] == third[C]
+    # Missing values are initialized; an explicit non-string/case-variant value is preserved.
+    seed(5)
+    (prefix(5) / 'user.reg').write_text((prefix(5) / 'user.reg').read_text().replace('"ThemeActive"="1"\n', ''))
+    state = db(5); del state[T]['ThemeActive']; (prefix(5) / 'fixture.json').write_text(json.dumps(state))
+    call(5, 'init-existing'); assert db(5)[T]['ThemeActive'] == '0' and db(5)[T]['DllName'] == 'owner.msstyles'
+    seed(6)
+    (prefix(6) / 'user.reg').write_text((prefix(6) / 'user.reg').read_text().replace('"ThemeActive"="1"', '"themeactive"=dword:00000001'))
+    before_calls = (root / 'wine-calls').read_bytes()
+    call(6, 'init-existing'); assert (root / 'wine-calls').read_bytes() == before_calls
+
+    call(1, 'check')
+    (prefix(1) / 'user.reg').write_text((prefix(1) / 'user.reg').read_text().replace('"Window"="40 50 60"', '"Window"="11 22 33"'))
+    call(1, 'check', ok=False)
+print('color fixtures: strict validation, save/use/default, custom-value scope, prefix separation, idle/lock guards, rollback and setup preservation PASS')
+RETRO_COLOR_CHECK_PY
+    check "Retro color switching and rollback (isolated fake Wine)" 'RETRO_HELPER="$HOME/.local/lib/dev-retro/dev-retro" RETRO_DEFAULT="$HOME/.local/lib/dev-retro/colors/default.reg" python3 "$WORK/retro-color-check.py"' 180
+    # v100 (Nov 5 2026): owner-approved dev-test may verify Wine itself, only in a disposable test prefix.
+    cat > "$WORK/retro-color-real.sh" << 'RETRO_COLOR_REAL_SH'
+h="$HOME/.local/lib/dev-retro/dev-retro"
+rh="$WORK/color-real-home"
+mkdir -p "$rh/.local/share/wine/delphi3"
+export HOME="$rh" WINEPREFIX="$rh/.local/share/wine/delphi3" WINEARCH=win32 WINEDEBUG=-all
+export WINEDLLOVERRIDES="winemenubuilder.exe=d;mscoree,mshtml="
+wineboot -i > "$WORK/color-real.log" 2>&1 || exit 1
+timeout 120 wineserver -w || exit 1
+wine reg add 'HKCU\Control Panel\Colors' /v Window /t REG_SZ /d '11 22 33' /f >> "$WORK/color-real.log" 2>&1 || exit 1
+timeout 120 wineserver -w || exit 1
+"$h" delphi 3 colors save fixture || exit 1
+"$h" delphi 3 colors use default || exit 1
+"$h" delphi 3 colors use fixture || exit 1
+wine reg query 'HKCU\Control Panel\Colors' /v Window | grep -Eq 'REG_SZ[[:space:]]+11 22 33' || exit 1
+wine reg query 'HKCU\Software\Microsoft\Windows\CurrentVersion\ThemeManager' /v ThemeActive | grep -Eq 'REG_SZ[[:space:]]+0' || exit 1
+timeout 120 wineserver -w || exit 1
+"$h" delphi 3 colors check
+RETRO_COLOR_REAL_SH
+    slow "Color save/default/use with real Wine (disposable prefix only)" 'bash "$WORK/retro-color-real.sh"' 600
+    hint "Only the test-owned scratch prefix is used; color-real.log contains Wine initialization diagnostics. Real Delphi IDE appearance remains a hand check."
+    # v100 (Nov 5 2026): only default is bundled; actual choices/drift warn and are never repaired.
+    check "Retro built-in default color data (no bundled palette)" '[ -r "$HOME/.local/lib/dev-retro/colors/default.reg" ] && [ "$(find "$HOME/.local/lib/dev-retro/colors" -maxdepth 1 -name "*.reg" | wc -l)" = 1 ]'
+    for DN in 1 3 4 5 6 7; do
+        [ -d "$HOME/.local/share/wine/delphi$DN" ] || continue
+        if [ "$DN" = 1 ]; then C="delphi1"; else C="delphi $DN"; fi
+        warn "$C: theme and selected color label (read-only)" "~/.local/lib/dev-retro/dev-retro $C colors check"
+        hint "Manual choices are retained; close prefix apps then use $C colors use NAME to explicitly select No Theme and colors."
+    done
     # v100 (Nov 5 2026): missing optional font downloads warn; never install/repair in test.
     for DN in 1 3 4 5 6 7; do
         P="$HOME/.local/share/wine/delphi$DN"
