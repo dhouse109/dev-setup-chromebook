@@ -5581,6 +5581,9 @@ if has install-retro; then
     # v93: program CDs per guest, the Delphi 3-7 media folders, bsdtar for a Delphi CD's .iso
     check "app-CD folders ~/<guest>/install/apps and ~/delphi/install/{3,4,5,6,7}" 'm=""; for g in win31 win95 winnt40 win2000; do [ -d ~/$g/install/apps ] || m="$m ~/$g/install/apps"; done; for n in 3 4 5 6 7; do [ -d ~/delphi/install/$n ] || m="$m ~/delphi/install/$n"; done; [ -z "$m" ] || { echo "missing:$m"; exit 1; }; echo ok'
     hint  "rerun dev-setup with install-retro (v93 creates them)"
+    # v100 (Nov 5 2026): ISO authoring is a required retro tool; validate tiny synthetic media.
+    check "genisoimage installed (loose-file app media)" 'dpkg_has genisoimage && command -v genisoimage'
+    check "genisoimage Joliet/Rock Ridge filename round-trip" 'mkdir -p "$WORK/iso-source" && printf fixture > "$WORK/iso-source/Long app filename.txt" && genisoimage -quiet -J -r -V FIXTURE -o "$WORK/retro-fixture.iso" "$WORK/iso-source" && bsdtar -tf "$WORK/retro-fixture.iso" | grep -F "Long app filename.txt" && [ "$(bsdtar -xOf "$WORK/retro-fixture.iso" "Long app filename.txt")" = fixture ]'
     warn  "bsdtar (libarchive-tools): 'delphi N setup' unpacks a CD's .iso" 'command -v bsdtar && bsdtar --version | head -n 1'
     hint  "rerun dev-setup with install-retro; without it, copy the Delphi CD's files (not the .iso) into ~/delphi/install/N"
     # v100 (Nov 5 2026): config preferences warn; fixture failures are bundle regressions.
@@ -5814,9 +5817,8 @@ f.write(json.dumps({\"execute\": \"quit\"}) + \"\n\"); f.flush()" 2>&1); wait $q
     # disk changed with mtools, and the snapshot restored.
     cat > "$WORK/w95_check.sh" << 'W95_EOF'
 rh="$WORK/w95-home"; H=$HOME/.local/lib/dev-retro/dev-retro; mk=""
-if command -v genisoimage > /dev/null; then mk="genisoimage -quiet -J -o"
-elif command -v xorriso > /dev/null; then mk="xorriso -as mkisofs -quiet -J -o"
-else echo "SKIPPED: no genisoimage or xorriso here to make the stand-in CDs"; exit 0; fi
+command -v genisoimage > /dev/null || { echo "genisoimage missing: rerun setup install-retro"; exit 1; }
+mk="genisoimage -quiet -J -o"
 export MTOOLS_SKIP_CHECK=1
 mkdir -p "$rh/win95/install/apps" "$WORK/w95cd/WIN95" "$WORK/w95app"
 printf '%s\r\n' 'dir d:\ > c:\report.txt' 'type f:\APPFILE.TXT >> c:\report.txt' 'exit' > "$WORK/w95cd/WIN95/SETUP.BAT"
@@ -5931,6 +5933,83 @@ DN_EOF
         elif [ -n "$(find ~/delphi/install/$DN -mindepth 1 -maxdepth 1 ! -name '.*' 2> /dev/null | head -n 1)" ]; then
             info  "delphi $DN" "media in ~/delphi/install/$DN, not set up yet: 'delphi $DN setup'"
         fi
+    done
+    # v100 (Nov 5 2026): fake acquisition and scratch prefixes; no font downloads or real Wine.
+    cat > "$WORK/retro-font-check.py" << 'RETRO_FONT_CHECK_PY'
+import os, subprocess, tempfile
+from pathlib import Path
+original = Path(os.environ['RETRO_HELPER']).read_text()
+with tempfile.TemporaryDirectory(prefix='font-fixture-', dir=os.environ['WORK']) as tmp:
+    root = Path(tmp); home = root / 'home'; home.mkdir(); bindir = root / 'bin'; bindir.mkdir()
+    for name in ('wine', 'wineboot', 'wineserver', 'dosbox-x', 'qemu-system-i386', 'cabextract'):
+        p = bindir / name; p.write_text('#!/bin/sh\nexit 97\n'); p.chmod(0o755)
+    p = bindir / 'winetricks'
+    p.write_text('''#!/bin/bash
+n=0; [ ! -f "$WORK/count" ] || n=$(cat "$WORK/count"); n=$((n+1)); echo "$n" > "$WORK/count"
+echo "fixture diagnostic attempt $n"
+case "$MODE" in never) exit 42 ;; empty) exit 0 ;; recover) [ "$n" != 1 ] || exit 42 ;; esac
+mkdir -p "$WINEPREFIX/drive_c/windows/fOnTs"
+for n in ARIAL CoUr Tahoma TAHOMABD; do printf font > "$WINEPREFIX/drive_c/windows/fOnTs/$n.TtF"; done
+exit 0
+'''); p.chmod(0o755)
+    env = dict(HOME=str(home), WORK=str(root), PATH=str(bindir) + ':/usr/bin:/bin', LC_ALL='C.UTF-8', XDG_CACHE_HOME=str(root / 'cache'))
+    assets = root / 'assets'; assets.mkdir()
+    (root / 'assets-path').write_text(str(assets) + '\n')
+    h = root / 'helper'
+    dispatch = '''
+command() { if [ "${NO_TOOL:-0}" = 1 ] && [ "$1 $2" = '-v winetricks' ]; then return 1; fi; builtin command "$@"; }
+case "$1" in
+    acquire) install_fonts "$2"; rc=$?; fonts_summary; exit "$rc" ;;
+    collect) fonts_collect "$2"; exit $? ;;
+    *) main "$@"; exit $? ;;
+esac
+'''
+    h.write_text(original.rsplit('main "$@"; exit $?', 1)[0] + dispatch)
+    for mode, attempts, success in [('first', 1, True), ('recover', 2, True), ('never', 2, False), ('empty', 2, False), ('missing', 0, False)]:
+        prefix = home / '.local/share/wine' / mode
+        (root / 'count').unlink(missing_ok=True)
+        env['MODE'] = mode; env['NO_TOOL'] = '1' if mode == 'missing' else '0'
+        r = subprocess.run(['bash', str(h), 'acquire', str(prefix)], env=env, text=True, capture_output=True)
+        assert (r.returncode == 0) == success, r.stdout + r.stderr
+        count = int((root / 'count').read_text()) if (root / 'count').exists() else 0
+        assert count == attempts, (mode, count)
+        assert 'FONT RESULT:' in r.stdout and 'log:' in r.stdout
+        if not success: assert 'INCOMPLETE:' in r.stdout and 'WINEPREFIX=' in r.stdout and str(prefix) in r.stdout
+        logs = list((assets / 'logs').glob('retro-fonts-' + mode + '-*.log')); assert len(logs) == 1
+        text = logs[0].read_text()
+        if attempts:
+            assert text.count('winetricks exit=') == attempts
+            assert text.count('fixture diagnostic attempt') == attempts
+        if success:
+            subprocess.run(['bash', str(h), 'acquire', str(prefix)], env=env, check=True, capture_output=True)
+            assert int((root / 'count').read_text()) == attempts
+    env['NO_TOOL'] = '0'; env['MODE'] = 'first'
+    # A Delphi 3-only source is discoverable; repeated collection deduplicates names.
+    prefix = home / '.local/share/wine/delphi3'
+    subprocess.run(['bash', str(h), 'acquire', str(prefix)], env=env, check=True, capture_output=True)
+    out = root / 'collected'
+    for _ in range(2): subprocess.run(['bash', str(h), 'collect', str(out)], env=env, check=True, capture_output=True)
+    assert sorted(p.name for p in out.iterdir()) == ['ARIAL.TTF', 'COUR.TTF', 'TAHOMA.TTF', 'TAHOMABD.TTF']
+    # Status observes files and must not invoke Wine or winetricks.
+    count = (root / 'count').read_text()
+    r = subprocess.run(['bash', str(h), 'delphi', '3', 'status'], env=env, text=True, capture_output=True)
+    assert r.returncode == 0 and 'required core fonts and Tahoma ready' in r.stdout
+    assert (root / 'count').read_text() == count
+    # The empty-collection error is prefix-qualified; no downloads repair it.
+    import shutil
+    shutil.rmtree(prefix)
+    r = subprocess.run(['bash', str(h), 'win31', 'fonts'], env=env, text=True, capture_output=True)
+    assert r.returncode != 0 and 'WINEPREFIX=' in r.stderr and "win31 fonts" in r.stderr
+    assert (root / 'count').read_text() == count
+print('font fixtures: success/retry/exhaustion/missing tool/empty success, logs, prefix repair, Delphi 3 collection and read-only status PASS')
+RETRO_FONT_CHECK_PY
+    check "Retro font retry, diagnostics and collection (isolated)" 'RETRO_HELPER="$HOME/.local/lib/dev-retro/dev-retro" python3 "$WORK/retro-font-check.py"' 180
+    # v100 (Nov 5 2026): missing optional font downloads warn; never install/repair in test.
+    for DN in 1 3 4 5 6 7; do
+        P="$HOME/.local/share/wine/delphi$DN"
+        [ -d "$P" ] || continue
+        warn "delphi $DN: required core fonts and Tahoma present" "p=\"$P/drive_c/windows\"; d=\$(find \"\$p\" -maxdepth 1 -type d -iname fonts | head -n 1); [ -n \"\$d\" ] || exit 1; for n in arial cour tahoma tahomabd; do [ -n \"\$(find -L \"\$d\" -maxdepth 1 -type f -iname \"\$n.ttf\" -size +0c | head -n 1)\" ] || exit 1; done"
+        hint "Repair explicitly with WINEPREFIX=\"$P\" winetricks corefonts tahoma, then rerun <guest> fonts; status shows font state."
     done
     # v96: 'delphi N build' (dcc32 under Wine, from the project's folder) and 'delphi N vscode', for each Delphi 3-7
     # whose prefix has dcc32.exe; a one-line console program, built and then run by wine.
@@ -6243,9 +6322,10 @@ if ! has nodisk; then
         dapt   com "Wine (64 + 32-bit), mingw-w64, libwine-dev" 'wine*' 'libwine*' 'gcc-mingw-w64*' 'g++-mingw-w64*' mingw-w64-common mingw-w64-tools 'libz-mingw-w64*' cabextract
         dpaths com "COM Wine prefix + winetricks" "$HOME/.local/share/wine/com" "$HOME/.local/bin/winetricks"
     fi
+    has install-retro    && dpaths retro "Retro font acquisition logs" "$ASSETS"/logs/retro-fonts-*.log
     has install-retro    && dpaths retro "Retro helper and config" "$HOME/.local/lib/dev-retro" "$HOME/.config/dev-retro"
     has install-retro    && dpaths retro "Open Watcom v2 + ~/win31" /opt/watcom "$HOME/win31"
-    has install-retro    && dapt   retro "DOSBox-X (apt)" dosbox-x
+    has install-retro    && dapt   retro "DOSBox-X + ISO authoring (apt)" dosbox-x genisoimage libarchive-tools
     # v92: QEMU and the new guests' workspaces (their disk images grow as Windows is installed)
     has install-retro    && dapt   retro "QEMU, mtools, dosfstools (apt)" qemu-system-x86 qemu-system-gui qemu-system-common qemu-system-data qemu-utils qemu-block-extra mtools dosfstools
     has install-retro    && dpaths retro "~/win95 (DOSBox-X: hdd.img, exchange disk, media)" "$HOME/win95"

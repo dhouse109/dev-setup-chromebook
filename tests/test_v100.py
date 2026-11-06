@@ -155,5 +155,19 @@ class Qemu(Fixture):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
 
+class FontsAndMedia(Fixture):
+    def test_shared_devtest_font_fixture(self):
+        h = self.work / 'helper'; h.write_text(helper())
+        script = source('test').split("<< 'RETRO_FONT_CHECK_PY'\n", 1)[1].split('\nRETRO_FONT_CHECK_PY', 1)[0]
+        self.env['RETRO_HELPER'] = str(h)
+        result = subprocess.run(['/usr/bin/python3', '-c', script], env=self.env, text=True, capture_output=True, timeout=90)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_tiny_iso_roundtrip(self):
+        import re
+        command = re.search(r'check "genisoimage Joliet/Rock Ridge filename round-trip" \'(.*?)\'\n', source('test')).group(1)
+        self.bash(command)
+
+
 if __name__ == "__main__":
     unittest.main()

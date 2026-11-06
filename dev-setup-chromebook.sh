@@ -9960,6 +9960,9 @@ if [[ "$FLAGS" =~ " install-retro " ]]; then
     # v93: bsdtar unpacks a Delphi CD's .iso for 'delphi N setup' (Wine has no CD image support of its own).
     apt_get install -y libarchive-tools \
         || echo "NOTICE: apt could not install libarchive-tools; 'delphi N setup' then needs the CD's files, not an .iso."
+    # v100 (Nov 5 2026): author app data CDs from owner-supplied loose files; no media downloads.
+    apt_get install -y genisoimage \
+        || echo "NOTICE: could not install genisoimage; rerun install-retro before building app ISOs."
     if [ -e /dev/kvm ]; then
         # The group that owns /dev/kvm (kvm on Debian); nothing to add when it is root or open to everyone.
         KVM_GROUP=$(stat -c %G /dev/kvm 2> /dev/null || echo kvm)
@@ -10137,6 +10140,8 @@ EOF_DBX
 # no Win16 debugger), and the editor font Courier New 10 where none is set; 'delphi1 ini save' keeps the rest.
 set -o pipefail
 SELF=$(readlink -f "$0")
+# v100 (Nov 5 2026): setup records the bundle assets path; font logs never depend on caller cwd.
+RETRO_ASSETS=$(cat "${SELF%/*}/assets-path" 2> /dev/null || true)
 STATE="$HOME/.local/state/dev-retro"
 mkdir -p "$STATE"
 export MTOOLS_SKIP_CHECK=1
@@ -11147,6 +11152,49 @@ delphi_media() {   # the Delphi 1 SETUP.EXE in ~/win31/install/apps (a folder na
     printf '%s' "$s"
 }
 delphi_reg() { delphi_wine wine reg add "$@" /f > /dev/null 2>&1; }
+# v100 (Nov 5 2026): verify files, not winetricks' verb marker or status alone. Status never starts Wine.
+font_state() {   # PREFIX: expected core fonts + both Tahoma faces, case-insensitive and nonempty
+    local prefix=$1 dir n missing=""
+    dir=$(find "$prefix/drive_c/windows" -maxdepth 1 -type d -iname fonts 2> /dev/null | head -n 1)
+    for n in arial cour tahoma tahomabd; do
+        [ -n "$dir" ] && [ -n "$(find -L "$dir" -maxdepth 1 -type f -iname "$n.ttf" -size +0c 2> /dev/null | head -n 1)" ] || missing="$missing $n.ttf"
+    done
+    if [ -z "$missing" ]; then echo 'required core fonts and Tahoma ready'; return 0; fi
+    echo "INCOMPLETE: fonts missing:$missing"
+    return 1
+}
+install_fonts() {   # PREFIX; nonfatal caller prints fonts_summary after all other setup work
+    local prefix=$1 attempt rc files_rc
+    FONT_PREFIX=$prefix; FONT_LOG=""; FONT_RESULT="INCOMPLETE: fonts missing"
+    if font_state "$prefix" > /dev/null; then FONT_RESULT='required core fonts and Tahoma ready'; return 0; fi
+    case "$RETRO_ASSETS" in /*) ;; *) echo 'NOTE: no bundle assets-path; rerun dev-setup install-retro before font acquisition.'; return 1 ;; esac
+    mkdir -p "$RETRO_ASSETS/logs" || return 1
+    FONT_LOG="$RETRO_ASSETS/logs/retro-fonts-$(basename "$prefix")-$(date +%Y%m%d-%H%M%S-%N).log"
+    : > "$FONT_LOG" || return 1
+    if ! command -v winetricks > /dev/null 2>&1; then
+        echo 'winetricks missing; install-com supplies it.' >> "$FONT_LOG"
+        return 1
+    fi
+    for attempt in 1 2; do
+        echo "Font acquisition attempt $attempt/2" >> "$FONT_LOG"
+        WINEPREFIX="$prefix" winetricks -q corefonts tahoma >> "$FONT_LOG" 2>&1; rc=$?
+        font_state "$prefix" >> "$FONT_LOG"; files_rc=$?
+        printf 'winetricks exit=%s; required-font files exit=%s\n' "$rc" "$files_rc" >> "$FONT_LOG"
+        if [ "$rc" = 0 ] && [ "$files_rc" = 0 ]; then
+            FONT_RESULT='required core fonts and Tahoma ready'; return 0
+        fi
+        [ "$attempt" != 1 ] || echo 'Font acquisition incomplete; retrying once (diagnostics saved).'
+    done
+    return 1
+}
+fonts_summary() {
+    echo "FONT RESULT: $FONT_RESULT${FONT_LOG:+; log: $FONT_LOG}"
+    if [[ "$FONT_RESULT" == INCOMPLETE:* ]]; then
+        printf 'Repair: WINEPREFIX=%q winetricks corefonts tahoma\n' "$FONT_PREFIX"
+        echo 'Then rerun the required <guest> fonts command. Plain winetricks uses a different default prefix.'
+    fi
+}
+
 delphi_setup() {
     local setup_exe="${1:-$(delphi_media)}" sys ok=1
     [ -n "$setup_exe" ] && [ -f "$setup_exe" ] || { tell "No Delphi 1 setup in ~/win31/install/apps: copy the Delphi 1 disks or CD there (SETUP.EXE with its files), then 'delphi1 setup'."; exit 1; }
@@ -11180,10 +11228,12 @@ delphi_setup() {
     delphi_reg 'HKLM\Software\Microsoft\Windows NT\CurrentVersion\FontSubstitutes' /v 'MS Sans Serif' /t REG_SZ /d 'Tahoma'
     if command -v winetricks > /dev/null 2>&1; then
         WINEPREFIX="$DELPHI_PREFIX" winetricks -q fontsmooth=rgb > /dev/null 2>&1 || echo "NOTE: winetricks fontsmooth=rgb failed."
-        WINEPREFIX="$DELPHI_PREFIX" winetricks -q corefonts tahoma > /dev/null 2>&1 || echo "NOTE: 'winetricks corefonts tahoma' failed (it downloads the fonts; offline?). Rerun 'delphi1 setup' later."
+
     else
         echo "NOTE: winetricks is missing (install-com installs it): fonts left as Wine's."
     fi
+    # v100 (Nov 5 2026): keep incomplete downloads visible without preventing a usable IDE.
+    install_fonts "$DELPHI_PREFIX" || :
     # The IDE options: a DELPHI.INI you saved ('delphi1 ini save') first, then the keys Wine needs.
     if [ -f "$HOME/.config/dev-retro/DELPHI.INI" ]; then
         cp "$HOME/.config/dev-retro/DELPHI.INI" "$(delphi_ini_path)" && echo "DELPHI.INI restored from ~/.config/dev-retro (your saved options)."
@@ -11193,6 +11243,7 @@ delphi_setup() {
     delphi_launcher
     delphi_offer_com_cleanup
     [ "$ok" = 1 ] && echo "Done: 'delphi1' starts the IDE (or its launcher icon). Limits of this route: 'delphi1 help'."
+    fonts_summary
 }
 # DELPHI.INI (C:\WINDOWS): IntegratedDebugging=0 always (Wine has no Win16 debug hooks: Run fails with
 # "Internal Windows error (15)" otherwise); the editor font Courier New 10 only where the file sets none.
@@ -11427,10 +11478,12 @@ dn_settings() {
     dn_reg 'HKLM\Software\Microsoft\Windows NT\CurrentVersion\FontSubstitutes' /v 'MS Sans Serif' /t REG_SZ /d 'Tahoma'
     if command -v winetricks > /dev/null 2>&1; then
         WINEPREFIX="$DN_PREFIX" winetricks -q fontsmooth=rgb > /dev/null 2>&1 || echo "NOTE: winetricks fontsmooth=rgb failed."
-        WINEPREFIX="$DN_PREFIX" winetricks -q corefonts tahoma > /dev/null 2>&1 || echo "NOTE: 'winetricks corefonts tahoma' failed (it downloads the fonts; offline?). Rerun 'delphi $DN setup' later."
+
     else
         echo "NOTE: winetricks is missing (install-com installs it): fonts left as Wine's."
     fi
+    # v100 (Nov 5 2026): font state and two acquisition attempts get a final nonfatal summary.
+    install_fonts "$DN_PREFIX" || :
     # reg.exe, not regedit: regedit answers a problem with a dialog box, which would wait for a click.
     if [ -f "$HOME/.config/dev-retro/delphi$DN.reg" ]; then
         dn_wine wine reg import "$(dn_wine winepath -w "$HOME/.config/dev-retro/delphi$DN.reg" 2> /dev/null)" > /dev/null 2>&1 \
@@ -11472,6 +11525,7 @@ dn_setup() {   # dn_setup [INSTALLER]
     dn_launcher
     echo "Done: 'delphi $DN' starts the IDE (or its launcher icon). If Run stops with a debugger error, turn off"
     echo "Tools > Debugger Options > Integrated debugging and debug in a real Windows guest (STEPS-delphi.md)."
+    fonts_summary
 }
 dn_launcher() {   # point the version's Wine menu entries at 'delphi N'; write an IDE entry when none is there
     local apps="$HOME/.local/share/applications" f list=() ide=0
@@ -11671,16 +11725,18 @@ fonts_take() {   # fonts_take SRCDIR OUTDIR: the fonts of FONT_FILES found in SR
     local n f
     for n in $FONT_FILES; do
         [ -f "$2/${n^^}.TTF" ] && continue
-        f=$(find "$1" -maxdepth 1 -type f -iname "$n.ttf" 2> /dev/null | head -n 1)
+        f=$(find -L "$1" -maxdepth 1 -type f -iname "$n.ttf" 2> /dev/null | head -n 1)
         [ -n "$f" ] && cp "$f" "$2/${n^^}.TTF"
     done
     return 0
 }
 fonts_collect() {   # fonts_collect DIR: every font found, into DIR as NAME.TTF
-    local out=$1 d f cache="${XDG_CACHE_HOME:-$HOME/.cache}/winetricks" tmp
+    local out=$1 d f n cache="${XDG_CACHE_HOME:-$HOME/.cache}/winetricks" tmp
     mkdir -p "$out"
-    for d in "$DELPHI_PREFIX/drive_c/windows/Fonts" "$COM_PREFIX/drive_c/windows/Fonts"; do
-        [ -d "$d" ] && fonts_take "$d" "$out"
+    # v100 (Nov 5 2026): a successful Delphi 3–7 setup can be the only source; deduplicate by name.
+    for d in "$DELPHI_PREFIX" "$COM_PREFIX" "$HOME"/.local/share/wine/delphi{3,4,5,6,7}; do
+        n=$(find "$d/drive_c/windows" -maxdepth 1 -type d -iname fonts 2> /dev/null | head -n 1)
+        [ -z "$n" ] || fonts_take "$n" "$out"
     done
     if command -v cabextract > /dev/null 2>&1 && [ -d "$cache" ]; then
         tmp=$(mktemp -d)
@@ -11694,6 +11750,9 @@ fonts_collect() {   # fonts_collect DIR: every font found, into DIR as NAME.TTF
 fonts_readme() {   # fonts_readme GUEST: README.TXT for the guest (LF here; CRLF when written)
     cat << EOF
 Fonts from dev-retro ('$1 fonts' on Linux)
+
+v100: Missing fonts? WINEPREFIX="$DELPHI_PREFIX" winetricks corefonts tahoma
+then rerun '$1 fonts'. Font downloads run only when explicitly requested, never by status/test.
 
 The TrueType core fonts (Andale Mono, Arial, Comic Sans MS, Courier New, Georgia, Impact,
 Times New Roman, Trebuchet MS, Verdana, Webdings) and Tahoma, copied from the Wine prefixes
@@ -11762,7 +11821,11 @@ fonts_cmd() {   # fonts_cmd GUEST
     mkdir -p "$tmp/FONTS"
     fonts_collect "$tmp/FONTS"
     n=$(find "$tmp/FONTS" -maxdepth 1 -name '*.TTF' | wc -l)
-    [ "$n" -gt 0 ] || die "No fonts found: 'delphi1 setup' installs them into the delphi1 prefix (winetricks corefonts tahoma), or run 'winetricks corefonts tahoma' once."
+    # v100 (Nov 5 2026): unqualified winetricks repairs the wrong prefix.
+    if [ "$n" = 0 ]; then
+        printf 'No fonts found. Repair: WINEPREFIX=%q winetricks corefonts tahoma\n' "$DELPHI_PREFIX" >&2
+        die "Then rerun '$1 fonts'. Plain winetricks uses a different default prefix."
+    fi
     fonts_readme "$1" | sed 's/$/\r/' > "$tmp/FONTS/README.TXT"
     case "$1" in
         win31)
@@ -11844,6 +11907,10 @@ status_cmd() {   # one line: installed? running? sizes
     esac
     printf '%-8s %-15s %-9s %-14s %-8s %s\n' "$1" "$TITLE" "$ENGINE" "$inst" "$run" "${size:+$size used}"
     case "$1" in winnt40|win2000) echo "         exchange: $(exchange_gate state) (setup always withholds it)" ;; esac
+    case "$1" in
+        delphi1) font_state "$DELPHI_PREFIX" || : ;;
+        delphi3|delphi4|delphi5|delphi6|delphi7) font_state "$DN_PREFIX" || : ;;
+    esac
     [ -f "$WS/setup.skipped" ] && echo "         last setup refused: $(cat "$WS/setup.skipped")"
     return 0
 }
@@ -12008,6 +12075,9 @@ main "$@"; exit $?
 DEVRETRO_EOF
     chmod +x ~/.local/lib/dev-retro/dev-retro.new
     mv -f ~/.local/lib/dev-retro/dev-retro.new ~/.local/lib/dev-retro/dev-retro
+    # v100 (Nov 5 2026): companion location for retained font logs, refreshed when the bundle moves.
+    printf '%s\n' "$ASSETS" > ~/.local/lib/dev-retro/assets-path.new
+    mv -f ~/.local/lib/dev-retro/assets-path.new ~/.local/lib/dev-retro/assets-path
     for RETRO_CMD in win31 win95 winnt40 win2000 delphi1 delphi retro; do
         # shellcheck disable=SC2016   # $HOME is for the wrapper to expand
         printf '#!/bin/sh\n# %s - written by dev-setup (install-retro); the logic is in ~/.local/lib/dev-retro/dev-retro.\nexec "$HOME/.local/lib/dev-retro/dev-retro" %s "$@"\n' \

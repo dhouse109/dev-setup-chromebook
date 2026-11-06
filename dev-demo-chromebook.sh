@@ -4316,6 +4316,30 @@ DOSBox-X v100: [dosbox] hostkey=ctrlshift for new/absent settings; Ctrl+Shift+F 
 Delphi 1 is a 16-bit Windows 3.1 application. Two routes, both set up by install-retro. Put the Delphi 1
 install files (the disks' contents or the CD's, SETUP.EXE with them) in ~/win31/install/apps first.
 
+v100 font diagnostics (Nov 5 finding): explicit `delphi1 setup` / `delphi N setup` checks Arial,
+Courier New, Tahoma and bold Tahoma files and retries acquisition once if the command fails or files
+are incomplete. The final FONT RESULT is prominent and nonfatal to the IDE. Both attempt statuses
+and output stay in `assets/logs/retro-fonts-<prefix>-<timestamp>.log`; setup records the bundle assets
+location, so logs do not depend on the launch directory. `<prefix command> status` only reads font
+files. `win31 fonts` (or another guest's fonts command) collects existing fonts from all Delphi/COM
+prefixes or the existing winetricks download cache; it never downloads or repairs. If none are found:
+`WINEPREFIX="$HOME/.local/share/wine/delphi1" winetricks corefonts tahoma`, then `win31 fonts`.
+Use the relevant Delphi N prefix to repair that prefix. Plain winetricks targets a different default
+prefix. An incomplete optional font download is a dev-test WARN; missing optional prefixes are skips.
+
+v100 loose app media: install-retro supplies genisoimage. An app CD can be built from your own CD's
+loose files; it does not make a bootable Windows installer. For example, first ensure the destination
+ISO does not exist (or choose a new name), keep it outside the source tree, then:
+
+    test ! -e "$HOME/win95/install/apps/delphi3.iso" && genisoimage -o "$HOME/win95/install/apps/delphi3.iso" -J -r -V DELPHI3 "$HOME/delphi/install/3"
+    bsdtar -tf "$HOME/win95/install/apps/delphi3.iso"
+    win95 cd delphi3
+
+Check the filenames in Windows before installing. Change the destination workspace for another
+guest. `<guest> cd` still takes ISO files, not folders. Original files stay unchanged; the ISO uses
+roughly another source-folder-sized allocation inside the guest workspace, already counted by its
+disk report. The generated retro demo itself remains under 1 MB; guest/media/log storage is separate.
+
 ## Wine: the `delphi1` command (forms, code, non-database programs)
 
     delphi1 setup      # a 32-bit Wine prefix (~/.local/share/wine/delphi1), Delphi's SETUP.EXE in a
@@ -4382,6 +4406,30 @@ The media and serial numbers are yours; nothing is downloaded.
 Delphi 6 and 7 do not support Windows 95, and Windows 3.1 runs only Delphi 1. Delphi 3 and 4 can share one
 guest; 5, 6 and 7 share win2000 (Delphi 5 also runs on 95, 98 and NT 4.0, but 2000 is its era, as under Wine). The QEMU guests run close to native speed only with KVM (`retro` says whether
 this Chromebook has it); without it they emulate the CPU and are slow.
+
+v100 font diagnostics (Nov 5 finding): explicit `delphi1 setup` / `delphi N setup` checks Arial,
+Courier New, Tahoma and bold Tahoma files and retries acquisition once if the command fails or files
+are incomplete. The final FONT RESULT is prominent and nonfatal to the IDE. Both attempt statuses
+and output stay in `assets/logs/retro-fonts-<prefix>-<timestamp>.log`; setup records the bundle assets
+location, so logs do not depend on the launch directory. `<prefix command> status` only reads font
+files. `win31 fonts` (or another guest's fonts command) collects existing fonts from all Delphi/COM
+prefixes or the existing winetricks download cache; it never downloads or repairs. If none are found:
+`WINEPREFIX="$HOME/.local/share/wine/delphi1" winetricks corefonts tahoma`, then `win31 fonts`.
+Use the relevant Delphi N prefix to repair that prefix. Plain winetricks targets a different default
+prefix. An incomplete optional font download is a dev-test WARN; missing optional prefixes are skips.
+
+v100 loose app media: install-retro supplies genisoimage. An app CD can be built from your own CD's
+loose files; it does not make a bootable Windows installer. For example, first ensure the destination
+ISO does not exist (or choose a new name), keep it outside the source tree, then:
+
+    test ! -e "$HOME/win95/install/apps/delphi3.iso" && genisoimage -o "$HOME/win95/install/apps/delphi3.iso" -J -r -V DELPHI3 "$HOME/delphi/install/3"
+    bsdtar -tf "$HOME/win95/install/apps/delphi3.iso"
+    win95 cd delphi3
+
+Check the filenames in Windows before installing. Change the destination workspace for another
+guest. `<guest> cd` still takes ISO files, not folders. Original files stay unchanged; the ISO uses
+roughly another source-folder-sized allocation inside the guest workspace, already counted by its
+disk report. The generated retro demo itself remains under 1 MB; guest/media/log storage is separate.
 
 ## Media: where each CD goes
 
@@ -4512,6 +4560,30 @@ Windows, and never write the guest's qcow2/NTFS C: with host mtools.
 1. New configs use TCG, an unscaled USB tablet and no sound. PCnet networking is on the CD. Setup withholds exchange throughout; after desktop + shutdown, `win2000 exchange enable`.
 2. Log on with `win2000 keys ctrl-alt-del` when it asks. The mouse is a USB tablet: no capture.
 3. Service Pack 4: its .iso in ~/win2000/install, then run it from F:.
+
+v100 font diagnostics (Nov 5 finding): explicit `delphi1 setup` / `delphi N setup` checks Arial,
+Courier New, Tahoma and bold Tahoma files and retries acquisition once if the command fails or files
+are incomplete. The final FONT RESULT is prominent and nonfatal to the IDE. Both attempt statuses
+and output stay in `assets/logs/retro-fonts-<prefix>-<timestamp>.log`; setup records the bundle assets
+location, so logs do not depend on the launch directory. `<prefix command> status` only reads font
+files. `win31 fonts` (or another guest's fonts command) collects existing fonts from all Delphi/COM
+prefixes or the existing winetricks download cache; it never downloads or repairs. If none are found:
+`WINEPREFIX="$HOME/.local/share/wine/delphi1" winetricks corefonts tahoma`, then `win31 fonts`.
+Use the relevant Delphi N prefix to repair that prefix. Plain winetricks targets a different default
+prefix. An incomplete optional font download is a dev-test WARN; missing optional prefixes are skips.
+
+v100 loose app media: install-retro supplies genisoimage. An app CD can be built from your own CD's
+loose files; it does not make a bootable Windows installer. For example, first ensure the destination
+ISO does not exist (or choose a new name), keep it outside the source tree, then:
+
+    test ! -e "$HOME/win95/install/apps/delphi3.iso" && genisoimage -o "$HOME/win95/install/apps/delphi3.iso" -J -r -V DELPHI3 "$HOME/delphi/install/3"
+    bsdtar -tf "$HOME/win95/install/apps/delphi3.iso"
+    win95 cd delphi3
+
+Check the filenames in Windows before installing. Change the destination workspace for another
+guest. `<guest> cd` still takes ISO files, not folders. Original files stay unchanged; the ISO uses
+roughly another source-folder-sized allocation inside the guest workspace, already counted by its
+disk report. The generated retro demo itself remains under 1 MB; guest/media/log storage is separate.
 
 ## Fonts and font smoothing (both guests, and win31 / win95)
 `winnt40 fonts` (with the guest off) puts the TrueType core fonts and Tahoma from the Wine prefixes in
