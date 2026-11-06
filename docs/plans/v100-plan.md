@@ -6,8 +6,8 @@ Nov 1, 2026 (item 1) · Nov 6, 2026 (items 2–16 added) · **draft for owner re
 
 Item 1 was drafted Nov 1. Items 2–16 are the owner-confirmed scope from hands-on install-retro testing
 on a long-term Chromebook with `/dev/kvm` (Nov 5–6, 2026); each records the finding, the owner's
-decision and the requested change. They still need a detailed design (code locations, tests, docs)
-before the build starts. See "Items 2–16" below.
+decision and the requested change. The detailed proposals below verify v99 code locations, describe migration and validation, and
+list owner choices. They are recommendations for review, not build approval.
 
 | # | Item | Kind |
 |---|---|---|
@@ -170,7 +170,42 @@ General constraints for all of them:
   the owner set) or only document the change.
 - Owner-run checks of real guests need the owner's licensed media and happen on the owner's
   Chromebooks; dev-test can verify generated files and helper behaviour, not a Windows install.
-- Line numbers below refer to v99 (`main` at 5c1a3b8) and are starting points only.
+- All source locations below were read against v99, `main` at `5c1a3b8`; the four scripts on
+  `plan/v100` are identical to that baseline. Ranges include the relevant branch/function, not just
+  the old starting-point line. Re-find symbols before editing after earlier stages move lines.
+- **Heredoc boundary:** setup lines 10051–11764 write the shared `dev-retro` helper using
+  `DEVRETRO_EOF`. Functions called out inside that range are generated helper code, not setup-time
+  commands. Win31's config (10023–10047), packages (9946–9961), and QEMU config generation
+  (11777–11801) are outside it. `win95_confs` and `dos_conf` run lazily in the helper; setup does
+  not currently create their files.
+- **Migration rule:** preserve every active explicit value, even when equal to a v99 default.
+  An old default cannot be distinguished from an intentional owner choice. Add only absent keys,
+  in the correct section, without duplicate sections/keys or changing comments/line endings. Ignore
+  commented-out assignments when deciding absence; recognize whitespace and case for DOSBox-X INI
+  keys. For sourced shell configs recognize assignments with optional `export` and spaces around
+  the line, and avoid appending a competing assignment when syntax is ambiguous. Report it for
+  owner review. Never evaluate an existing config merely to migrate it. Skip writes while the
+  affected guest runs and report the deferred update. Config updates use a same-directory temporary
+  file and atomic replacement, retaining file permissions. Apply missing-key migration from setup
+  for files already present, and from helper config creation/launch for lazy files.
+- **Validation boundary:** `check`/`slow` means FAIL for bundle-owned behaviour; `warn`/`slowwarn`
+  means a user-changeable preference or optional font availability. Use isolated HOME/workspace
+  fixtures and fake engine executables to capture argument arrays without starting guests. Never
+  point mutation tests at real guest configs, disks or Wine prefixes. No licensed media is needed
+  for these regressions. Guest installation, rendering, pointer and application behaviour remain
+  owner acceptance checks. Test-time repair/downloads of guest settings are forbidden.
+- **Build-time docs contract (applies to every item):** update `README.md` (current version and
+  affected flag descriptions), `docs/init-checklist.md` (init → setup → init → test and manual
+  guest steps), all four `CHANGELOG.md` sections, and all four version strings only when building
+  v100. No new flags are proposed; keep flag expansion identical. Each item lists its additional
+  docs/STEP targets below; a stated “none” means no extra change beyond this shared contract.
+  Generated STEPS sources are the heredocs in dev-demo, never an edit to an installed copy.
+- **Disk accounting:** extend retro's existing lines in dev-test 6045–6063: include helper/config
+  storage (`.local/lib/dev-retro`, `.config/dev-retro`), new font logs in assets, and item 11's
+  package. Guest workspaces already count exchange disks and app ISOs; don't add them twice.
+  Items changing only defaults, arguments or prose add no separate disk allocation.
+- **Questions:** each item ends with A/B choices, recommended first. `2A`, for example, means
+  item 2 choice A. Nothing here authorizes a script run or guest start.
 
 ### 2. NuGet steps hang where IPv6 to api.nuget.org fails
 
@@ -179,10 +214,38 @@ General constraints for all of them:
   api.nuget.org failed while IPv4 worked; rerunning dev-demo with `DOTNET_SYSTEM_NET_DISABLEIPV6=1`
   completed every demo.
 - **Decision:** in v100.
-- **Plan should settle:** which steps need it (dev-demo only, or setup/test steps that restore NuGet
-  packages or install .NET tools too); applying the variable to those commands only versus detecting
-  a failing IPv6 path first; a dev-test check or warning that makes the condition visible; a
-  `docs/crostini-gotchas.md` entry.
+- **Verified locations:** dev-demo 748–831 (`demo_dotnet`: C# generated runner at 758,
+  VB creation/add-package at 772–773 and runner at 829); 834–861 (`demo_pwsh`: Save-PSResource
+  with Save-Module fallback at 841–843, generated runner at 854–858). The generated BDD runner's
+  Reqnroll path is 9093–9106 (new/add/build/test). Setup's only NuGet acquisition commands are
+  Reqnroll template update/install at 7133–7140; SDK apt installation at 2419–2444 is not NuGet.
+  Dev-test restores/builds at 1694–1697 (C#/VB/mixed), 2260 (Godot .NET, including its
+  `godot-mono` parent process), and 3081–3124 (Reqnroll). Init 2202–2219 only checks SDK/certs;
+  init 2028–2033 lists templates, so neither needs a network workaround.
+- **Proposed change:** set `DOTNET_SYSTEM_NET_DISABLEIPV6=1` on the acquisition/build process
+  or a tightly scoped subshell encompassing the relevant sequence. Include child processes of
+  `godot-mono`, PowerShell's Gallery acquisition, and generated C#/VB/Reqnroll runners because
+  their build/run can restore implicitly. Keep the producer's exit status and existing timeout/
+  error reporting. Do not export it script-wide, in bashrc, or in NuGet/global network settings.
+  Use the deterministic workaround rather than a preliminary IPv6 probe: one probe's success
+  says little about a later CDN endpoint. Runtime-only `--no-build` calls need no new setting.
+  Microsoft's [.NET variable documentation](https://learn.microsoft.com/en-us/dotnet/core/tools/dotnet-environment-variables#dotnet_system_net_disableipv6)
+  confirms the name and value. There is no `dotnet tool install` in v99 to patch.
+- **Existing machines:** no guest config migration. Dev-demo rewrites its bundle-owned runners;
+  rerun it without refresh to update runners while keeping existing projects/modules. Scope the
+  build env in these regenerated runners too; no wrapper around the owner's general dotnet/pwsh.
+- **Dev-test:** retain the real C#/VB/Godot/Reqnroll build checks as FAILs; add one bounded NuGet
+  service-index reachability `warn`: a tiny package-free C# HttpClient GET of
+  `https://api.nuget.org/v3/index.json`, 10-second client timeout and 20-second process timeout,
+  with the same .NET setting and a network/DNS hint on failure,
+  rather than claiming a hang proves IPv6 is broken. At build time use process stubs to confirm
+  all restore-capable paths inherit the variable and unrelated commands do not. No guest/media
+  verification needed. Owner confirms VB demo acquisition and PowerShell Gallery download complete
+  without manually exporting the variable; cached success alone is insufficient evidence.
+- **Docs:** shared contract; `docs/crostini-gotchas.md` Network, `docs/dev-demo.md` .NET/PowerShell
+  and BDD notes. No retro STEPS change or new cache disk row; existing .NET cache rows stay.
+- **Owner choice:** **2A (recommended):** command-scoped IPv4 for these bundle operations.
+  **2B:** detect IPv6 failure first, accepting extra probe latency and incomplete coverage.
 
 ### 3. win95 hangs on its first boot after Setup
 
@@ -195,10 +258,28 @@ General constraints for all of them:
   from the installed helper by hand fixed `win95` with the exchange disk and app CD attached. The
   exchange disk was ruled out (500 MB and 255-head disks both still hung with X: present).
 - **Decision:** remove the folder mount from guest boots.
-- **Plan should settle:** every place the X: mount reaches a `boot c:` (setup's second-part run as
-  well as `win95` / `win95 run`), keeping the separate IMGMAKE use at line 10606, which needs it; a
-  regression check that the generated helper's boot arguments contain no folder mount; whether win31
-  is affected (it boots DOS, not `boot c:`, so probably not).
+- **Verified locations:** inside setup's generated helper, `win95_cmd` 10568–10638;
+  shared `args` initialization is 10599, standalone IMGMAKE 10606–10607, guest image/CD mounts
+  10613–10618, and `boot c:` 10632. This shared array reaches `boot`, `run`, and resumed `setup`.
+  `win31_cmd` 10475–10522 starts `win` on folder-mounted DOS drives and never calls `boot c:`.
+- **Proposed change:** change only shared initialization to `args=(-conf "$conf")`. Keep the X:
+  mount and `x:` in the isolated IMGMAKE invocation, which exits before any guest boot. Preserve
+  hdd, exchange and both ISO image mounts. No X: mount is needed for the first setup session either.
+  Read-only comparison with the installed helper found exactly this one-line change and no other
+  differences from v99's heredoc; this corroborates the owner's successful hand fix. Setup replaces
+  that helper each run, so the fix must live in the heredoc. Leave win31's required folder mounts.
+- **Existing machines:** replacing the generated helper fixes all launches without touching config
+  files or disk contents. If an owner has added folder mounts to `[autoexec]`, warn and document
+  removing those before `boot c:`; do not delete custom commands automatically.
+- **Dev-test:** extend the isolated win95 harness at 5614–5642 with a fake DOSBox-X capturing NUL-
+  separated arguments for boot, run and both setup phases. FAIL on any guest-boot `mount` folder
+  command, require `boot c:` in the applicable phases and keep IMGMAKE's X: command in its separate
+  invocation. A source grep alone would wrongly reject IMGMAKE. Owner alone verifies completed OSR2
+  setup reaches the desktop, then boot/run with exchange disk and app CD still work.
+- **Docs:** shared contract; `docs/crostini-gotchas.md` Retro, `docs/dev-demo.md` matrix and
+  generated `STEPS-delphi.md` (4360–4440) win95 setup/troubleshooting. No new storage.
+- **Owner choice:** **3A (recommended):** the one-line shared-array fix, preserving IMGMAKE and win31.
+  **3B:** additionally remove owner-added config mounts manually after reviewing them.
 
 ### 4. Stale-frame flicker in a maximized win95 window
 
@@ -208,9 +289,21 @@ General constraints for all of them:
   and left it unusable; toggling the same options in win31 (which runs `output=opengl`) worked.
 - **Decision:** `output=surface` for win95's `setup.conf` and `boot.conf` (the `base` template at
   setup line 10528). win31 and `dos.conf` keep their current output. No other video default changes.
-- **Plan should settle:** whether setup changes an existing win95 config's `output=opengl` to
-  `surface` (only when the line still has the old default) or leaves existing machines to the docs;
-  the docs note that output modes are changed in the config file with the guest off, not live (see 16).
+- **Verified locations:** generated helper `win95_confs` 10528–10567, `base` output at
+  10532 feeds both setup.conf and boot.conf. Win31 output at 10030 and `dos_conf` output at 11683
+  are separate templates and remain as they are.
+- **Proposed change:** set only win95 base `output=surface`. Add absent `output` under `[sdl]`
+  in existing win95 configs, but preserve any explicit value, including `opengl`. This resolves the
+  old plan's migration option in favour of the no-overwrite rule. Tell existing owners to choose
+  `surface` themselves with the guest shut down. Never change the live renderer via the menu.
+- **Dev-test:** FAIL fresh-config fixtures unless both win95 configs say surface. Verify missing-
+  key migration, repeat-run stability and preservation of explicit opengl/custom outputs. On real
+  configs `warn` for an output other than surface, naming the recommendation, not a failed install.
+  Owner checks maximized redraw and cold startup with his Windows 95 media; no automated UI claim.
+- **Docs:** shared contract; `docs/crostini-gotchas.md` rendering finding, `docs/dev-demo.md`,
+  `STEPS-delphi.md` and item 16's shutdown-first guidance. No new disk usage.
+- **Owner choice:** **4A (recommended):** preserve every existing output assignment; document opt-in.
+  **4B:** owner manually selects surface on existing configs before acceptance (still no auto-rewrite).
 
 ### 5. Windows 2000 crawls or hangs at "Starting up…" on nested KVM
 
@@ -220,11 +313,27 @@ General constraints for all of them:
   `/dev/kvm` is nested, so the many VGA and IDE port exits of an old guest's boot are expensive.
 - **Decision:** default win2000 to TCG always, until a KVM boot of an installed system is shown to
   be faster.
-- **Plan should settle:** the default in `qemu_config` (line ~10693) and in the config file setup
-  writes (lines ~11780–11797, with a comment explaining why); whether existing `~/win2000/config`
-  files with `ACCEL=auto` change (the owner's machines already have `ACCEL=tcg` by hand); the winnt40
-  default (NT 4.0 is not yet installed or tested on these machines: propose keeping it unchanged and
-  documenting the TCG fallback, unless there is evidence); docs.
+- **Verified locations:** generated helper `qemu_config` 10690–10702 currently sets
+  `ACCEL=auto` in the shared assignment at 10695; `pick_accel` is 10703–10717. Outside the heredoc,
+  setup's write-once QEMU config loop is 11777–11801, ACCEL line 11797. Setup's KVM announcement
+  9966–9974 and dev-test 5578–5584 currently imply both guests will always use available KVM.
+- **Proposed change:** put ACCEL in guest-specific defaults: win2000 tcg, winnt40 auto; remove the
+  shared assignment which would override them. Give the config-generation loop matching R_ACCEL
+  values and a v100 comment linking win2000's TCG default to the Nov 5 nested-KVM finding. Keep
+  explicit auto/kvm supported. Replace “close to native” promises with capability/selection wording
+  (item 9), including setup, init's retro note at 2261–2315, and test information.
+- **Existing machines:** add `ACCEL=tcg` only when absent from win2000/config; preserve auto,
+  kvm, tcg, and other explicit owner values. No change to existing NT config values. No KVM
+  performance extrapolation to NT 4.0, which has not been installed/tested by the owner.
+- **Dev-test:** FAIL fixture defaults/config templates that disagree; test explicit overrides and
+  missing-key migration. Real win2000 non-tcg selection is a `warn` explaining the fallback; do not
+  FAIL for usable KVM or benchmark it automatically. Owner verifies install, graphical reboot,
+  login, idle and installed-system boot under TCG. NT installation remains owner-media verification.
+- **Docs:** shared contract; `docs/crostini-gotchas.md` Retro, `docs/dev-demo.md`, `STEPS-winnt.md`
+  4441–4486 and `STEPS-delphi.md`: distinguish NT auto from 2000 tcg, and describe the optional NT
+  fallback without claiming it was tested. No disk increase.
+- **Owner choice:** **5A (recommended):** win2000 tcg, NT auto, preserve explicit configs.
+  **5B:** also default NT to tcg, requiring NT-specific evidence before adopting that extra change.
 
 ### 6. QEMU tablet pointer misaligned
 
@@ -233,9 +342,22 @@ General constraints for all of them:
   picture, setup line 11518).
 - **Decision:** `DISPLAY_OPTS="gtk,zoom-to-fit=off"` as the win2000 default. winnt40 uses a PS/2
   mouse; the plan proposes whether it changes too.
-- **Plan should settle:** where the default lives (line 10695 sets it for both guests; the config
-  template at 11798); the docs advice to raise the guest's screen area since the window no longer
-  scales.
+- **Verified locations:** generated helper shared `DISPLAY_OPTS` at 10695, QEMU use
+  at 10760, existing `fonts_readme` sharp-picture advice at 11513–11520. Outside the heredoc, the
+  config template sets it at 11798. Dev-demo STEPS-winnt sharp-pixel advice is at 4474–4477.
+- **Proposed change:** make display default guest-specific alongside item 5: win2000
+  `gtk,zoom-to-fit=off`, NT `gtk,zoom-to-fit=on` (PS/2 unchanged). Use matching R_DISPLAY in the
+  written config. Explain the smaller unscaled picture and raising screen area in Windows Display
+  Properties; do not force a guest resolution or change MOUSE.
+- **Existing machines:** add an absent DISPLAY_OPTS only, preserving every explicit string,
+  including on and extra GTK options. Owner can switch off manually with the guest stopped.
+- **Dev-test:** FAIL mismatched fresh defaults and QEMU captured `-display` arguments; preserve
+  custom options in fixtures. Real win2000 zoom on is a `warn`, NT on is expected. Owner verifies
+  tablet alignment at several picture positions and a larger guest resolution after cold launch.
+- **Docs:** shared contract; `docs/crostini-gotchas.md` pointer finding, `docs/dev-demo.md`,
+  `STEPS-winnt.md`, `STEPS-delphi.md`, and helper-generated fonts README sharp-picture paragraph.
+- **Owner choice:** **6A (recommended):** change only win2000. **6B:** also unscale NT despite no
+  matching pointer finding (a separate preference, requiring owner confirmation).
 
 ### 7. win2000 sound: default `SOUND=none`
 
@@ -244,8 +366,24 @@ General constraints for all of them:
   off did not fix item 5, so the errors were not its cause, but they serve no purpose for the
   development use of the guest.
 - **Decision:** default `SOUND=none` for win2000; investigating working guest audio is a later item.
-- **Plan should settle:** the defaults (lines 10693, 11782); whether winnt40's sb16 shows the same
-  errors (unknown; leave unchanged without evidence); docs on turning sound back on.
+- **Verified locations:** helper win2000 `SOUND=AC97` at 10693; `audio_args`
+  10718–10726; QEMU audio array append at 10784–10785. Setup R_SOUND at 11782 and config SOUND
+  at 11795 are outside the helper. NT remains sb16 at 10692/11780.
+- **Proposed change:** win2000 SOUND=none in both defaults; keep the early return in audio_args
+  so none adds no emulated sound card or audio backend. Document opting back into AC97 with the
+  guest stopped, driver installation from the owner's CD, and possible PulseAudio errors. Preserve
+  the historical finding that disabling audio did not solve the boot slowdown.
+- **Existing machines:** insert SOUND=none only if missing from win2000/config. Do not rewrite
+  AC97, sb16, none or a custom card. NT sb16 remains unchanged without evidence.
+- **Dev-test:** FAIL fresh/default fixture mismatch; captured win2000 launch must omit `-audiodev`
+  and sound `-device` when none. Assert explicit AC97 override still reaches audio_args. A real
+  enabled win2000 card is `warn` with the quiet default recommendation, not a bundle failure.
+  Owner confirms quiet boot and application use; working guest audio is deferred.
+- **Docs:** shared contract; `docs/crostini-gotchas.md` audio finding, `docs/dev-demo.md`,
+  `STEPS-winnt.md` (remove automatic AC97 assumption for 2000), `STEPS-delphi.md` if referring to
+  audio. No new disk row.
+- **Owner choice:** **7A (recommended):** silence win2000 only, preserving explicit choices.
+  **7B:** additionally silence NT, pending separate NT audio evidence.
 
 ### 8. Exchange disk takes C: (and loses its letter) during NT/2000 Setup
 
@@ -257,11 +395,51 @@ General constraints for all of them:
   partition was deleted, so it later appeared in Disk Management as unallocated with no letter;
   `win2000 exchange recreate` with the guest off restored it, and `put` / `get` worked again.
 - **Decision:** don't attach the exchange disk until the guest's Windows is installed.
-- **Plan should settle:** the "installed" test that decides attachment (`installed "$GUEST"` or the
-  disk holding a Windows install) and the message shown when it is left out; that setup's later runs
-  (the second, resumed `setup`) still work; the same for winnt40; docs covering the F3 workaround and
-  `exchange recreate` for guests installed with earlier versions, and that the exchange disk is
-  formatted only from Linux, never in Windows (`put` / `get` use mtools and need its FAT layout).
+- **Verified locations:** helper `installed` 10219–10232 returns true for NT/2000
+  merely when disk.qcow2 or disk.img exists; it cannot prove Windows is installed. `qemu_launch`
+  10757–10794 attaches exchange unconditionally at 10763. `nt_cmd` 10796–10858 creates/attaches
+  during initial setup, resumed setup, normal boot and run. Exchange operations are 10315–10378;
+  common dispatch 11752–11753; status reports “disk created” at 11606. Reading a qcow2's host
+  file bytes with mtools would not establish guest installation and NTFS is outside mtools.
+- **Proposed change:** require an explicit completion acknowledgement, `<guest> exchange enable`,
+  after the owner reaches the installed Windows desktop and shuts down. `exchange disable` clears
+  it; `exchange info` and status show enabled, deferred or stale. Store the enabled system disk's
+  canonical path and file device/inode in a small `exchange-enabled` config record under the guest
+  workspace (already counted). Write it only with the guest stopped and a system disk present.
+  Match it to the currently selected disk; a missing/replaced disk requires enable again. Normal
+  boot/run attach index=1 only with a matching record; otherwise print “Exchange disk withheld
+  until Windows installation is complete; after shutdown run '<guest> exchange enable'.”
+- **Setup rule:** every `setup`, including resumed disk boot and `--from-cd`/`--raw`, withholds
+  exchange regardless of record. Starting a setup command clears the old acknowledgement so a
+  reinstall cannot silently reuse it. Setup-time exchange image creation may stay (it is harmless
+  while detached); leave its FAT layout/data alone. Both CD drives keep their IDE indexes, but
+  drive letters during installation are provisional; E:/F: describe the final layout after exchange
+  is enabled and Windows assigns letters. `put`/`fonts` may prepare an exchange disk before enable,
+  but print that it is withheld; they never acknowledge installation. `run` must fail before copying
+  or launching if exchange is withheld, giving the enable command, rather than promising D: access.
+  This is more reliable than trying to recognize complete Windows from boot files halfway through
+  setup. It adds one manual step but works for FAT/NTFS, qcow2/raw and all resumed setup paths.
+- **Existing machines:** no automatic inference from an existing disk or exchange image. Existing
+  installed NT/2000 guests need a one-time `exchange enable` after confirming their desktop. No
+  config assignment is overwritten, and no disk partition is changed. A snapshot restore normally
+  keeps the disk inode; an externally replaced disk safely invalidates the record. Restoring a
+  pre-install snapshot requires `exchange disable` before resuming Setup; document this explicitly.
+  Do not try to rename an already installed Windows system from F: to C: automatically.
+- **Dev-test:** FAIL isolated argument captures for either guest if index=1 appears during initial,
+  resumed, CD/floppy/raw setup or unacknowledged boot; require it for acknowledged boot/run. Test
+  enable/disable, missing/replaced disk, setup clearing the record, stopped guard, pending put/fonts,
+  and run rejection. Exchange round-trip check at 5600–5612 remains independent of attachment.
+  Real absence of enable is info/SKIP for uninstalled guests, `warn` for an owner expecting exchange;
+  never call disk existence “installed”. Owner alone verifies fresh NT/2000 text/graphical setup
+  installs to C:, all resumed boots stay detached, then enabling supplies a usable FAT exchange drive.
+- **Docs:** shared contract; `docs/dev-demo.md`, `STEPS-winnt.md`, `STEPS-delphi.md`,
+  `docs/crostini-gotchas.md` Retro. Include the enable step; old-version F3/reboot workaround only
+  before installing Windows; Disk Management letter assignment; back up with `get` before
+  `exchange recreate`; format/recreate only from Linux because mtools expects this FAT layout.
+  Recreate cannot recover files from a partition the owner deleted; stop rather than promise recovery.
+- **Owner choice:** **8A (recommended):** explicit completion/enable step with setup always detached.
+  **8B:** withhold only during `setup`, attach on ordinary boot; simpler but an accidental normal
+  boot mid-install can still take C:, so it does not fully enforce the requested protection.
 
 ### 9. Misleading accel message when `ACCEL=tcg` is configured
 
@@ -269,8 +447,27 @@ General constraints for all of them:
   `/dev/kvm`, the launch line said "software emulation (TCG; no /dev/kvm on this Chromebook:
   slower)" (`pick_accel`, line 10712).
 - **Decision:** fix the message.
-- **Plan should settle:** wording for each case (TCG chosen in the config, no `/dev/kvm`, `/dev/kvm`
-  present but not usable yet), keeping the existing group-membership hint.
+- **Verified locations:** helper `pick_accel` 10703–10717 and QEMU launch report at
+  10788. Capability claims also occur in setup 9966–9974, `retro_cmd` 11700, dev-test 5578–5584
+  and init's install-retro block 2261–2315. Selection comes from qemu_config plus the owner's config.
+- **Proposed change:** test explicit tcg first: “software emulation (TCG; selected by ACCEL=tcg)”.
+  Otherwise select KVM only for readable/writable character device: “KVM (selected by ACCEL=auto)”
+  or “KVM (selected by ACCEL=kvm)”. No character device: “software emulation (TCG; /dev/kvm
+  unavailable)”. Present but inaccessible: retain the group-membership/reopen-Linux hint and say
+  “software emulation (TCG; /dev/kvm present but not usable)”. Preserve explicit-kvm fallback NOTE,
+  but do not show that hint for intentional tcg. Remove unconditional speed claims. Capability
+  summaries must say availability is separate from each guest's configured choice.
+- **Existing machines:** no config migration; truthful messages follow current values immediately
+  when the helper is replaced. Keep KVM detection/fallback semantics unchanged.
+- **Dev-test:** FAIL a fixture matrix over auto/kvm/tcg and usable/absent/inaccessible KVM, testing
+  both ACCEL_ARGS and reason text, with mocked predicates/stat (no permission changes to devices).
+  Add helper diagnostic output usable by dev-test without launching QEMU. Real chosen preference
+  is information, not a FAIL. Owner sees the selected-tcg reason on win2000 launch; no media needed
+  to validate message construction itself.
+- **Docs:** shared contract; `docs/crostini-gotchas.md` and `docs/dev-demo.md`/`STEPS-winnt.md`
+  replace “KVM present means both run with KVM” with selection-aware explanations. No disk change.
+- **Owner choice:** **9A (recommended):** selection/reason wording above across all summaries.
+  **9B:** patch only pick_accel, leaving conflicting setup/test summaries (not recommended).
 
 ### 10. Failed `winetricks corefonts tahoma` is silent
 
@@ -280,8 +477,37 @@ General constraints for all of them:
   `WINEPREFIX=~/.local/share/wine/delphi1 winetricks corefonts tahoma` by hand fixed it, and
   `win31 fonts` then worked.
 - **Decision:** make the failure visible and actionable.
-- **Plan should settle:** how to surface it (one retry, a prominent end-of-setup line, `delphi1
-  status` showing font state), and the exact command `win31 fonts` prints when the prefix has none.
+- **Verified locations:** helper `delphi_setup` 10917–10963 (suppressed winetricks at
+  10949–10952), `dn_settings` 11188–11207 (11196–11199); `fonts_collect` 11446–11460 currently
+  searches only Delphi 1/COM prefixes and download cache, not Delphi 3–7; `fonts_cmd` 11523–11544
+  has an unqualified repair command at 11531. Status is 11599–11614; both Delphi command dispatches
+  are 11078–11104 / 11387–11427. Dev-test's installed-prefix section is 5691–5738.
+- **Proposed change:** factor prefix-specific corefonts/tahoma installation into one helper; check
+  real expected `.ttf` files case-insensitively (Arial, Courier New and Tahoma plus bold Tahoma),
+  not only winetricks exit status or its verb registry. Retry once only after nonzero/incomplete
+  result, retain both attempts' output and statuses in `assets/logs/retro-fonts-<prefix>-<timestamp>.log`.
+  Pass the bundle assets location into the generated helper at build time; do not derive it from cwd.
+  On failure print a prominent “INCOMPLETE: fonts missing” final summary with a log path and the exact
+  prefix-qualified repair command. Font failure remains nonfatal to an otherwise usable Delphi IDE.
+  Add a read-only font-state line to delphi1/delphi N status (no Wine process, just files).
+- **Collection and repair:** include all existing Delphi 3–7 Fonts directories in fonts_collect,
+  deduplicating by existing font names, before cache extraction. On empty collection print
+  `WINEPREFIX="$HOME/.local/share/wine/delphi1" winetricks corefonts tahoma`, then rerun
+  `win31 fonts` (or the requesting guest's fonts command). Explain that plain winetricks repairs
+  a different default prefix. Do not auto-create prefixes or download from fonts/status/dev-test.
+- **Existing machines:** next explicit Delphi setup retries missing fonts; existing font files,
+  registry choices and guest config remain intact. No automatic fonts install on bundle setup;
+  fontsmooth handling keeps its diagnostic too. Repeated status is strictly observational.
+- **Dev-test:** FAIL stub regressions for first-success/no retry, retry recovery, exhausted failures,
+  missing winetricks, zero-status but absent font files, prefix-specific repair text and collection
+  from a Delphi 3-only fixture. `warn` incomplete fonts in actual existing prefixes; absent optional
+  prefixes are info/SKIP. No network font acquisition or mutation of real prefixes in tests. Owner
+  checks the repaired prefix supplies `win31 fonts`, then installs/uses fonts inside his guest.
+- **Docs:** shared contract; `docs/init-checklist.md` repair steps, `docs/dev-demo.md`, generated
+  `STEPS-delphi1.md`, `STEPS-delphi.md`, `STEPS-winnt.md` and helper fonts README. No new Crostini
+  workaround (network/font availability is not specific to ChromeOS); count logs in assets/retro row.
+- **Owner choice:** **10A (recommended):** one retry, saved diagnostics, prominent nonfatal summary
+  and status. **10B:** no automatic retry, same diagnostics and manual prefix-qualified repair.
 
 ### 11. Loose-file media for real guests
 
@@ -291,8 +517,32 @@ General constraints for all of them:
   Delphi 3 installed from it in Windows 95.
 - **Decision:** install-retro installs `genisoimage` (next to `libarchive-tools`, line 9960) and the
   docs show building an `.iso` from a folder.
-- **Plan should settle:** package choice (`genisoimage` vs `xorriso`), the docs location, and whether
-  a `<guest> cd FOLDER` convenience that builds the ISO belongs in v100 (propose; the owner decides).
+- **Verified locations:** setup package block 9959–9961 installs libarchive-tools;
+  helper `app_resolve` 10411–10416 and `cd_cmd` 10417–10457 accept ISO files, not directories;
+  `dn_cdroot`/`dn_installer` 11127–11167 already accept loose files for Wine. Dev-test's win95
+  harness 5614–5620 currently skips ISO construction if neither ISO builder is available. Disk
+  package row is 6046–6048; demo media instructions are 4407–4428 and 4443–4448.
+- **Proposed change:** install Debian `genisoimage` beside libarchive-tools with its own actionable
+  failure notice. Recommend the owner's proven `-J -r` recipe rather than xorriso: only ISO/Joliet
+  CD authoring is needed, and genisoimage is already understood by the existing harness. Do not add
+  `cd FOLDER` in v100: file creation/naming/collision/cache semantics would broaden this small item.
+  Document, for example:
+  `genisoimage -o "$HOME/win95/install/apps/delphi3.iso" -J -r -V DELPHI3 "$HOME/delphi/install/3"`,
+  then `win95 cd delphi3`. Check the destination does not already exist first; output must be outside
+  the source tree. Validate/list the resulting ISO with bsdtar and inspect guest filenames. This
+  creates an **app data CD**, not automatically a bootable Windows installation CD.
+- **Existing machines:** no guest config rewrite or automatic conversion. Setup adds the package;
+  owners choose which folders become ISOs and keep existing ISO selection. For other guests change
+  the destination workspace accordingly. Keep original media unchanged; only owner-supplied files.
+- **Dev-test:** `check` package/command presence; make ISO construction required rather than SKIP
+  for missing builders after install-retro. Use a tiny fixture with a spaced/long filename, list
+  it through bsdtar, then retain existing ISO/app selection checks. Owner alone validates actual
+  Delphi/Windows-era media filenames and installer access to F:. Include genisoimage in retro dapt;
+  existing workspace disk rows count resulting ISOs, which duplicate source data roughly in full.
+- **Docs:** shared contract; `docs/dev-demo.md` footprint and media, `STEPS-delphi.md`,
+  `STEPS-winnt.md`, `STEPS-delphi1.md` cross-reference. No new Crostini-specific gotcha.
+- **Owner choice:** **11A (recommended):** genisoimage plus documented recipe, ISO-only cd command.
+  **11B:** add `cd FOLDER` convenience, requiring a further design for destination/name/overwrite rules.
 
 ### 12. Wine color schemes with built-in Breeze Dark
 
@@ -307,12 +557,68 @@ General constraints for all of them:
   `ButtonAlternativeFace`), credited in a code comment to Zeinok's Breeze Dark gist
   (<https://gist.github.com/Zeinok/ceaf6ff204792dde0ae31e0199d89398>). Setup selects "(No Theme)" in
   each prefix so registry colors take effect.
-- **Plan should settle:** subcommand shape (`list`, `use NAME`, `save NAME`); how "(No Theme)" is
-  set non-interactively (the winecfg Theme setting's registry location); `dn_settings` and the
-  delphi1 equivalent currently set `Background` to black on every setup (lines 10943, 11190): the
-  plan proposes how a chosen scheme survives a setup rerun; the gist's license (none seen) before
-  shipping its values in a public repo; dev-test checks (scheme files written, `use` changes the
-  registry values).
+- **Verified locations:** helper `delphi_setup` Background write 10943 and `dn_settings`
+  Background write 11190 reset color every run; prefix creation is 10921–10927 / `dn_prefix`
+  11178–11187. `delphi_reg` 10916 and `dn_reg` 11124 wrap registry writes. Command routing is
+  11078–11104 / 11387–11427. Dev-test 5700 and 5716 hardcode black Background; that assertion must
+  change when schemes are supported (both Delphi 1 and Delphi N). All these setup locations are
+  within the generated helper.
+- **Verified theme setting:** Wine 10's [winecfg theme.c](https://github.com/wine-mirror/wine/blob/wine-10.0/programs/winecfg/theme.c)
+  `do_apply_theme` calls `ApplyTheme(NULL, ...)` for No Theme. Its
+  [uxtheme system.c](https://github.com/wine-mirror/wine/blob/wine-10.0/dlls/uxtheme/system.c)
+  `UXTHEME_SetActiveTheme` writes `HKCU\Software\Microsoft\Windows\CurrentVersion\ThemeManager`,
+  `ThemeActive` as **REG_SZ `0`**, and removes ColorName, SizeName, DllName, LoadedBefore on
+  deactivation. This is separate from Themes\Personalize's AppsUseLightTheme DWORD. For the
+  noninteractive, closed-prefix path, set ThemeActive REG_SZ 0, then import colors; the next Wine
+  session reads it. A full winecfg-equivalent cleanup of the four inactive style values belongs
+  only to an explicit `colors use`, with a theme backup, never an automatic migration.
+- **License finding (Nov 6):** the [Zeinok gist](https://gist.github.com/Zeinok/ceaf6ff204792dde0ae31e0199d89398)
+  was reachable and showed three files (instructions, palette, reset); no license file or license
+  grant was visible. The API endpoint was inaccessible through the web tool, so this is a report
+  of no observed license, not a claim to know the author's intentions. The instructions credit a
+  prior paste. Attribution alone does not settle redistribution. **Do not build the bundled palette
+  until permission/license covering the supplied values is established, or the owner approves a
+  scope change below.** Keep the already supplied table here unchanged as review evidence.
+- **Proposed command contract:** `delphi1 colors [list|use NAME|save NAME]` and
+  `delphi N colors [list|use NAME|save NAME]`. Bare colors lists names and current selection;
+  list requires no prefix/Wine start. Built-ins are immutable files under the helper's installed
+  data directory; user schemes are in `.config/dev-retro/colors`. Reserve default/breeze-dark;
+  names must match `[A-Za-z0-9][A-Za-z0-9._-]*`, without path components. Save refuses an existing
+  name, records only allowlisted REG_SZ RGB triplets (0–255) from Control Panel\Colors, and
+  does not export other registry data. Require an existing idle prefix for save/use, serialize
+  scheme operations, and never kill Wine to obtain it. Do not trust only the helper .pid: Wine
+  tools started outside it must also be considered; if uncertain, refuse and ask the owner to close
+  that prefix's Wine apps. No `wineboot` or licensed install just to list a palette.
+- **Use/default:** validate the entire scheme before writes; back up only the affected Colors and
+  ThemeManager keys to config (not a full registry), check every reg command, and record per-prefix
+  selection only after success. Roll back partial failure. `default` removes just the allowlisted
+  color overrides to let Wine supply defaults, rather than shipping the gist's reset file; leave
+  unrelated/custom registry values. After use, restart the prefix's apps to observe colors. Subject
+  to permission, breeze-dark uses the table verbatim, including red ButtonAlternativeFace, with
+  Zeinok credit/link and license in a tagged code comment/data notice. No downloaded theme engine.
+- **Existing machines:** remove both unconditional black-background writes. Newly created prefixes
+  get ThemeActive=0 as part of their initial settings and otherwise Wine/default colors. Existing
+  prefixes keep ThemeActive and all colors; add ThemeActive=0 only if absent, with no deletion of
+  style keys. Existing active Light theme produces a warning explaining `colors use NAME` or the
+  manual No Theme selection. Explicit use is the owner's instruction to switch theme/colors;
+  setup reruns neither force it nor reapply a recorded palette over later manual changes. A saved
+  selection is a label, not authority to overwrite registry edits. No changes to the COM prefix.
+- **Dev-test:** `check` installed built-in files/command validation and fixture round-trips,
+  prefix separation, default deletion scope, invalid RGB/name, existing-name rejection, stopped
+  guard, rollback, repeated setup preserving a choice, and chosen scheme import via stubbed Wine.
+  Add an isolated disposable Wine-prefix integration check of use/save/default with registry
+  readback when test is owner-approved; never change a real Delphi prefix during dev-test.
+  Use `warn` for actual theme/selection drift and font/TEMP preferences; replace the mandatory black
+  assumption in the existing settings warning. Absent Delphi media/prefix is not a failure.
+  Owner checks winecfg displays No Theme and the Delphi 1/3 IDEs render chosen colors after restart;
+  only owner-media tests can establish IDE appearance. No default promise that editor colors follow.
+- **Docs:** shared contract; `docs/dev-demo.md`, `STEPS-delphi1.md`, `STEPS-delphi.md`,
+  init checklist color commands and license/attribution notice at build time. No Crostini-specific
+  workaround. Count installed data and user schemes in the shared retro disk-report additions.
+- **Owner choice:** **12A (recommended):** resolve redistribution permission/license first, then
+  build the requested two built-ins without changing the table. **12B:** approve a scope change:
+  ship default plus validated owner-supplied `.reg` schemes and defer bundled breeze-dark; owner
+  may supply the gist locally. In both choices preserve existing themes until an explicit switch.
 
 Breeze Dark values (`HKEY_CURRENT_USER\Control Panel\Colors`, "R G B"):
 
@@ -339,13 +645,38 @@ Breeze Dark values (`HKEY_CURRENT_USER\Control Panel\Colors`, "R G B"):
 - **Finding (Nov 5):** DOSBox-X's host key defaults to F12, which a Chromebook keyboard lacks (F11
   and F12 exist only as remapped key combinations). The owner switches it to Ctrl+Shift by hand every
   time (Main > Select host key) and uses Ctrl+Shift+F for full screen.
-- **Decision:** `hostkey=ctrlshift` under `[sdl]` in every DOSBox-X config install-retro writes:
+- **Decision (placement corrected by installed documentation below):** `hostkey=ctrlshift` under
+  `[dosbox]` in every DOSBox-X config install-retro writes:
   `~/win31/dosbox-x.conf` (line 10028), win95's two configs (the `base` template), and
   `~/.config/dev-retro/dos.conf` (line 11682). Existing configs get the line only if they have no
   `hostkey=` line (never overriding the owner's choice).
-- **Plan should settle:** confirming the setting name and value against the installed DOSBox-X
-  (`dosbox-x -printconf` or its docs); the README/STEPS key references (they mention F12 combinations
-  such as Ctrl+F10 and the host-key shortcuts).
+- **Verified locations:** setup win31 config at 10023–10047, helper win95 base at
+  10528–10567 and lazy `dos_conf` at 11672–11692. The first template is outside DEVRETRO_EOF;
+  the latter two are inside it. Existing guest output modes must stay unchanged except item 4.
+- **Installed documentation result:** dosbox-x/dosbox-x-data `2025.02.01+dfsg-3` ships
+  `/usr/share/dosbox-x/dosbox-x.reference.full.conf`: `[dosbox]` starts at 192, hostkey
+  documentation at 239–242, assignment at 473; next section starts at 547. It explicitly lists
+  ctrlshift among accepted values. Thus **hostkey is in `[dosbox]`, not `[sdl]`**. The binary
+  strings also contain the hostkey handlers. No DOSBox-X execution or `-printconf` was needed.
+- **Proposed change:** add `hostkey=ctrlshift` to `[dosbox]` in all four generated configs,
+  creating `[dosbox]` in dos.conf (which currently has only sdl/ttf). Use the shared missing-key
+  migration rule for existing files. Keep mapper files untouched. If a hostkey assignment exists
+  in a wrong section, report the placement and leave it for manual review rather than silently
+  relocating an owner's line or appending a competing setting. Ensure setup handles existing lazy
+  files too, even before a subsequent guest launch.
+- **Dev-test:** FAIL fresh-config and missing-key migration fixtures unless all four use the
+  correct section; verify repeat runs and preservation of explicit mapper/ctrlalt choices. Real
+  absent/different/incorrectly sectioned hostkey is `warn` with repair advice. Owner checks
+  Ctrl+Shift+F full-screen and configured release shortcuts in DOS, win31 and win95; keyboard
+  event delivery/focus under ChromeOS cannot be proved by a text check. DOS does not need media;
+  Windows checks need the owner's installed guests.
+- **Docs:** shared contract; `docs/init-checklist.md` keys, `docs/dev-demo.md`, generated
+  `STEPS-delphi1.md`, `STEPS-delphi.md`, `STEPS-winnt.md` distinguish DOSBox-X shortcuts from
+  QEMU's Ctrl+Alt+G. `docs/crostini-gotchas.md` focus/key section coordinated with item 16.
+  Don't blindly replace Ctrl+F10 with a host shortcut: describe mapper-based release separately
+  and verify the installed mapping with owner acceptance. No new disk allocation.
+- **Owner choice:** **13A (recommended):** accept the documentation-verified `[dosbox]` correction
+  and preserve existing choices. **13B:** defer the host-key default pending a separate GUI check.
 
 ### 14. `win95 net on|off`
 
@@ -354,10 +685,54 @@ Breeze Dark values (`HKEY_CURRENT_USER\Control Panel\Colors`, "R G B"):
   his other machines (over Tailscale) and, with old-browser limits understood, the internet.
 - **Decision:** a `win95 net on|off` subcommand that adds or removes the `[ne2000]` block
   (`ne2000=true`, `backend=slirp`, `nicbase=300`, `nicirq=3`) in `boot.conf`, with the guest off.
-- **Plan should settle:** whether Debian's DOSBox-X build includes the slirp backend (check before
-  building; if not, report and stop); `net` status output; the docs for the Windows 95 side (NE2000
-  Compatible at I/O 300 / IRQ 3, TCP/IP via DHCP, `winipcfg`, `10.0.2.2` as the Linux host); a dev-test
-  check of the generated block. Not in scope: port forwarding into guests, win31 networking.
+- **Verified locations:** helper win95 networking comment 10565, `win95_confs`
+  10528–10567, `win95_cmd` stopped guard 10578; common dispatch 11742–11754 needs the new
+  win95-only branch before boot handling. `status_cmd` 11599–11614 can append network state;
+  help is the helper header at 10052–10132. No existing net subcommand or NE2000 block exists.
+- **Read-only backend finding (Nov 6):** installed Debian dosbox-x `2025.02.01+dfsg-3` has
+  a libslirp0 dependency; `readelf -d /usr/bin/dosbox-x` has NEEDED `libslirp.so.0`; `strings`
+  includes `slirp_new`, `SlirpEthernetConnection`, the backend-selection message and “SLIRP:
+  Successfully initialized”. The bundled full reference config 2502–2521 documents NE2000/slirp
+  and the requested base/IRQ. [Upstream networking documentation](https://dosbox-x.com/wiki/Guide:Setting-up-networking-in-DOSBox%E2%80%90X)
+  identifies shared-library linkage as its binary-support check. Together these confirm this
+  installed build includes the slirp backend; a runtime launch is not needed to establish compile
+  support. Guest DHCP/connectivity is still unverified. No DOSBox-X process was started.
+- **Proposed change:** `win95 net`/`win95 net status` reports effective config on/off, backend,
+  base, IRQ and next-boot semantics (not network reachability). `net on|off` requires the guest
+  stopped, and edits only boot.conf atomically. On adds the decision's exact four-key `[ne2000]`
+  block, bracketed by v100 managed comments. Off removes only an intact bundle-owned block; never
+  delete a user-created section. Repeated on/off is a no-op when already in the requested state.
+  Preserve unrelated settings/comments. If an unmanaged ne2000 section/key exists, or the managed
+  block has been hand-edited, display its effective state and explain manual changes are required;
+  do not overwrite/remove it. Refuse ambiguous duplicate sections/keys before any partial edit.
+  An unmanaged already-off configuration can return “already off” without mutation.
+- **Support/IRQ:** `net on` checks the installed binary/package for slirp evidence and fails
+  actionably if unsupported (do not install an alternate DOSBox-X). Preserve IRQ3 as decided.
+  Upstream notes IRQ3 conflicts with COM2: add `[serial] serial2=disabled` only if no serial2
+  setting exists, label the inserted line as bundle-owned, and remove that unchanged managed line
+  on off. Preserve any owner serial2 value; on must refuse an enabled/conflicting COM2 with an
+  instruction to resolve it manually (or choose the owner's alternative below). Prevalidate both
+  edits and commit together. Existing disabled COM2 is reused and never removed by off. setup.conf
+  remains unchanged: network hardware becomes visible on the subsequent normal win95 boot.
+- **Existing machines:** setup leaves network off/unconfigured; no automatic block adoption or
+  guest driver installation. Explicit net on creates only absent managed settings; net off removes
+  only its own unchanged additions. The old instructional comment becomes subcommand guidance.
+  Preserve manually working networking and report it as custom. No owner keys or tokens involved.
+- **Dev-test:** `check` binary slirp support and stub/fixture command round-trips, repeat calls,
+  running refusal, custom block preservation, duplicate detection, COM2 conflict and unsupported
+  build failure. Require the exact four values only for the managed on fixture; real networking
+  off is normal info, custom settings produce `warn` only if inconsistent/conflicting. No guest
+  launch or downloads to test config logic. Disk rows already count configs; no new service.
+- **Owner media checks/docs:** add NE2000 Compatible manually in Windows 95, I/O 0300 / IRQ3,
+  ensure no COM2 conflict, add TCP/IP, obtain address by DHCP, reboot and inspect `winipcfg`.
+  Explain Linux host at 10.0.2.2; use explicit Tailscale IPv4 addresses first for other machines,
+  with plain HTTP/period-browser TLS limits. Do not promise MagicDNS, ping behaviour, inbound
+  access or DCOM through slirp. Broad network matrix stays v101. Shared docs contract plus
+  `docs/crostini-gotchas.md` key/network constraints, `docs/dev-demo.md`, `STEPS-delphi.md` win95
+  networking; cross-reference from `STEPS-delphi1.md`. No win31 networking or port forwarding.
+- **Owner choice:** **14A (recommended):** retain IRQ3, disable COM2 only when absent, refuse custom
+  conflicts, and manage only helper-owned blocks. **14B:** change the planned NIC IRQ to 10 to avoid
+  COM2 altogether; the Windows driver instructions/block and acceptance values must change together.
 
 ### 15. Delphi under Wine: documentation findings (docs only)
 
@@ -372,6 +747,32 @@ Breeze Dark values (`HKEY_CURRENT_USER\Control Panel\Colors`, "R G B"):
 - Media layout: Delphi 1's files go in `~/win31/install/apps`, in a folder whose name contains
   "delphi"; Delphi 3–7 in `~/delphi/install/N` (an `.iso` or the CD's files); `delphi N` launcher
   icons appear only after `delphi N setup`; the bare "DOSBox-X" launcher is Debian's own entry.
+
+- **Verified locations:** generated helper media discovery `delphi_media` 10910–10915,
+  `dn_installer` 11151–11167, explicit-installer path `dn_setup` 11208–11242, launcher generation
+  11035–11076 / 11243–11273, and rerun settings at 10942–10950 / 11188–11207. This is all
+  DEVRETRO_EOF code. Dev-demo source STEPS-delphi1 at 4306–4358 and STEPS-delphi at 4360–4440
+  contain the Wine/guest procedures; init checklist retro text is 614–620, README flag at 161.
+- **Proposed documentation:** record Delphi 3 Client/Server as owner-tested, without extending
+  that claim to 4–7 or to every component. Show the explicit `delphi 3 setup` installer path for
+  rerunning the CD menu after installation; explain why plain setup only reapplies settings when
+  already installed. Describe the four named OCX registration errors as observed non-blocking for
+  this install, not a general rule to ignore installer errors. Say those optional controls may
+  still be unavailable. Include IDE wheel limitations/key alternatives and the exact separate
+  media layouts; distinguish Debian's DOSBox-X icon from bundle guest/Delphi launchers.
+- **Existing machines:** no new writes/config migration. Replace the “rerun resets black desktop”
+  observation with a historical v99 note and item 12's preserve/switch behaviour when that is built.
+  Item 10's font repair is prefix-qualified. Generated STEPS files are rewritten on demo reruns;
+  projects, source and guest data remain untouched.
+- **Dev-test/owner boundary:** no new engine or UI test for a docs-only item. Existing prefix/IDE
+  checks 5706–5738 remain; do not make missing optional Delphi media/OCXs a FAIL. A focused docs
+  review checks paths/commands against dispatch and ensures no “all versions tested” claim. Owner
+  alone verifies Delphi 3 install/menu, IDE start, sample compile/run and wheel/key behaviour with
+  his media; optional add-ons get their own observations, not automatic success claims.
+- **Docs:** shared contract; `docs/dev-demo.md`, both Delphi STEPS, checklist manual retro steps.
+  No new Crostini workaround: keep existing Wine limits and link to item 12; no new disk content.
+- **Owner choice:** **15A (recommended):** publish the limited Delphi 1/3 observations with the
+  qualifications above. **15B:** defer the OCX note until optional-control functionality is tested.
 
 ### 16. DOSBox-X and QEMU guests: documentation findings (docs only)
 
@@ -389,6 +790,128 @@ Breeze Dark values (`HKEY_CURRENT_USER\Control Panel\Colors`, "R G B"):
   is avoided (qcow2, the guest must be off); in Windows 2000 Setup "FAT" means FAT32 above 2 GB, and
   `convert C: /fs:ntfs` changes it later; adding a drive letter in Disk Management.
 - Windows 2000 has no built-in ZIP support: unzip on Linux and `put` the folder.
+
+- **Verified locations:** helper `win31_cmd` 10475–10522 queues floppy images at 10495–10498;
+  `nt_cmd` keys at 10850–10853 sends ctrl-alt-delete through the monitor; QEMU pointer note at
+  10789; exchange layout/create/put/get 10243–10378. Font README sharp-picture text 11513–11520
+  and demo STEPS-delphi1 4348–4355, STEPS-delphi 4428–4434, STEPS-winnt 4441–4486 carry current
+  guest instructions. Helper locations are all inside DEVRETRO_EOF. Existing Crostini Retro notes
+  mention missing KVM but do not describe these focus/recovery findings.
+- **Proposed documentation:** put the owner's focus loss/recovery sequence in the DOSBox-X
+  notes, label Ctrl+F10 as the current mapper release shortcut pending the host-key acceptance
+  check (item 13), and describe host+F for the new full-screen setting. Verify Alt+Enter on the
+  installed mapping rather than calling every shortcut a host-key combination. With a lost picture,
+  attempt Start-menu shutdown via Ctrl+Esc, U, Enter only for the Windows guest/version where the
+  owner confirmed it; it is not a DOS/win31 universal recovery. Guest-off config edits are the normal
+  renderer/scaler route (item 4), and no maximize=true default is added. Document floppy queue/order,
+  DOS > Swap floppy and Return to MS-DOS; key remapping in ChromeOS and helper login keys.
+- **QEMU procedures:** explain exchange FAT/put/get with the guest stopped and item 8's completion
+  enable step, why host mtools must not write qcow2/NTFS C:, Windows 2000 FAT choice above 2 GB as
+  FAT32, optional in-guest `convert C: /fs:ntfs` only after backup, and assigning the exchange letter
+  in Disk Management without formatting. State exchange letters may differ on old installations;
+  do not promise D: when C:/F: were assigned during v99 Setup. Unzip on Linux before put since 2000
+  lacks Explorer ZIP support. No zip-tool or licensed-media downloads are introduced.
+- **Existing machines:** docs only; no config migration, disk conversion, partition repair or
+  automated shutdown. Owners choose manual changes with guests off. STEPS refresh is intentional
+  bundle documentation replacement, separate from write-once guest config.
+- **Dev-test/owner boundary:** no new UI acceptance automated; keep engine/exchange fixtures and
+  item 3/8/13 tests. No FAIL for absent media or an owner-selected output/mapping. Owner checks
+  focus/full-screen recovery in DOS/win31/win95, floppy swap with his media, NT/2000 login keys,
+  file round-trip and letter assignment. Disk conversion is optional and never run by dev-test.
+- **Docs:** shared contract; `docs/crostini-gotchas.md` Retro/focus, `docs/dev-demo.md`, all three
+  generated STEPS, checklist guest steps; README keeps a concise pointer to them. No disk increase.
+- **Owner choice:** **16A (recommended):** record these as qualified manual procedures and verify
+  shortcuts during acceptance. **16B:** omit the blind shutdown shortcut until rechecked per guest.
+
+## Proposed build stages (after owner approval; one commit per stage)
+
+1. **NuGet scope (2):** command/runner changes and relevant dev-test/docs. Bump all four scripts
+   together to v100 in this first implementation commit, update every version string/README, and
+   create entries under all four CHANGELOG sections (version bump only where appropriate).
+2. **DOSBox-X boot/defaults/keys (3, 4, 13):** helper argument fix, correct-section host key,
+   missing-key migration and preserved-config fixtures. Keep win31/DOS renderer choices. Refresh
+   corresponding docs/STEP prose and CHANGELOG descriptions in this commit.
+3. **QEMU defaults, attachment and reporting (5–9):** combine guest-specific defaults, exchange
+   completion record/commands and truthful messages because launch argument tests cover them
+   together. Include existing-install migration docs, init/test capability wording, disk rows and
+   the fixture matrix. Validate setup continuation and safe attachment before any owner installation.
+4. **Media/fonts (10, 11):** package, collection/retry/status/log handling and fixture ISO/font
+   regressions, docs/STEP repairs, disk accounting and CHANGELOG entries.
+5. **Colors (12), gated on the owner's license/scope choice:** prefix-preserving settings,
+   commands/data and isolated registry tests, docs/STEP and disk-report changes. If permission is
+   unresolved, stop this stage and obtain the owner's scope decision; do not silently substitute a
+   different palette or declare requested Breeze Dark shipped.
+6. **Win95 networking (14):** managed config transaction, support/IRQ guard, off/on fixtures and
+   guest instructions. Recheck installed build support read-only at implementation time. No guest
+   startup implicit in setup.
+7. **Documentation consolidation (15, 16):** add remaining findings, review every README/checklist/
+   gotcha/STEP cross-reference against the final helpers, and correct stale KVM/black-desktop/F:
+   assumptions. Earlier stages already carry docs for behaviour they change; this is not deferred
+   documentation for those changes.
+8. **Inspector (1):** retain its investigation-first design and approval boundaries exactly as
+   above. It is independent of retro; follow its recorded decision gate. Keep its managed npm cache
+   separate from item 2's .NET workaround, add both new storage categories without double-counting,
+   and combine final all-four validation/acceptance. It can move earlier after its investigation;
+   no retro fix is evidence about npm cache coherence.
+
+Every commit carries the Codex co-author trailer; use `release/v100` only after this plan is
+approved. Every push needs all-four syntax, error-level ShellCheck and secret checks. Build tests
+exercise the generated helper extracted from the heredoc, including its own `bash -n`/ShellCheck;
+checking only the outer setup shell does not parse quoted heredoc code. Never run the targeted
+refresh script merely as a read-only test: it writes the installed helper. No implementation,
+version bump, release branch, merge or real script execution is part of this planning update.
+
+## Proposed owner acceptance route (commands for later approval, not executed)
+
+1. Review choices **2A/2B through 16A/16B** under each item, especially 8's extra enable step,
+   12's license gate, 13's corrected section and 14's IRQ/COM2 handling. Approve the plan/build separately. Start with
+   all real guests/Wine apps closed; preserve configs/disks before any fresh-install experiment.
+   Never delete an existing Windows disk just to test this version; arrange a separate owner-approved
+   workspace/backup for fresh media acceptance. Fixture tests cover destructive cases synthetically.
+2. Targeted bundle workflow (first init only creates a template on a new machine):
+
+   ```bash
+   ./dev-init-chromebook.sh install-retro install-dotnet install-pwsh install-bdd install-godot
+   ./dev-setup-chromebook.sh install-retro install-dotnet install-pwsh install-bdd install-godot
+   ./dev-init-chromebook.sh install-retro install-dotnet install-pwsh install-bdd install-godot
+   ./dev-test-chromebook.sh install-retro install-dotnet install-pwsh install-bdd install-godot
+   ./dev-demo-chromebook.sh install-retro install-dotnet install-pwsh install-bdd
+   ```
+
+   These are proposed flags, not permission to run. BDD pulls its browser dependencies; use the
+   targeted NuGet/demo subset first if their disk/network cost is undesirable. Inspect the saved
+   setup/test `.output` files under `assets/logs/` after each owner run; investigate FAILs and retain
+   producer diagnostics. Read the refreshed retro STEPS and run VB/C# Spectre/PowerShell demos;
+   prove an acquisition succeeds without a manual environment export, not only a cached run.
+3. Guest hand checks (one guest at a time, explicit owner-started commands):
+
+   | Environment | Owner action and expected result |
+   | --- | --- |
+   | DOS | `retro run --in dos FILE` with a local DOS sample; Ctrl+Shift+F/full-screen and focus/release shortcuts work; dos.conf renderer stays ttf. |
+   | win31 | `win31 setup` only in the agreed test workspace if installation is needed; queue/swap floppy images and Return to MS-DOS. `win31` reaches Program Manager; renderer remains owner-selected. After font repair, `win31 fonts` supplies C:\FONTS; install fonts in Windows, check focus and Delphi 1 run/debug using owner's media. |
+   | win95 | `win95 setup` first and resumed phases, then `win95`: desktop loads with no X: folder IDE drive. Check maximized surface redraw, app CD and put/get/run; never change Video menu during Setup. `win95 snapshot save pre-net` while off; `win95 net on`, install NE2000/TCP-IP in Windows, confirm resource values and DHCP via winipcfg; reach a known owner service by IPv4. Shut down, `win95 net off`, cold boot shows network disabled; app CD and normal boot still work. |
+   | win2000 | Fresh install test: `win2000 setup` then resumed setup without exchange attached; C: is system, all phases finish with TCG. Normal boot remains detached until desktop is confirmed, shutdown, `win2000 exchange enable`, then boot. Assign exchange D: if available without formatting; off-guest put/get round-trip. Verify unscaled tablet alignment, larger screen area, quiet boot, `win2000 keys ctrl-alt-del`, Delphi install from generated app ISO and sample compile/run. Existing installs only adopt config changes the owner chooses and explicitly enable exchange. |
+   | winnt40 | Same detach/resume/enable/C: acceptance with own NT media; keep auto acceleration, PS/2, sb16 and scaled display. Test login keys, pointer release, exchange round-trip and app CD. If KVM is slow, document an owner-selected TCG fallback; no claim of NT acceptance without the run. |
+   | Delphi Wine | `delphi1 setup`, `delphi 3 setup` with own files; verify final font summary/status and prefix-qualified repair if needed. Subject to item 12's gate: list/save/use default and breeze-dark in each existing idle prefix; restart IDE, verify No Theme, colors and per-prefix separation. Rerun setup: manual colors survive. Rerun Delphi 3 CD menu explicitly; qualify OCX observations, check IDE keys and compile/run. Other versions only if owner has media. |
+
+   `exchange recreate`, restoring snapshots, and `convert C:` are optional recovery/maintenance
+   actions requiring separate owner intent, not routine acceptance commands. To inspect repaired
+   existing exchange media, start with `exchange info`/`get`; never format it in Windows.
+4. Item 1 retains its isolated cold/online/offline/new-session/full-workflow checks and its own
+   individual command approvals. Do not clear the owner's npm cache to make the test cold.
+5. After focused checks, proposed full acceptance repeats **init → setup → init → test** with the
+   established six flags on each script:
+
+   ```text
+   install-all install-db-server install-lan-share install-models install-ollama-containers install-retro
+   ```
+
+   Obtain approval for each script run; do not start the six-flag route automatically. Disk-heavy
+   services/models follow existing one-at-a-time guards. Required result: FAIL 0, no unexplained
+   non-credential WARNs, all selected stages complete, prompt returns normally, and guest hand checks
+   recorded. Explicit owner preferences (old outputs/acceleration/theme) may yield documented WARNs;
+   the owner must choose the recommendation or explicitly accept those exceptions before release.
+   Until these runs exist, no claim of a confirmed Chromebook build; this PR remains a draft plan.
 
 ## Deferred to v101
 
