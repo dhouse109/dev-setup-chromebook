@@ -276,6 +276,9 @@ to see it in context; the comment above each fix usually tells the story.
 
 ## Retro
 
+- **Win95 IDE boot hang and redraw** (v100; Nov 5 2026). win95 boots image disks only; the separate IMGMAKE session still mounts X:. New win95 setup.conf/boot.conf use `output=surface` to fix maximized redraw. Keep guests off when editing output/scaler settings; do not change them from the Video menu during Setup. Existing explicit outputs are preserved, including opengl. All four DOSBox-X configs default to `[dosbox] hostkey=ctrlshift` (Ctrl+Shift+F for full screen); existing choices stay, and misplaced hostkey lines require manual review. Missing defaults are added only while the guest is stopped; win31 stays opengl and DOS stays ttf. Review owner-added folder mounts in win95 `[autoexec]` before booting; they are never removed automatically.
+
+
 - **Delphi 1's IDE crashes in a shared Wine prefix** (`install-retro`). It fails with a `winevdm.exe` page
   fault. **Fix:** give it its own 32-bit prefix inside a Wine virtual desktop, with integrated debugging
   turned off.

@@ -651,3 +651,11 @@ Symfony (`install-symfony`, v88) needs no account either: each app keeps its set
 The shared services (v89) cost memory only while they run: Redis and Memcached together about 25 MB idle, Solr or OpenSearch about 1 to 1.3 GB, Atlas Local about 2.5 GB. `devsvc up` refuses a start that would push past `DEVSVC_RAM_MB` (counting loaded Ollama models) and names what to stop; the heavy engines stop one another, and SQL Server or Oracle, as they start. OpenSearch and Elasticsearch need `vm.max_map_count` only with mmap on, which setup turns off. FastMCP's CLI (`fastmcp`, from the fastmcp-slim package) and the MCP Inspector (`mcp-inspector`) come with install-agentic; FastMCP itself is added per project (`uv add fastmcp`).
 
 RAM reminder for the 8 GB machines: Ollama holds about 3.5 GB while a model is loaded, so run `ollama stop gemma4:e2b-it-qat` before Android builds, large DuckDB loads, or the Temporal worker.
+
+v100 (Nov 5 findings): win95 boots image disks only; the separate IMGMAKE session still mounts X:.
+New win95 setup.conf/boot.conf use `output=surface` to fix maximized redraw. Keep guests off when
+editing output/scaler settings; do not change them from the Video menu during Setup. Existing explicit
+outputs are preserved, including opengl. All four DOSBox-X configs default to `[dosbox] hostkey=ctrlshift`
+(Ctrl+Shift+F for full screen); existing choices stay, and misplaced hostkey lines require manual review.
+Missing defaults are added only while the guest is stopped; win31 stays opengl and DOS stays ttf.
+Review owner-added folder mounts in win95 `[autoexec]` before booting; they are never removed automatically.

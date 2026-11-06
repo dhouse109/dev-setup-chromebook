@@ -4309,6 +4309,8 @@ BUILD_EOF
     # (gen_file keeps a file that exists; a retro/matrix folder made by v85-v91 has the old Delphi notes).
     cat > "$DIR/STEPS-delphi1.md" << 'EOF'
 # Delphi 1.0 on this Chromebook (dev-demo v93)
+
+DOSBox-X v100: [dosbox] hostkey=ctrlshift for new/absent settings; Ctrl+Shift+F toggles full screen. Existing choices remain. QEMU shortcuts differ; see STEPS-winnt.md.
 (Delphi 3, 4, 5, 6 and 7: STEPS-delphi.md.)
 
 Delphi 1 is a 16-bit Windows 3.1 application. Two routes, both set up by install-retro. Put the Delphi 1
@@ -4416,6 +4418,14 @@ Delphi 7, 6 or 5 in Windows 2000 (Delphi 3 or 4 in NT 4.0 the same way):
 4. Before trying risky options: `win2000 snapshot save delphi7` with the guest shut down; `snapshot restore`
    goes back.
 
+v100 (Nov 5 findings): win95 boots image disks only; the separate IMGMAKE session still mounts X:.
+New win95 setup.conf/boot.conf use `output=surface` to fix maximized redraw. Keep guests off when
+editing output/scaler settings; do not change them from the Video menu during Setup. Existing explicit
+outputs are preserved, including opengl. All four DOSBox-X configs default to `[dosbox] hostkey=ctrlshift`
+(Ctrl+Shift+F for full screen); existing choices stay, and misplaced hostkey lines require manual review.
+Missing defaults are added only while the guest is stopped; win31 stays opengl and DOS stays ttf.
+Review owner-added folder mounts in win95 `[autoexec]` before booting; they are never removed automatically.
+
 Delphi 3 or 4 in Windows 95 (DOSBox-X):
 
 1. 'win95 setup' (Windows 95 OSR2 CD in ~/win95/install), then 'win95'.
@@ -4444,6 +4454,8 @@ win95 disk); note what happened, and the next bundle version can build the fix i
 EOF
     cat > "$DIR/STEPS-winnt.md" << 'EOF'
 # Windows NT 4.0 and Windows 2000 in QEMU (dev-demo v93)
+
+QEMU uses Ctrl+Alt+G to release a captured mouse; DOSBox-X uses its mapper/host-key shortcuts, not this combination.
 
 Your media, in each guest's install folder: the install CD as an .iso (both CDs boot). For NT 4.0 a set of
 boot floppies (.img) works too when the CD does not boot. Program CDs (Delphi, Office, compilers) go in

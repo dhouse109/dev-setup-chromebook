@@ -10030,6 +10030,8 @@ if [[ "$FLAGS" =~ " install-retro " ]]; then
 autolock=true
 output=opengl
 [dosbox]
+# v100 (Nov 5 2026): Chromebook host key; explicit owner choices are preserved.
+hostkey=ctrlshift
 title=Windows 3.1x (dev-setup)
 machine=svga_s3
 memsize=16
@@ -10240,6 +10242,108 @@ start = struct.unpack('<I', mbr[454:458])[0] if mbr[510:512] == b'\x55\xaa' else
 print((start or 63) * 512)
 PY
 }
+
+# v100 (Nov 5 2026): write-once guest configs gain only absent defaults, never changed owner values.
+# The parser preserves existing bytes/line endings; duplicates and misplaced hostkey require manual review.
+ini_setting() {   # ensure|read FILE SECTION KEY [DEFAULT]
+    python3 - "$@" << 'RETRO_INI_PY'
+import os, re, stat, sys, tempfile
+from pathlib import Path
+op, filename, section, key, *values = sys.argv[1:]
+p = Path(filename)
+if not p.is_file():
+    sys.exit(0 if op == 'ensure' else 1)
+raw = p.read_bytes()
+lines = raw.decode('latin-1').splitlines(keepends=True)
+section, key = section.casefold(), key.casefold()
+sections, assignments, current = {}, [], ''
+for i, line in enumerate(lines):
+    m = re.match(r'^\s*\[([^]]+)\]\s*(?:[#;].*)?$', line.strip())
+    if m:
+        current = m[1].strip().casefold()
+        sections.setdefault(current, []).append(i)
+    elif not line.lstrip().startswith(('#', ';')) and '=' in line:
+        k, v = line.split('=', 1)
+        assignments.append((current, k.strip().casefold(), v.strip(), i))
+found = [x for x in assignments if x[0] == section and x[1] == key]
+misplaced = key == 'hostkey' and any(x[1] == key and x[0] != section for x in assignments)
+if len(sections.get(section, [])) > 1 or len(found) > 1 or misplaced:
+    print(f'NOTE: {p.name}: duplicate or misplaced {key}; review manually (left unchanged).', file=sys.stderr)
+    sys.exit(1 if op == 'read' else 0)
+if op == 'read':
+    if not found: sys.exit(1)
+    print(found[0][2]); sys.exit(0)
+if found: sys.exit(0)
+if p.is_symlink():
+    print(f'NOTE: {p.name}: symlink config left unchanged; add {key} manually.', file=sys.stderr)
+    sys.exit(0)
+nl = '\r\n' if b'\r\n' in raw else '\n'
+addition = f'{key}={values[0]}{nl}'
+if section in sections:
+    at = sections[section][0] + 1
+    if at and not lines[at - 1].endswith(("\r", "\n")): lines[at - 1] += nl
+    lines.insert(at, addition)
+else:
+    if lines and not lines[-1].endswith(('\r', '\n')): lines[-1] += nl
+    lines.extend([f'[{section}]{nl}', addition])
+fd, temp = tempfile.mkstemp(prefix='.' + p.name + '.', dir=p.parent)
+try:
+    with os.fdopen(fd, 'wb') as f: f.write(''.join(lines).encode('latin-1'))
+    os.chmod(temp, stat.S_IMODE(p.stat().st_mode))
+    os.replace(temp, p)
+finally:
+    if os.path.exists(temp): os.unlink(temp)
+RETRO_INI_PY
+}
+dosbox_defaults() {   # migrate only existing files; setup and lazy helper paths use the same rule
+    local g=$1 f
+    case "$g" in
+        win31|win95)
+            if running "$g"; then echo "NOTE: $g config defaults deferred until it is stopped." >&2; return 0; fi ;;
+        dos)
+            if pgrep -u "$(id -u)" -f '[d]osbox-x.*dos.conf' > /dev/null; then
+                echo "NOTE: DOS config defaults deferred until DOSBox-X is stopped." >&2; return 0
+            fi ;;
+    esac
+    case "$g" in
+        win31) f="$HOME/win31/dosbox-x.conf"; ini_setting ensure "$f" dosbox hostkey ctrlshift ;;
+        win95)
+            for f in "$HOME/win95/setup.conf" "$HOME/win95/boot.conf"; do
+                ini_setting ensure "$f" sdl output surface || return
+                ini_setting ensure "$f" dosbox hostkey ctrlshift || return
+            done ;;
+        dos) ini_setting ensure "$HOME/.config/dev-retro/dos.conf" dosbox hostkey ctrlshift ;;
+    esac
+}
+config_defaults() {
+    local g
+    for g in win31 win95 dos; do dosbox_defaults "$g" || return; done
+}
+# v100 (Nov 5 2026): observations only; never migrate an owner's configs during dev-test.
+dosbox_config_status() {
+    local g f actual rc=0
+    for g in win31 win95 dos; do
+        case "$g" in
+            win31) set -- "$HOME/win31/dosbox-x.conf" ;;
+            win95) set -- "$HOME/win95/setup.conf" "$HOME/win95/boot.conf" ;;
+            dos) set -- "$HOME/.config/dev-retro/dos.conf" ;;
+        esac
+        for f in "$@"; do
+            [ -f "$f" ] || { echo "$g: $(basename "$f") not created yet"; continue; }
+            actual=$(ini_setting read "$f" dosbox hostkey) || actual=missing
+            if [ "$actual" != ctrlshift ]; then echo "$g: hostkey=$actual; recommend [dosbox] hostkey=ctrlshift (owner value kept)"; rc=1; fi
+            if [ "$g" = win95 ]; then
+                actual=$(ini_setting read "$f" sdl output) || actual=missing
+                if [ "$actual" != surface ]; then echo "win95: output=$actual; recommend [sdl] output=surface with the guest off"; rc=1; fi
+                if awk 'BEGIN { a=0; found=0 } /^[[:space:]]*\[/ { a=(tolower($0) ~ /^[[:space:]]*\[autoexec\]/) } a && tolower($0) ~ /^[[:space:]]*mount[[:space:]]+[a-z][[:space:]]/ { found=1 } END { exit !found }' "$f"; then
+                    echo "win95: folder mount in autoexec; review before boot c: (left unchanged)"; rc=1
+                fi
+            fi
+        done
+    done
+    return "$rc"
+}
+
 
 # --- the exchange disk (win95, winnt40, win2000) ------------------------------------------------
 # One FAT16 partition (type 06) at sector 63, geometry 16 heads x 63 sectors: every guest here reads it
@@ -10477,6 +10581,7 @@ win31_cmd() {
     local mode=${1:-boot} conf="$WS/dosbox-x.conf" args f imgs kind app
     [ -f "$conf" ] || die "no $conf: rerun dev-setup with install-retro."
     need_stopped win31
+    dosbox_defaults win31
     args=(-conf "$conf" -c "mount c \"$WS/drive_c\"")
     [ -d "$WS/install/apps" ] && args+=(-c "mount d \"$WS/install/apps\"")
     # v93: an app CD (.iso in install/apps) as F:, through DOSBox-X's CD-ROM support (MSCDEX).
@@ -10527,11 +10632,13 @@ win31_cmd() {
 # =================================================================================================
 # v93: hdd.img's size is RETRO_WIN95_DISK_MB (default 2048; v92 made 1024 MB), read when it is created.
 win95_confs() {   # write setup.conf and boot.conf once (edit them freely; setup leaves them alone)
+    # v100 (Nov 5 2026): surface fixes maximized redraw; never rewrite an explicit owner value.
     local base
     base='[sdl]
 autolock=true
-output=opengl
+output=surface
 [dosbox]
+hostkey=ctrlshift
 machine=svga_s3trio64
 memsize=64
 [video]
@@ -10565,6 +10672,7 @@ cd-rom insertion delay=4000'
         "# Running: the faster dynamic core ('win95 --core normal' for a DOS prompt window inside Windows 95)." \
         "# Networking (NE2000 through slirp) is off; to turn it on, add:  [ne2000] ne2000=true backend=slirp" "$base" \
         | sed 's/^cputype=pentium_mmx$/cputype=pentium_mmx\ncore=dynamic_x86/; s/^\[dosbox\]$/[dosbox]\ntitle=Windows 95 (dev-retro)/' > "$WS/boot.conf"
+    dosbox_defaults win95
 }
 win95_cmd() {
     local mode=boot core="" iso args conf f app dmb
@@ -10597,7 +10705,8 @@ win95_cmd() {
         *) die "usage: win95 [--core normal] [boot|setup|run FILE|put FILE|get [NAME]|cd FILE.iso|eject|list|exchange info|recreate|snapshot save|restore|list|delete NAME|fonts|where|status|launcher|help]" ;;
     esac
     exch_create "$WS" > /dev/null
-    args=(-conf "$conf" -c "mount x \"$WS\"")
+    # v100 (Nov 5 2026): folder mounts become IDE disks on boot c: and hang Win95. IMGMAKE below still needs X:.
+    args=(-conf "$conf")
     if [ "$mode" = setup ] && [ ! -f "$WS/hdd.img" ]; then
         win95_setting; dmb=$SET_VAL
         disk_guard win95 $(( (dmb + 1023) / 1024 ))
@@ -11682,6 +11791,9 @@ dos_conf() {   # ~/.config/dev-retro/dos.conf for DOS programs, written once (ed
 # renderer by itself, and back. For the original pixel look: output=opengl.
 [sdl]
 output=ttf
+[dosbox]
+# v100 (Nov 5 2026): host key belongs in dosbox, not sdl.
+hostkey=ctrlshift
 [ttf]
 font=
 lins=25
@@ -11689,6 +11801,7 @@ cols=80
 outputswitch=auto
 EOF
     fi
+    dosbox_defaults dos
     printf '%s' "$c"
 }
 retro_cmd() {
@@ -11723,6 +11836,8 @@ retro_cmd() {
                 *) die "--in takes win31, win95, winnt40, win2000, wine or dos" ;;
             esac ;;
         sizes) sizes_cmd ;;
+        config-defaults) config_defaults ;;
+        config-status) dosbox_config_status ;;
         help|-h|--help) help_cmd ;;
         *) die "usage: retro [list] | retro run [--in GUEST] FILE | retro which FILE | retro sizes | retro help" ;;
     esac
@@ -11772,6 +11887,8 @@ DEVRETRO_EOF
         chmod +x ~/.local/bin/"$RETRO_CMD.new"
         mv -f ~/.local/bin/"$RETRO_CMD.new" ~/.local/bin/"$RETRO_CMD"
     done
+    # v100 (Nov 5 2026): add absent defaults to existing configs too; running guests are deferred.
+    ~/.local/lib/dev-retro/dev-retro retro config-defaults
     # Workspaces (no disk images: '<cmd> setup' makes those) and the QEMU guests' settings, written once.
     # v93: install/apps in each guest for program CDs, and ~/delphi/install/N for Delphi 3, 4, 5, 6 and 7.
     mkdir -p ~/win95/install/apps ~/winnt40/install/apps ~/win2000/install/apps ~/delphi/install/3 ~/delphi/install/4 ~/delphi/install/5 ~/delphi/install/6 ~/delphi/install/7

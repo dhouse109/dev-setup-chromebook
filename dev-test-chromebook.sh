@@ -5583,6 +5583,94 @@ if has install-retro; then
     hint  "rerun dev-setup with install-retro (v93 creates them)"
     warn  "bsdtar (libarchive-tools): 'delphi N setup' unpacks a CD's .iso" 'command -v bsdtar && bsdtar --version | head -n 1'
     hint  "rerun dev-setup with install-retro; without it, copy the Delphi CD's files (not the .iso) into ~/delphi/install/N"
+    # v100 (Nov 5 2026): config preferences warn; fixture failures are bundle regressions.
+    warn "DOSBox-X host key, win95 renderer and custom boot mounts" '~/.local/lib/dev-retro/dev-retro retro config-status'
+    hint "With guests stopped, choose [dosbox] hostkey=ctrlshift and win95 [sdl] output=surface; explicit choices are preserved. Review folder mounts in win95 autoexec."
+    cat > "$WORK/retro-config-check.py" << 'RETRO_CONFIG_CHECK_PY'
+import os, subprocess, tempfile
+from pathlib import Path
+h = Path(os.environ['RETRO_HELPER']).resolve()
+base = Path(os.environ['WORK'])
+with tempfile.TemporaryDirectory(prefix='retro-config-', dir=base) as tmp:
+    root = Path(tmp); home = root / 'home'; home.mkdir()
+    bindir = root / 'bin'; bindir.mkdir()
+    pgrep = bindir / 'pgrep'; pgrep.write_text('#!/bin/sh\nexit 1\n'); pgrep.chmod(0o755)
+    env = dict(HOME=str(home), PATH=str(bindir) + ':/usr/bin:/bin', LC_ALL='C.UTF-8')
+    def call(*args):
+        r = subprocess.run(['bash', str(h), *args], env=env, text=True, capture_output=True)
+        assert r.returncode == 0, r.stdout + r.stderr
+        return r
+    for rel in ('win31/dosbox-x.conf', 'win95/setup.conf', 'win95/boot.conf', '.config/dev-retro/dos.conf'):
+        p = home / rel; p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_bytes(b'; owner comment\r\n[sdl]\r\n[dosbox]\r\n')
+        p.chmod(0o640)
+    call('retro', 'config-defaults')
+    files = list(home.rglob('*.conf'))
+    snapshots = {p: p.read_bytes() for p in files}
+    for p in files:
+        assert b'[dosbox]\r\nhostkey=ctrlshift\r\n' in p.read_bytes()
+        assert p.stat().st_mode & 0o777 == 0o640
+        if p.parent.name == 'win95': assert b'output=surface\r\n' in p.read_bytes()
+    call('retro', 'config-defaults')
+    assert snapshots == {p: p.read_bytes() for p in files}
+    custom = home / 'win95/boot.conf'
+    original = b'[sdl]\r\n output = opengl\r\n[dosbox]\r\n HostKey = mapper\r\n'
+    custom.write_bytes(original); call('retro', 'config-defaults'); assert custom.read_bytes() == original
+    for data in (b'[sdl]\nhostkey=ctrlalt\noutput=surface\n', b'[dosbox]\nhostkey=mapper\nhostkey=ctrlalt\n[sdl]\noutput=surface\n'):
+        custom.write_bytes(data); r = call('retro', 'config-defaults')
+        assert custom.read_bytes() == data and 'review manually' in r.stderr
+    custom.write_text('[sdl]\n[dosbox]')
+    call('retro', 'config-defaults'); assert '[dosbox]\nhostkey=ctrlshift' in custom.read_text()
+    custom.write_text('[sdl]\n[dosbox]\n')
+    (home / 'win95/.pid').write_text(str(os.getpid()))
+    call('retro', 'config-defaults'); assert custom.read_text() == '[sdl]\n[dosbox]\n'
+print('config fixtures: absent defaults, CRLF/mode, custom/misplaced/duplicate keys, repeat and running guards PASS')
+RETRO_CONFIG_CHECK_PY
+    check "retro missing-default migration preserves owner configs (isolated)" 'RETRO_HELPER="$HOME/.local/lib/dev-retro/dev-retro" python3 "$WORK/retro-config-check.py"'
+    # v100 (Nov 5 2026): fake engine captures each invocation, without Windows media or a guest start.
+    cat > "$WORK/retro-args-check.py" << 'RETRO_ARGS_CHECK_PY'
+import os, subprocess, tempfile
+from pathlib import Path
+h = Path(os.environ['RETRO_HELPER']).read_text().rsplit('main "$@"; exit $?', 1)[0]
+with tempfile.TemporaryDirectory(prefix='retro-args-', dir=os.environ['WORK']) as tmp:
+    root = Path(tmp); home = root / 'home'; home.mkdir(); bindir = root / 'bin'; bindir.mkdir()
+    p = bindir / 'pgrep'; p.write_text('#!/bin/sh\nexit 1\n'); p.chmod(0o755)
+    env = dict(HOME=str(home), WORK=str(root), PATH=str(bindir) + ':/usr/bin:/bin', LC_ALL='C.UTF-8')
+    ws = home / 'win95'; ws.mkdir()
+    engine = bindir / 'dosbox-x'
+    engine.write_text("#!/bin/sh\nprintf '%s\\0' \"$@\" >> \"$WORK/args\"; printf '\\0' >> \"$WORK/args\"\ncase \"$*\" in *imgmake*) touch \"$HOME/win95/hdd.img\" ;; esac\n")
+    engine.chmod(0o755)
+    stub = """
+GUEST=win95; guest_info win95; mkdir -p "$WS/install/apps"
+installed() { [ "$SIM_INSTALLED" = 1 ]; }
+exch_create() { :; }; exch_mount_size() { echo 512,63,16,100; }; exch_put() { :; }
+disk_guard() { :; }; win95_setting() { SET_VAL=512; SET_SRC=fixture; }
+install_iso() { echo "$WORK/windows.iso"; }; app_cd() { echo "$WORK/app.iso"; }
+
+"""
+    for mode, installed, disk in [('boot', 1, True), ('run', 1, True), ('setup', 1, True), ('setup', 0, False)]:
+        image = ws / 'hdd.img'
+        if disk: image.touch()
+        elif image.exists(): image.unlink()
+        capture = root / 'args'; capture.write_bytes(b'')
+        code = h + stub + f'\nSIM_INSTALLED={installed}\nwin95_cmd {mode} "$WORK/file.exe"\n'
+        r = subprocess.run(['bash', '-c', code], env=env, capture_output=True, text=True)
+        assert r.returncode == 0, r.stdout + r.stderr
+        calls = [[x.decode() for x in call.split(b'\0')] for call in capture.read_bytes().split(b'\0\0') if call]
+        assert len(calls) == (1 if disk else 2), calls
+        boot = calls[-1]
+        assert not any(x.lower().startswith('mount ') for x in boot), boot
+        assert ('boot c:' in boot) == bool(installed)
+        assert any('imgmount d ' in x for x in boot) and any('imgmount f ' in x for x in boot)
+        if not disk:
+            assert any(x.startswith('mount x ') for x in calls[0]) and 'boot c:' not in calls[0]
+        for conf in ('setup.conf', 'boot.conf'):
+            import configparser
+            ini = configparser.ConfigParser(); ini.read(ws / conf)
+            assert ini['sdl']['output'] == 'surface' and ini['dosbox']['hostkey'] == 'ctrlshift'
+print('win95 arguments: boot, run, fresh/resumed setup; separate IMGMAKE and preserved image/CD mounts PASS')
+RETRO_ARGS_CHECK_PY
+    check "win95 boot argument regression (isolated fake engine)" 'RETRO_HELPER="$HOME/.local/lib/dev-retro/dev-retro" python3 "$WORK/retro-args-check.py"'
     check "retro sizes: RETRO_EXCHANGE_MB and RETRO_WIN95_DISK_MB are valid" '~/.local/lib/dev-retro/dev-retro retro sizes'
     hint  "a size in ~/.config/dev-init/secrets.env is out of range: RETRO_EXCHANGE_MB 64-2047, RETRO_WIN95_DISK_MB 512-8192"
     info  "retro disk sizes" "$(~/.local/lib/dev-retro/dev-retro retro sizes 2> /dev/null | grep -E '^(Exchange|Windows 95)' | sed 's/ (D: in win95, winnt40, win2000)//; s/, for a disk created from now on//' | paste -sd ';' | sed 's/;/; /')"
@@ -6059,6 +6147,7 @@ if ! has nodisk; then
         dapt   com "Wine (64 + 32-bit), mingw-w64, libwine-dev" 'wine*' 'libwine*' 'gcc-mingw-w64*' 'g++-mingw-w64*' mingw-w64-common mingw-w64-tools 'libz-mingw-w64*' cabextract
         dpaths com "COM Wine prefix + winetricks" "$HOME/.local/share/wine/com" "$HOME/.local/bin/winetricks"
     fi
+    has install-retro    && dpaths retro "Retro helper and config" "$HOME/.local/lib/dev-retro" "$HOME/.config/dev-retro"
     has install-retro    && dpaths retro "Open Watcom v2 + ~/win31" /opt/watcom "$HOME/win31"
     has install-retro    && dapt   retro "DOSBox-X (apt)" dosbox-x
     # v92: QEMU and the new guests' workspaces (their disk images grow as Windows is installed)

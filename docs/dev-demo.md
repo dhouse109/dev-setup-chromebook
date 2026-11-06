@@ -160,3 +160,11 @@ The Linux container's disk size is a ChromeOS setting, so check it before a full
 Stop running pieces before cleaning: `run-drupal-cms.sh down`, `run-drupal-rag.sh down`, `run-podinfo.sh down`, `run-terraform-nginx.sh down` and `run-docker-web.sh down` (the Ansible demo's containers).
 
 The LDAP demo stops with `run-drupal-ldap.sh down`; the directories themselves keep running until `ldap down` (slapd, a system service, until `sudo systemctl stop slapd`).
+
+v100 (Nov 5 findings): win95 boots image disks only; the separate IMGMAKE session still mounts X:.
+New win95 setup.conf/boot.conf use `output=surface` to fix maximized redraw. Keep guests off when
+editing output/scaler settings; do not change them from the Video menu during Setup. Existing explicit
+outputs are preserved, including opengl. All four DOSBox-X configs default to `[dosbox] hostkey=ctrlshift`
+(Ctrl+Shift+F for full screen); existing choices stay, and misplaced hostkey lines require manual review.
+Missing defaults are added only while the guest is stopped; win31 stays opengl and DOS stays ttf.
+Review owner-added folder mounts in win95 `[autoexec]` before booting; they are never removed automatically.

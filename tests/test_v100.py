@@ -26,6 +26,9 @@ class Fixture(unittest.TestCase):
         self.work = Path(self.tmp.name)
         (self.work / "home").mkdir()
         (self.work / "bin").mkdir()
+        # Executable guards cover timeout/env/exec too; shell-function stubs do not.
+        for engine in ('dosbox-x', 'qemu-system-i386', 'wine', 'wineboot', 'wineserver', 'godot-mono', 'dotnet', 'pwsh'):
+            self.fake(engine, 'echo "Unexpected real-engine path" >&2; exit 97')
         self.env = {
             "PATH": f"{self.work}/bin:/usr/bin:/bin", "HOME": str(self.work / "home"),
             "LC_ALL": "C.UTF-8", "WORK": str(self.work), "ASSETS": str(self.work),
@@ -120,6 +123,22 @@ run_reqnroll || exit 1
         self.assertTrue(all(x.startswith("1 ") for x in (self.work / "dotnet.log").read_text().splitlines()))
         self.env["DOTNET_STATUS"] = "42"
         self.assertNotEqual(self.bash('demo_need() { :; }; ' + function + '\nrun_reqnroll', good=False).returncode, 0)
+
+
+class Dosbox(Fixture):
+    def test_shared_devtest_migration_fixture(self):
+        h = self.work / 'helper'; h.write_text(helper())
+        script = source('test').split("<< 'RETRO_CONFIG_CHECK_PY'\n", 1)[1].split('\nRETRO_CONFIG_CHECK_PY', 1)[0]
+        self.env['RETRO_HELPER'] = str(h)
+        result = subprocess.run(['/usr/bin/python3', '-c', script], env=self.env, text=True, capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_guest_argument_arrays_keep_imgmake_separate(self):
+        h = self.work / 'helper'; h.write_text(helper())
+        script = source('test').split("<< 'RETRO_ARGS_CHECK_PY'\n", 1)[1].split('\nRETRO_ARGS_CHECK_PY', 1)[0]
+        self.env['RETRO_HELPER'] = str(h)
+        result = subprocess.run(['/usr/bin/python3', '-c', script], env=self.env, text=True, capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
 
 if __name__ == "__main__":
