@@ -141,5 +141,19 @@ class Dosbox(Fixture):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
 
+class Qemu(Fixture):
+    def test_setup_template_matches_guest_specific_defaults(self):
+        loop = "    for RETRO_G in winnt40 win2000; do" + source('setup').split("    for RETRO_G in winnt40 win2000; do", 1)[1].split("    # v100 (Nov 5 2026): migrate existing configs", 1)[0]
+        self.bash('mkdir -p "$HOME/winnt40" "$HOME/win2000"\n' + loop + '\nfor g in winnt40 win2000; do . "$HOME/$g/config"; printf "%s %s %s %s\\n" "$g" "$ACCEL" "$SOUND" "$DISPLAY_OPTS"; done > "$WORK/defaults"')
+        self.assertEqual((self.work / 'defaults').read_text().splitlines(), ['winnt40 auto sb16 gtk,zoom-to-fit=on', 'win2000 tcg none gtk,zoom-to-fit=off'])
+
+    def test_shared_devtest_qemu_fixture(self):
+        h = self.work / 'helper'; h.write_text(helper())
+        script = source('test').split("<< 'RETRO_QEMU_CHECK_PY'\n", 1)[1].split('\nRETRO_QEMU_CHECK_PY', 1)[0]
+        self.env['RETRO_HELPER'] = str(h)
+        result = subprocess.run(['/usr/bin/python3', '-c', script], env=self.env, text=True, capture_output=True, timeout=90)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()

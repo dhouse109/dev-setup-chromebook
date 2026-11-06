@@ -9964,7 +9964,7 @@ if [[ "$FLAGS" =~ " install-retro " ]]; then
         # The group that owns /dev/kvm (kvm on Debian); nothing to add when it is root or open to everyone.
         KVM_GROUP=$(stat -c %G /dev/kvm 2> /dev/null || echo kvm)
         if [ -r /dev/kvm ] && [ -w /dev/kvm ]; then
-            echo "KVM: /dev/kvm is usable already: winnt40 and win2000 run at close to native speed."
+            echo "KVM is available; selection is per guest. New defaults: winnt40 auto, win2000 tcg."
         elif [ "$KVM_GROUP" != root ] && getent group "$KVM_GROUP" > /dev/null; then
             sudo usermod -aG "$KVM_GROUP" "$USER"
             echo "KVM: added you to the $KVM_GROUP group, which owns /dev/kvm (it applies after Linux is shut down and reopened)."
@@ -9972,7 +9972,7 @@ if [[ "$FLAGS" =~ " install-retro " ]]; then
             echo "NOTICE: /dev/kvm is here but owned by group '$KVM_GROUP' and not usable by you; QEMU will use software emulation."
         fi
     else
-        echo "KVM: no /dev/kvm on this Chromebook: NT 4.0 and 2000 will run in QEMU's software emulation (slower)."
+        echo "KVM unavailable: auto/kvm falls back to TCG; win2000 defaults to intentional TCG."
     fi
     mkdir -p ~/.local/bin
 
@@ -10095,6 +10095,8 @@ EOF_DBX
 #                                             win2000 swap it while running too
 # win95, winnt40, win2000:
 #   <cmd> put FILE... / get [NAME]   copy into / out of the exchange disk (D: in the guest) while it is off
+#   <cmd> exchange enable|disable    NT/2000: after installed desktop + shutdown, enable attachment; setup clears it
+#   <cmd> accel | preferences         NT/2000: selected acceleration and read-only preference diagnostics
 #   <cmd> exchange info              its size, layout and free space
 #   <cmd> exchange recreate [--yes]  rebuild it empty at RETRO_EXCHANGE_MB ('get' saves its files first)
 # winnt40, win2000 (QEMU):
@@ -10318,6 +10320,7 @@ dosbox_defaults() {   # migrate only existing files; setup and lazy helper paths
 config_defaults() {
     local g
     for g in win31 win95 dos; do dosbox_defaults "$g" || return; done
+    qemu_defaults win2000
 }
 # v100 (Nov 5 2026): observations only; never migrate an owner's configs during dev-test.
 dosbox_config_status() {
@@ -10421,7 +10424,12 @@ exch_cmd() {   # exch_cmd GUEST info|recreate [--yes]
     local img="$WS/exchange.img" mb h s c free yes=0 a
     for a in "${@:3}"; do [ "$a" = --yes ] && yes=1; done
     case "${2:-info}" in
+        enable|disable)
+            case "$1" in winnt40|win2000) ;; *) die "exchange enable/disable is for NT/2000 installation completion." ;; esac
+            need_stopped "$1"; qemu_config "$1"
+            exchange_gate "$2"; return ;;
         info)
+            case "$1" in winnt40|win2000) qemu_config "$1"; echo "Exchange attachment: $(exchange_gate state) (setup always withholds it)." ;; esac
             exch_setting
             if [ ! -f "$img" ]; then
                 echo "No exchange disk yet: the first '$1 put', '$1 fonts' or '$1 setup' makes one of $SET_VAL MB (RETRO_EXCHANGE_MB, $SET_SRC)."
@@ -10453,13 +10461,14 @@ exch_cmd() {   # exch_cmd GUEST info|recreate [--yes]
                 rm -f "$img"
             fi
             exch_create "$WS" ;;
-        *) die "usage: $1 exchange info | recreate [--yes]" ;;
+        *) die "usage: $1 exchange info | enable | disable | recreate [--yes]" ;;
     esac
 }
 exch_put() {   # exch_put GUEST PATH...: copy files or folders into the exchange disk's root
     local p
     guest_info "$1"; shift
     need_stopped "$GUEST"
+    exchange_pending
     exch_create "$WS"
     [ $# -gt 0 ] || die "usage: $GUEST put FILE|FOLDER..."
     for p in "$@"; do
@@ -10798,11 +10807,12 @@ win95_snapshot() {   # win95_snapshot save|restore|list|delete [NAME] [--yes]
 # winnt40, win2000 (QEMU)
 # =================================================================================================
 qemu_config() {   # qemu_config [GUEST]: defaults, then the guest's config file (written once by dev-setup; edit freely)
+    # v100 (Nov 5 2026): nested-KVM boot stalls, tablet scaling and noisy AC97 affect win2000 only.
     case "${1:-$GUEST}" in
-        winnt40) MEM=128; HPET=off; DISK_GB=4; SOUND=sb16; MOUSE=ps2 ;;
-        win2000) MEM=256; HPET=on;  DISK_GB=8; SOUND=AC97; MOUSE=tablet ;;
+        winnt40) MEM=128; HPET=off; DISK_GB=4; SOUND=sb16; MOUSE=ps2; ACCEL=auto; DISPLAY_OPTS="gtk,zoom-to-fit=on" ;;
+        win2000) MEM=256; HPET=on; DISK_GB=8; SOUND=none; MOUSE=tablet; ACCEL=tcg; DISPLAY_OPTS="gtk,zoom-to-fit=off" ;;
     esac
-    CPU=pentium3; MACHINE=pc; DISK_FORMAT=qcow2; VIDEO=cirrus; NIC=pcnet; ACCEL=auto; DISPLAY_OPTS="gtk,zoom-to-fit=on"; EXTRA_ARGS=""
+    CPU=pentium3; MACHINE=pc; DISK_FORMAT=qcow2; VIDEO=cirrus; NIC=pcnet; EXTRA_ARGS=""
     # shellcheck disable=SC1091
     [ -f "$WS/config" ] && . "$WS/config"
     DISK="$WS/disk.qcow2"; [ "$DISK_FORMAT" = raw ] && DISK="$WS/disk.img"
@@ -10810,21 +10820,125 @@ qemu_config() {   # qemu_config [GUEST]: defaults, then the guest's config file 
     [ -f "$WS/disk.img" ] && [ ! -f "$WS/disk.qcow2" ] && { DISK="$WS/disk.img"; DISK_FORMAT=raw; }
     return 0
 }
-pick_accel() {   # sets ACCEL_ARGS and ACCEL_NOTE
+# v100 (Nov 5 2026): availability and configured selection are separate; tests can stub this predicate.
+kvm_state() {
+    KVM_STATE=missing
+    if [ -c /dev/kvm ]; then
+        KVM_STATE=present
+        [ -r /dev/kvm ] && [ -w /dev/kvm ] && KVM_STATE=usable
+    fi
+    return 0
+}
+pick_accel() {
     local want=${ACCEL:-auto}
-    if [ "$want" != tcg ] && [ -c /dev/kvm ] && [ -r /dev/kvm ] && [ -w /dev/kvm ]; then
-        ACCEL_ARGS=(-accel kvm); ACCEL_NOTE="KVM (close to native speed)"
-    else
-        if [ "$want" = kvm ]; then echo "NOTE: ACCEL=kvm, but /dev/kvm is missing or not usable (the kvm group needs a new login): using software emulation." >&2; fi
-        if [ -c /dev/kvm ] && [ "$want" != tcg ]; then
-            ACCEL_NOTE="software emulation (TCG): /dev/kvm is here but not usable by you yet (group $(stat -c %G /dev/kvm 2> /dev/null): shut Linux down and reopen it, or rerun dev-setup with install-retro)"
-        else
-            ACCEL_NOTE="software emulation (TCG; no /dev/kvm on this Chromebook: slower)"
-        fi
-        # shellcheck disable=SC2054   # one -accel value, commas included
+    kvm_state
+    if [ "$want" = tcg ]; then
         ACCEL_ARGS=(-accel tcg,thread=multi)
+        ACCEL_NOTE="software emulation (TCG; selected by ACCEL=tcg)"
+    elif [ "$KVM_STATE" = usable ]; then
+        ACCEL_ARGS=(-accel kvm); ACCEL_NOTE="KVM (selected by ACCEL=$want)"
+    else
+        [ "$want" != kvm ] || echo "NOTE: ACCEL=kvm, but /dev/kvm is missing or not usable; using software emulation." >&2
+        ACCEL_ARGS=(-accel tcg,thread=multi)
+        if [ "$KVM_STATE" = present ]; then
+            ACCEL_NOTE="software emulation (TCG; /dev/kvm present but not usable; group $(stat -c %G /dev/kvm 2> /dev/null): shut Linux down and reopen it, or rerun dev-setup with install-retro)"
+        else
+            ACCEL_NOTE="software emulation (TCG; /dev/kvm unavailable)"
+        fi
     fi
 }
+accel_status() {
+    qemu_config "$GUEST"
+    pick_accel
+    echo "$GUEST: $ACCEL_NOTE; display=$DISPLAY_OPTS; sound=$SOUND"
+}
+# v100 (Nov 5 2026): never source configs merely to add absent defaults. Ambiguous shell is left for review.
+qemu_defaults() {
+    [ "$1" = win2000 ] || return 0
+    if running "$1"; then echo "NOTE: win2000 config defaults deferred until stopped." >&2; return 0; fi
+    python3 - "$HOME/win2000/config" << 'QEMU_DEFAULTS_PY'
+import os, re, stat, sys, tempfile
+from pathlib import Path
+p = Path(sys.argv[1])
+if not p.is_file(): sys.exit(0)
+text = p.read_bytes().decode('latin-1')
+lines = text.splitlines(keepends=True)
+active = [line for line in lines if line.strip() and not line.lstrip().startswith('#')]
+# Config files are normally assignments. Commands, continuations, substitutions or conditionals
+# could supply an unseen value: don't append an overriding assignment in that case.
+assignment = re.compile(r'^\s*(?:export\s+)?[A-Za-z_][A-Za-z_0-9]*=')
+if p.is_symlink() or any(not assignment.match(line) or any(c in line for c in ('`', '$(', '\\\n')) for line in active):
+    print('NOTE: win2000/config: complex or symlink config left unchanged; review absent defaults.', file=sys.stderr)
+    sys.exit(0)
+want = {'ACCEL': 'tcg', 'DISPLAY_OPTS': '"gtk,zoom-to-fit=off"', 'SOUND': 'none'}
+missing = {key: val for key, val in want.items() if not any(re.search(r'\b' + key + r'\s*=', line) for line in active)}
+if not missing: sys.exit(0)
+nl = '\r\n' if '\r\n' in text else '\n'
+if text and not text.endswith(('\r', '\n')): text += nl
+text += '# v100 (Nov 5 2026): absent win2000 defaults; explicit owner choices are preserved.' + nl
+text += ''.join(key + '=' + value + nl for key, value in missing.items())
+fd, temp = tempfile.mkstemp(prefix='.config.', dir=p.parent)
+try:
+    with os.fdopen(fd, 'wb') as f: f.write(text.encode('latin-1'))
+    os.chmod(temp, stat.S_IMODE(p.stat().st_mode)); os.replace(temp, p)
+finally:
+    if os.path.exists(temp): os.unlink(temp)
+QEMU_DEFAULTS_PY
+}
+# v100 (Nov 5–6 2026): disk existence is not installation completion, especially on qcow2/NTFS.
+exchange_gate() {   # check|state|enable|disable; qemu_config must have selected DISK first
+    python3 - "${1:-state}" "$WS/exchange-enabled" "$DISK" << 'EXCHANGE_GATE_PY'
+import json, os, sys, tempfile
+from pathlib import Path
+op, record, disk = sys.argv[1:]
+r, d = Path(record), Path(disk)
+def identity():
+    st = d.stat()
+    return {'path': str(d.resolve()), 'dev': st.st_dev, 'ino': st.st_ino}
+try:
+    state = 'enabled' if json.loads(r.read_text()) == identity() else 'stale'
+except (OSError, ValueError):
+    state = 'stale' if r.exists() else 'deferred'
+if op == 'check': sys.exit(0 if state == 'enabled' else 1)
+if op == 'state': print(state); sys.exit(0)
+if op == 'disable':
+    r.unlink(missing_ok=True); print('Exchange attachment disabled; image contents retained.'); sys.exit(0)
+if op != 'enable': sys.exit(2)
+if not d.is_file():
+    print('No system disk: install Windows first, then enable exchange with the guest stopped.', file=sys.stderr)
+    sys.exit(1)
+fd, temp = tempfile.mkstemp(prefix='.exchange-enabled.', dir=r.parent)
+try:
+    with os.fdopen(fd, 'w') as f: json.dump(identity(), f); f.write('\n')
+    os.replace(temp, r)
+finally:
+    if os.path.exists(temp): os.unlink(temp)
+print('Exchange enabled for this system disk. Setup always withholds it and clears this acknowledgement.')
+EXCHANGE_GATE_PY
+}
+exchange_pending() {
+    case "$GUEST" in
+        winnt40|win2000)
+            qemu_config "$GUEST"
+            exchange_gate check || echo "Exchange disk withheld until Windows installation is complete; after shutdown run '$GUEST exchange enable'." >&2 ;;
+    esac
+    return 0
+}
+qemu_preferences() {   # observational only; never applies defaults
+    qemu_config "$GUEST"
+    local rc=0
+    if [ "$GUEST" = win2000 ]; then
+        [ "$ACCEL" = tcg ] || { echo 'win2000: recommend ACCEL=tcg for boot stalls (owner value kept)'; rc=1; }
+        [[ "$DISPLAY_OPTS" == *zoom-to-fit=off* ]] || { echo 'win2000: recommend zoom-to-fit=off for tablet alignment'; rc=1; }
+        [ "$SOUND" = none ] || { echo 'win2000: recommend SOUND=none to avoid audio errors'; rc=1; }
+    fi
+    echo "$GUEST: exchange $(exchange_gate state)"
+    if [ -f "$DISK" ] && ! exchange_gate check; then
+        echo "After the installed desktop and shutdown: $GUEST exchange enable (never during Setup)."; rc=1
+    fi
+    return "$rc"
+}
+
 audio_args() {   # the sound card on PulseAudio (PipeWire's pulse server too), found by its socket; else silent
     case "$SOUND" in none|"") return 0 ;; esac
     if [ -S "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/pulse/native" ] || { command -v pactl > /dev/null 2>&1 && pactl info > /dev/null 2>&1; }; then
@@ -10869,8 +10983,13 @@ qemu_launch() {   # qemu_launch BOOT(c|d|a) [CD] [FLOPPY]
     args=(-name "$TITLE (dev-retro)" -machine "$MACHINE,hpet=$HPET" -cpu "$CPU" -m "$MEM" -smp 1
           -rtc base=localtime -vga "$VIDEO" -display "$DISPLAY_OPTS"
           -qmp "unix:$(qq "$WS/.qmp.sock"),server=on,wait=off" -pidfile "$WS/.pid"
-          -drive "file=$(qq "$DISK"),format=$DISK_FORMAT,if=ide,index=0,media=disk"
-          -drive "file=$(qq "$WS/exchange.img"),format=raw,if=ide,index=1,media=disk")
+          -drive "file=$(qq "$DISK"),format=$DISK_FORMAT,if=ide,index=0,media=disk")
+    # v100 (Nov 5–6 2026): keep preformatted exchange away from Windows drive-letter assignment.
+    if [ "${QEMU_SETUP:-0}" != 1 ] && exchange_gate check; then
+        args+=(-drive "file=$(qq "$WS/exchange.img"),format=raw,if=ide,index=1,media=disk")
+    else
+        echo "Exchange disk withheld until Windows installation is complete; after shutdown run '$GUEST exchange enable'."
+    fi
     if [ -n "$cd" ]; then args+=(-drive "file=$(qq "$cd"),if=ide,index=2,media=cdrom,readonly=on"); else args+=(-drive "if=ide,index=2,media=cdrom"); fi
     # v93: the second CD drive (ide1-cd1, F:) holds the app CD from install/apps ('<cmd> cd' picks it, and
     # swaps it while running). With no app CD, another ISO in install/ (a service pack) rides there as in v92;
@@ -10904,7 +11023,8 @@ qemu_launch() {   # qemu_launch BOOT(c|d|a) [CD] [FLOPPY]
 }
 
 nt_cmd() {
-    local mode=${1:-boot} raw=0 fromcd=0 iso fd f a
+    local mode=${1:-boot} raw=0 fromcd=0 iso fd f a QEMU_SETUP=0
+    qemu_defaults "$GUEST"
     qemu_config
     case "$mode" in
         boot)
@@ -10914,6 +11034,7 @@ nt_cmd() {
         run)
             f=${2:?usage: $GUEST run FILE}
             installed "$GUEST" || die "$TITLE is not installed yet ('$GUEST setup')."
+            exchange_gate check || die "Exchange is withheld: after completing Windows and shutting down, run '$GUEST exchange enable'."
             exch_put "$GUEST" "$f" > /dev/null || exit 1
             echo "$(basename "$f") is on the exchange disk: D:\\$(basename "$f") inside $TITLE."
             qemu_launch c "$(install_iso)" ;;
@@ -10921,6 +11042,8 @@ nt_cmd() {
             shift
             for a in "$@"; do case "$a" in --raw) raw=1 ;; --from-cd) fromcd=1 ;; *) die "usage: $GUEST setup [--raw] [--from-cd]" ;; esac; done
             need_stopped "$GUEST"
+            QEMU_SETUP=1
+            exchange_gate disable > /dev/null || return
             iso=$(install_iso); fd=$(floppies | head -n 1)
             [ -n "$iso$fd" ] || { tell "No $TITLE media in $WS/install: put the CD's .iso there (and the boot floppies' .img files for NT 4.0, if your CD does not boot)."; exit 1; }
             exch_create "$WS" > /dev/null
@@ -10963,7 +11086,7 @@ nt_cmd() {
             hmp "sendkey $a" && echo "sent $a" ;;
         snapshot)
             snapshot_cmd "${2:-list}" "${3:-}" ;;
-        *) die "usage: $GUEST [boot|setup [--raw] [--from-cd]|run FILE|put FILE|get [NAME]|cd [--windows] ISO|eject|list|floppy IMG|keys ctrl-alt-del|snapshot save|restore|list|delete NAME|exchange info|recreate|fonts|where|status|launcher|help]" ;;
+        *) die "usage: $GUEST [boot|setup [--raw] [--from-cd]|run FILE|put FILE|get [NAME]|cd [--windows] ISO|eject|list|floppy IMG|keys ctrl-alt-del|snapshot save|restore|list|delete NAME|exchange info|enable|disable|recreate|fonts|where|status|launcher|help]" ;;
     esac
 }
 snapshot_cmd() {   # disk snapshots: qemu-img while off; a live, crash-consistent one through QMP while running
@@ -11623,9 +11746,10 @@ EOF
         winnt40|win2000) cat << EOF
 
 SHARPER PICTURE ON LINUX
-  QEMU scales the guest's screen to its window (zoom-to-fit). For one screen pixel per
+  win2000 defaults to unscaled pixels (tablet alignment); winnt40 keeps scaling. For one screen pixel per
   guest pixel, untick View > Zoom To Fit in QEMU's window, or set
-  DISPLAY_OPTS="gtk,zoom-to-fit=off" in ~/$1/config.
+  DISPLAY_OPTS="gtk,zoom-to-fit=off" in ~/$1/config (guest off). Raise screen area in Windows
+  Display Properties if the unscaled picture is too small.
 EOF
             ;;
     esac
@@ -11719,6 +11843,7 @@ status_cmd() {   # one line: installed? running? sizes
         delphi3|delphi4|delphi5|delphi6|delphi7) [ -d "$WS" ] && size=$(du -sh "$WS" 2> /dev/null | cut -f1) ;;
     esac
     printf '%-8s %-15s %-9s %-14s %-8s %s\n' "$1" "$TITLE" "$ENGINE" "$inst" "$run" "${size:+$size used}"
+    case "$1" in winnt40|win2000) echo "         exchange: $(exchange_gate state) (setup always withholds it)" ;; esac
     [ -f "$WS/setup.skipped" ] && echo "         last setup refused: $(cat "$WS/setup.skipped")"
     return 0
 }
@@ -11811,7 +11936,7 @@ retro_cmd() {
             printf '%-8s %-15s %-9s %-14s %-8s %s\n' GUEST SYSTEM ENGINE INSTALLED STATE DISK
             for g in $GUESTS; do status_cmd "$g"; done
             for g in $DELPHI_VERSIONS; do [ -d "$HOME/.local/share/wine/delphi$g" ] && status_cmd "delphi$g"; done
-            if [ -c /dev/kvm ] && [ -r /dev/kvm ] && [ -w /dev/kvm ]; then echo "QEMU: KVM available."; else echo "QEMU: no usable /dev/kvm here: NT 4.0 and 2000 run in software emulation."; fi ;;
+            echo "QEMU selection is per guest (new defaults: winnt40 auto; win2000 tcg)."; ( GUEST=winnt40; guest_info "$GUEST"; accel_status ); ( GUEST=win2000; guest_info "$GUEST"; accel_status ) ;;
         which)
             f=${2:?usage: retro which FILE}; [ -f "$f" ] || die "no such file: $f"
             retro_pick "$f"; echo "$(basename "$f"): $KIND -> ${PICK:-nothing}. $WHY." ;;
@@ -11858,6 +11983,9 @@ main() {
     case "${1:-}" in
         where) where_cmd "$GUEST"; exit ;;
         status) status_cmd "$GUEST"; exit ;;
+        accel|preferences)
+            case "$GUEST" in winnt40|win2000) ;; *) die "accel/preferences is for NT/2000." ;; esac
+            if [ "$1" = accel ]; then accel_status; else qemu_preferences; fi; exit ;;
         help|-h|--help) help_cmd; exit ;;
         launcher) write_launcher "$GUEST"; exit ;;
         fonts) [ "$GUEST" = delphi1 ] && die "delphi1 has them already ('delphi1 setup': winetricks corefonts tahoma, fontsmooth=rgb)."; fonts_cmd "$GUEST"; exit ;;
@@ -11887,17 +12015,15 @@ DEVRETRO_EOF
         chmod +x ~/.local/bin/"$RETRO_CMD.new"
         mv -f ~/.local/bin/"$RETRO_CMD.new" ~/.local/bin/"$RETRO_CMD"
     done
-    # v100 (Nov 5 2026): add absent defaults to existing configs too; running guests are deferred.
-    ~/.local/lib/dev-retro/dev-retro retro config-defaults
     # Workspaces (no disk images: '<cmd> setup' makes those) and the QEMU guests' settings, written once.
     # v93: install/apps in each guest for program CDs, and ~/delphi/install/N for Delphi 3, 4, 5, 6 and 7.
     mkdir -p ~/win95/install/apps ~/winnt40/install/apps ~/win2000/install/apps ~/delphi/install/3 ~/delphi/install/4 ~/delphi/install/5 ~/delphi/install/6 ~/delphi/install/7
     for RETRO_G in winnt40 win2000; do
         [ -f ~/"$RETRO_G"/config ] && continue
         if [ "$RETRO_G" = winnt40 ]; then
-            R_MEM=128; R_HPET=off; R_DISK=4; R_SOUND=sb16; R_MOUSE=ps2
+            R_MEM=128; R_HPET=off; R_DISK=4; R_SOUND=sb16; R_MOUSE=ps2; R_ACCEL=auto; R_DISPLAY=gtk,zoom-to-fit=on
         else
-            R_MEM=256; R_HPET=on; R_DISK=8; R_SOUND=AC97; R_MOUSE=tablet
+            R_MEM=256; R_HPET=on; R_DISK=8; R_SOUND=none; R_MOUSE=tablet; R_ACCEL=tcg; R_DISPLAY=gtk,zoom-to-fit=off
         fi
         cat > ~/"$RETRO_G"/config << EOF_RCFG
 # ~/$RETRO_G/config - written by dev-setup (install-retro) once; edit freely, setup leaves it alone.
@@ -11912,11 +12038,14 @@ VIDEO=cirrus            # both ship a Cirrus driver; skip NT 4.0's display "Test
 NIC=pcnet               # AMD PCnet, user-mode networking; none turns it off
 SOUND=$R_SOUND             # sb16, AC97 or none (drivers on the install CDs)
 MOUSE=$R_MOUSE             # ps2 (captured; Ctrl+Alt+G releases it) or tablet (USB: Windows 2000)
-ACCEL=auto              # auto (KVM when /dev/kvm is usable), kvm or tcg
-DISPLAY_OPTS=gtk,zoom-to-fit=on
+# v100 (Nov 5 2026): win2000 uses TCG for nested-KVM stalls, unscaled tablet and no noisy AC97.
+ACCEL=$R_ACCEL              # auto (KVM when usable), kvm or tcg; explicit owner values stay
+DISPLAY_OPTS="$R_DISPLAY"
 EXTRA_ARGS=""           # more QEMU options, e.g. "-smp 2"
 EOF_RCFG
     done
+    # v100 (Nov 5 2026): migrate existing configs after generating new ones; running guests defer.
+    ~/.local/lib/dev-retro/dev-retro retro config-defaults
     # Launcher icons (ChromeOS app drawer): one per guest. A guest not installed yet opens a window saying
     # '<cmd> setup' and where its media goes. delphi1's also points Delphi's own Wine entries at 'delphi1'.
     for RETRO_G in win31 win95 winnt40 win2000 delphi1; do

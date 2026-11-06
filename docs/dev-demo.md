@@ -168,3 +168,30 @@ outputs are preserved, including opengl. All four DOSBox-X configs default to `[
 (Ctrl+Shift+F for full screen); existing choices stay, and misplaced hostkey lines require manual review.
 Missing defaults are added only while the guest is stopped; win31 stays opengl and DOS stays ttf.
 Review owner-added folder mounts in win95 `[autoexec]` before booting; they are never removed automatically.
+
+v100 QEMU defaults and installation completion (Nov 5–6 findings): new win2000 configs use
+`ACCEL=tcg`, `DISPLAY_OPTS="gtk,zoom-to-fit=off"` and `SOUND=none`. Existing explicit assignments
+stay. NT 4.0 keeps auto acceleration, scaled GTK, PS/2 and sb16; if it is slow, try TCG with the guest
+off (NT performance remains an owner check). KVM availability does not imply a guest selected KVM.
+`<guest> accel` reports the selection/reason; `<guest> preferences` reports preserved preferences.
+Raise the Windows screen area in Display Properties if the unscaled picture is too small. To try
+Windows 2000 audio later, set SOUND=AC97 with the guest off and install its CD driver; PulseAudio
+errors may return. Sound was not the cause of the boot stall.
+
+Every NT/2000 `setup` (including resumed setup and --from-cd/--raw) withholds the exchange disk and
+clears attachment acknowledgement. Finish Windows installation, reach the desktop, shut down, then
+run `<guest> exchange enable`; boot normally. Existing installations also need this one-time enable.
+Normal boots stay detached until enabled for that system disk; replacement disks require enable
+again. `exchange disable` clears the acknowledgement without changing disk contents. `exchange info`
+and status show enabled/deferred/stale. `run` refuses while withheld, before copying or launching;
+`put`/`fonts` can prepare it but warn that it is withheld. Restoring a pre-install snapshot: disable
+exchange before resuming Setup. Never use disk existence as evidence Windows finished installing.
+
+CD drive letters during Setup are provisional. After enabling exchange, assign it D: in Disk
+Management if D: is free; existing installations may have different letters. Do not rename a Windows
+system already installed on F: automatically. On an old-version install before Windows is installed,
+the historical F3/boot-CD-again workaround can make the system partition enumerate first; v100
+withholds exchange instead. Format/recreate exchange only from Linux: put/get require its FAT layout.
+Start with `exchange info` and `get` to back up accessible files before considering `exchange recreate`.
+A deleted partition is not recovered by recreate; it makes an empty disk. Never format exchange in
+Windows, and never write the guest's qcow2/NTFS C: with host mtools.

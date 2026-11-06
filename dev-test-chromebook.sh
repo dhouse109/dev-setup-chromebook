@@ -5681,12 +5681,108 @@ RETRO_ARGS_CHECK_PY
     warn  "launcher icons for the five guests"            'm=""; for g in win31 win95 winnt40 win2000; do [ -f ~/.local/share/applications/dev-retro-$g.desktop ] || m="$m $g"; done; [ -f ~/.local/share/applications/dev-retro-delphi1.desktop ] || grep -rqs "/.local/bin/delphi1" ~/.local/share/applications/wine || m="$m delphi1"; [ -z "$m" ] || { echo "missing:$m"; exit 1; }; echo all five'
     hint  "'<cmd> launcher' writes one again (delphi1's also points Delphi's own Wine entries at delphi1)"
     if [ -c /dev/kvm ] && [ -r /dev/kvm ] && [ -w /dev/kvm ]; then
-        info  "QEMU acceleration" "KVM: NT 4.0 and 2000 run at close to native speed here"
+        info  "QEMU acceleration" "KVM available; selection is per guest (new defaults: NT auto, 2000 tcg)"
     elif [ -c /dev/kvm ]; then
         info  "QEMU acceleration" "/dev/kvm is here but not usable yet (kvm group: shut Linux down and reopen it); software emulation until then"
     else
-        info  "QEMU acceleration" "no /dev/kvm on this Chromebook: NT 4.0 and 2000 run in software emulation (slow)"
+        info  "QEMU acceleration" "KVM unavailable; auto/kvm falls back to TCG, win2000 defaults to intentional TCG"
     fi
+    # v100 (Nov 5–6 2026): all attachment/default regressions run on scratch files and executable fake engines.
+    cat > "$WORK/retro-qemu-check.py" << 'RETRO_QEMU_CHECK_PY'
+import json, os, subprocess, tempfile
+from pathlib import Path
+original = Path(os.environ['RETRO_HELPER']).read_text()
+with tempfile.TemporaryDirectory(prefix='qemu-fixture-', dir=os.environ['WORK']) as tmp:
+    root = Path(tmp); home = root / 'home'; home.mkdir(); bindir = root / 'bin'; bindir.mkdir()
+    def executable(name, body):
+        p = bindir / name; p.write_text(body); p.chmod(0o755)
+    for engine in ('dosbox-x', 'wine', 'wineboot', 'wineserver'):
+        executable(engine, '#!/bin/sh\nexit 97\n')
+    executable('qemu-system-i386', '#!/usr/bin/python3\nimport json,os,sys\nfrom pathlib import Path\nPath(os.environ["WORK"]+"/args.json").write_text(json.dumps(sys.argv[1:]))\n')
+    executable('qemu-img', '#!/bin/sh\n[ "$1" = create ] || exit 97\ntouch "$5"\n')
+    executable('pactl', '#!/bin/sh\nexit 1\n')
+    executable('mcopy', '#!/bin/sh\ntouch "$WORK/copied"\n')
+    executable('mdir', '#!/bin/sh\nexit 0\n')
+    executable('pgrep', '#!/bin/sh\nexit 1\n')
+    h = root / 'helper'
+    h.write_text(original.rsplit('main "$@"; exit $?', 1)[0] + '\nexch_create() { mkdir -p "$1"; touch "$1/exchange.img"; }\ndisk_guard() { :; }\nmain "$@"; exit $?\n')
+    env = dict(HOME=str(home), WORK=str(root), PATH=str(bindir) + ':/usr/bin:/bin', LC_ALL='C.UTF-8')
+    def call(g, *args, ok=True):
+        r = subprocess.run(['bash', str(h), g, *args], env=env, text=True, capture_output=True)
+        assert (r.returncode == 0) == ok, r.stdout + r.stderr
+        return r
+    def args(): return json.loads((root / 'args.json').read_text())
+    def attached(): return any('index=1,media=disk' in x for x in args())
+    for g in ('winnt40', 'win2000'):
+        ws = home / g; (ws / 'install').mkdir(parents=True); (ws / 'install/windows.iso').touch()
+        call(g, 'exchange', 'enable', ok=False)
+        call(g, 'setup'); assert not attached() and not (ws / 'exchange-enabled').exists()
+        assert args()[args().index('-display') + 1] == ('gtk,zoom-to-fit=off' if g == 'win2000' else 'gtk,zoom-to-fit=on')
+        if g == 'win2000':
+            assert args()[args().index('-accel') + 1] == 'tcg,thread=multi'
+            assert '-audiodev' not in args() and not any('AC97' in x for x in args())
+        call(g); assert not attached()
+        copied = root / 'copied'; copied.unlink(missing_ok=True)
+        capture = root / 'args.json'; capture.unlink()
+        call(g, 'run', str(root / 'sample.exe'), ok=False)
+        assert not copied.exists() and not capture.exists()
+        call(g, 'exchange', 'enable'); call(g); assert attached()
+        sample = root / 'sample.exe'; sample.touch()
+        call(g, 'run', str(sample)); assert attached() and copied.exists()
+        call(g, 'put', str(sample)); assert (ws / 'exchange-enabled').exists()
+        call(g, 'exchange', 'disable')
+        assert 'withheld' in call(g, 'put', str(sample)).stderr
+        call(g, 'exchange', 'enable')
+        # Replacing the system disk invalidates a previously acknowledged identity.
+        disk = ws / 'disk.qcow2'; replacement = ws / 'replacement'; replacement.touch(); replacement.replace(disk)
+        assert 'stale' in call(g, 'exchange', 'info').stdout
+        call(g); assert not attached()
+        for setup_args in (('setup',), ('setup', '--from-cd')):
+            call(g, 'exchange', 'enable'); call(g, *setup_args)
+            assert not attached() and not (ws / 'exchange-enabled').exists()
+        (ws / 'install/boot.img').touch()
+        call(g, 'setup', '--from-cd'); assert not attached() and 'once=a' in args()
+        (ws / 'install/boot.img').unlink()
+        disk.unlink(); call(g, 'setup', '--raw'); assert not attached() and (ws / 'disk.img').exists()
+        call(g, 'exchange', 'enable'); call(g); assert attached()
+        (ws / '.pid').write_text(str(os.getpid()))
+        call(g, 'exchange', 'enable', ok=False); call(g, 'exchange', 'disable', ok=False)
+        (ws / '.pid').unlink()
+    # Missing-only migration: complex shell and explicit assignments survive; status never repairs.
+    ws = home / 'win2000'; config = ws / 'config'
+    config.write_bytes(b'# owner\r\nMEM=320\r\n'); config.chmod(0o640)
+    before = config.read_bytes(); call('win2000', 'preferences'); assert config.read_bytes() == before
+    (ws / '.pid').write_text(str(os.getpid()))
+    call('retro', 'config-defaults'); assert config.read_bytes() == before
+    (ws / '.pid').unlink()
+    call('retro', 'config-defaults'); data = config.read_bytes()
+    assert b'ACCEL=tcg\r\n' in data and b'SOUND=none\r\n' in data and b'zoom-to-fit=off' in data
+    assert config.stat().st_mode & 0o777 == 0o640
+    call('retro', 'config-defaults'); assert config.read_bytes() == data
+    for text in ('export ACCEL=auto\nSOUND=AC97\nDISPLAY_OPTS="gtk,zoom-to-fit=on"\n', 'if true; then ACCEL=auto; fi\n'):
+        config.write_text(text); call('retro', 'config-defaults'); assert config.read_text() == text
+    # Override propagation (audio backend may be silent, but the explicit card must remain).
+    config.write_text('ACCEL=tcg\nSOUND=AC97\nDISPLAY_OPTS="gtk,zoom-to-fit=on"\n')
+    call('win2000'); assert any('AC97,audiodev=snd0' == x for x in args())
+    assert args()[args().index('-display') + 1] == 'gtk,zoom-to-fit=on'
+    # Deterministic selection matrix; no permission changes or accesses to a real KVM device.
+    defs = original.rsplit('main "$@"; exit $?', 1)[0]
+    for want in ('auto', 'kvm', 'tcg'):
+        for state in ('usable', 'present', 'missing'):
+            code = defs + f'\nkvm_state() {{ KVM_STATE={state}; }}\nACCEL={want}; pick_accel; printf "%s\\n" "$ACCEL_NOTE" "${{ACCEL_ARGS[@]}}"\n'
+            r = subprocess.run(['bash', '-c', code], env=env, text=True, capture_output=True)
+            assert r.returncode == 0
+            expected = 'selected by ACCEL=tcg' if want == 'tcg' else ('selected by ACCEL=' + want if state == 'usable' else ('present but not usable' if state == 'present' else 'unavailable'))
+            assert expected in r.stdout, r.stdout
+            assert ('group' in r.stdout) == (want != 'tcg' and state == 'present')
+print('QEMU fixtures: defaults, overrides, gate/identity, fresh/resumed/CD/floppy/raw setup, run/put guards and 9 acceleration cases PASS')
+RETRO_QEMU_CHECK_PY
+    check "QEMU defaults, exchange completion and acceleration (isolated)" 'RETRO_HELPER="$HOME/.local/lib/dev-retro/dev-retro" python3 "$WORK/retro-qemu-check.py"' 180
+    # v100 (Nov 5–6 2026): read-only preferences warn; a disk does not prove Windows installation.
+    for G in winnt40 win2000; do
+        info "QEMU selection $G" "$(~/.local/lib/dev-retro/dev-retro "$G" accel)"
+        warn "$G: preferences and completed-install exchange attachment" "~/.local/lib/dev-retro/dev-retro $G preferences"
+    done
     for G in win31 win95 winnt40 win2000 delphi1; do
         info  "retro guest $G" "$(~/.local/lib/dev-retro/dev-retro "$G" status 2> /dev/null | head -n 1 | sed 's/^[^ ]* *//; s/ *$//; s/   */, /g')"
     done

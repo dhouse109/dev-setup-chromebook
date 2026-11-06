@@ -284,3 +284,10 @@ to see it in context; the comment above each fix usually tells the story.
   turned off.
 - **Some Chromebooks have no `/dev/kvm`.** Windows NT 4.0 and 2000 under QEMU then run in software
   emulation, which works but is slow. Windows 3.1 and 95 run in DOSBox-X, which doesn't need KVM.
+
+- **Windows 2000 boot stalls, tablet scaling and noisy audio** (v100; Nov 5–6 2026).
+  New defaults are TCG, zoom-to-fit off and no sound; explicit owner choices stay. TCG completed
+  Setup where the previous selection stalled. Disabling sound alone did not fix the boot.
+  NT 4.0 remains auto, with TCG documented as an untested fallback. QEMU exchange attachment is
+  deferred until installed desktop + shutdown + exchange enable, preventing a preformatted disk
+  taking C: during Setup. See the init checklist and STEPS-winnt.md for existing installs/recovery.

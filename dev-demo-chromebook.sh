@@ -4411,7 +4411,7 @@ fixes get worked out on your discs, as Delphi 1's were: the order is 7, then 6, 
 
 Delphi 7, 6 or 5 in Windows 2000 (Delphi 3 or 4 in NT 4.0 the same way):
 
-1. Install the guest first: STEPS-winnt.md ('win2000 setup').
+1. Install the guest first: STEPS-winnt.md ('win2000 setup'). Reach its desktop, shut down, then `win2000 exchange enable` before using exchange. Existing NT/2000 installs need this one-time step too.
 2. Put the Delphi CD's .iso in ~/win2000/install/apps. Several CDs: `win2000 cd list`, and `win2000 cd NAME`
    picks one (it swaps the CD while the guest runs).
 3. `win2000`, then inside Windows run F:\INSTALL.EXE (or the CD's autorun). The serial is on your sleeve.
@@ -4439,7 +4439,7 @@ Delphi 3 or 4 in Windows 95 (DOSBox-X):
 
 ## Moving files and sizes
 
-D: in win95, winnt40 and win2000 is the exchange disk: `<guest> put FILE` and `<guest> get` while the guest
+After NT/2000 installation completion and `exchange enable` (see STEPS-winnt.md), D: is normally the exchange disk in win95, winnt40 and win2000; old installations may differ: `<guest> put FILE` and `<guest> get` while the guest
 is off. Its size is RETRO_EXCHANGE_MB (default 1 GB; 512 for less disk), Windows 95's disk RETRO_WIN95_DISK_MB
 (default 2 GB), both in ~/.config/dev-init/secrets.env and read when the disk is made. A disk that exists
 keeps its size: `<guest> exchange recreate` rebuilds the exchange disk (it offers to save its files first),
@@ -4471,6 +4471,33 @@ Drives inside the guest: C: the disk, D: the exchange disk (FAT16, 1 GB by defau
 ~/.config/dev-init/secrets.env, read when it is made; `winnt40 put FILE` and `winnt40 get` while the guest is
 off; `winnt40 exchange info`), E: the install CD (`winnt40 cd --windows FILE` swaps it), F: the program CD.
 
+v100 QEMU defaults and installation completion (Nov 5–6 findings): new win2000 configs use
+`ACCEL=tcg`, `DISPLAY_OPTS="gtk,zoom-to-fit=off"` and `SOUND=none`. Existing explicit assignments
+stay. NT 4.0 keeps auto acceleration, scaled GTK, PS/2 and sb16; if it is slow, try TCG with the guest
+off (NT performance remains an owner check). KVM availability does not imply a guest selected KVM.
+`<guest> accel` reports the selection/reason; `<guest> preferences` reports preserved preferences.
+Raise the Windows screen area in Display Properties if the unscaled picture is too small. To try
+Windows 2000 audio later, set SOUND=AC97 with the guest off and install its CD driver; PulseAudio
+errors may return. Sound was not the cause of the boot stall.
+
+Every NT/2000 `setup` (including resumed setup and --from-cd/--raw) withholds the exchange disk and
+clears attachment acknowledgement. Finish Windows installation, reach the desktop, shut down, then
+run `<guest> exchange enable`; boot normally. Existing installations also need this one-time enable.
+Normal boots stay detached until enabled for that system disk; replacement disks require enable
+again. `exchange disable` clears the acknowledgement without changing disk contents. `exchange info`
+and status show enabled/deferred/stale. `run` refuses while withheld, before copying or launching;
+`put`/`fonts` can prepare it but warn that it is withheld. Restoring a pre-install snapshot: disable
+exchange before resuming Setup. Never use disk existence as evidence Windows finished installing.
+
+CD drive letters during Setup are provisional. After enabling exchange, assign it D: in Disk
+Management if D: is free; existing installations may have different letters. Do not rename a Windows
+system already installed on F: automatically. On an old-version install before Windows is installed,
+the historical F3/boot-CD-again workaround can make the system partition enumerate first; v100
+withholds exchange instead. Format/recreate exchange only from Linux: put/get require its FAT layout.
+Start with `exchange info` and `get` to back up accessible files before considering `exchange recreate`.
+A deleted partition is not recovered by recreate; it makes an empty disk. Never format exchange in
+Windows, and never write the guest's qcow2/NTFS C: with host mtools.
+
 ## First boot, NT 4.0
 1. Text-mode setup: create the system partition on the 4 GB disk (NT 4.0 cannot format more), FAT or NTFS.
 2. Graphical setup: network adapter "AMD PCNET Family"; on the display page do NOT press Test (it can hang);
@@ -4482,7 +4509,7 @@ off; `winnt40 exchange info`), E: the install CD (`winnt40 cd --windows FILE` sw
    in F: (`winnt40 cd eject` first), or `winnt40 cd --windows SP6A.ISO` while it runs to put it in E:.
 
 ## First boot, Windows 2000
-1. Setup runs straight through; the PCnet network and AC97 sound drivers are on the CD.
+1. New configs use TCG, an unscaled USB tablet and no sound. PCnet networking is on the CD. Setup withholds exchange throughout; after desktop + shutdown, `win2000 exchange enable`.
 2. Log on with `win2000 keys ctrl-alt-del` when it asks. The mouse is a USB tablet: no capture.
 3. Service Pack 4: its .iso in ~/win2000/install, then run it from F:.
 
@@ -4496,8 +4523,7 @@ fonts", in 16-bit colour or more. For sharp pixels, untick View > Zoom To Fit in
 - Setup blue-screens early: CPU=pentium instead of pentium3 in ~/<guest>/config.
 - NT 4.0 installs but will not boot a second time (QEMU's old qcow2 bug): `rm ~/winnt40/disk.qcow2`,
   then `winnt40 setup --raw` (a raw disk; no snapshots).
-- Slow: without /dev/kvm QEMU emulates the CPU in software. `retro` says which this Chromebook has; the
-  NT guests belong on one with KVM.
+- Slow: `<guest> accel` reports selected acceleration and why. Win2000 defaults to intentional TCG; NT stays auto, with an owner-selected TCG fallback if needed.
 - Undo points: `winnt40 snapshot save clean` with the guest shut down, `winnt40 snapshot restore clean` later.
 EOF
     FRESH=1
