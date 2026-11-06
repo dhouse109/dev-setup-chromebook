@@ -1,5 +1,5 @@
 #!/bin/bash
-# dev-setup-chromebook - Version 98
+# dev-setup-chromebook - Version 99
 # Version history: CHANGELOG.md, next to this script in the bundle
 # (one section per script, newest version first).
 
@@ -61,9 +61,11 @@ if [ -z "${DEV_SCREEN_OUTPUT:-}" ] && [ "${DEV_SCREEN_SAVE:-1}" != 0 ]; then
         if [ -t 0 ] && [ -t 1 ] && command -v script > /dev/null 2>&1; then
             # script(1) runs its command with $SHELL -c: bash here, and the run gets your SHELL back.
             _cmd="SHELL=$(printf '%q' "${SHELL:-/bin/bash}") exec $(printf '%q ' "$BASH" "$0" "$@")"
-            SHELL=/bin/bash script -qfec "$_cmd" >(_copy)
-            _rc=$?
-            wait $! 2> /dev/null   # the copy's last lines
+            # v99 (Nov 1 2026: dev-test printed its summary but never returned): passing >(_copy)
+            # as script's filename leaks its pipe fd into new-shell checks and their ssh-agent.
+            # Keep that descriptor in tee's branch only; wait still drains the copy's last lines.
+            SHELL=/bin/bash script -qfec "$_cmd" /dev/null | (trap '' INT TERM; tee -p >(_copy); wait $! 2> /dev/null)
+            _rc=${PIPESTATUS[0]}
         else
             [ -t 1 ] && export DEV_SCREEN_TTY=1   # decided before the pipe: dev-test keeps its colors on a terminal
             "$BASH" "$0" "$@" 2>&1 | (trap '' INT TERM; tee -p >(_copy); wait $! 2> /dev/null)
@@ -71,12 +73,38 @@ if [ -z "${DEV_SCREEN_OUTPUT:-}" ] && [ "${DEV_SCREEN_SAVE:-1}" != 0 ]; then
         fi
         sed -i -e :a -e '/^\n*$/{$d;N;ba' -e '}' "$DEV_SCREEN_OUTPUT" 2> /dev/null   # no trailing blank lines
         # The run ends with its summary block, its last line a row of '='. Anything else: it stopped early.
-        if grep -q ' Version [0-9]* complete' "$DEV_SCREEN_OUTPUT" 2> /dev/null && tail -n 1 "$DEV_SCREEN_OUTPUT" | grep -q '^=\{20,\}$'; then :
+        # v99 (Nov 1 2026): fatal setup exits still print a complete stage summary.
+        if grep -Eq ' Version [0-9]+ complete|^Setup stage summary \(Version [0-9]+\)$' "$DEV_SCREEN_OUTPUT" 2> /dev/null && tail -n 1 "$DEV_SCREEN_OUTPUT" | grep -q '^=\{20,\}$'; then :
         else echo "Screen output (stopped before the summary): $DEV_SCREEN_OUTPUT" >&2; fi
         exit "$_rc"
     fi
 fi
 # <<< dev-bundle screen output <<<
+
+# >>> dev-bundle network policy >>>
+# v99 (Oct 31 2026: agentic pip reset ended install-all): invocation-only settings reach pipx
+# and subprocess pip too. Probe supported resume options; never change the user's pip config.
+export PIP_RETRIES=5 PIP_TIMEOUT=60
+if /usr/bin/python3 -m pip --help 2> /dev/null | grep -q -- '--resume-retries'; then
+    export PIP_RESUME_RETRIES=5
+else
+    unset PIP_RESUME_RETRIES
+fi
+net_retry() {   # net_retry SAFE_LABEL COMMAND [ARG...]; no expanded command/secret in our messages
+    local label=$1 attempt rc=1
+    shift
+    NET_RETRY_EXHAUSTED=0
+    for attempt in 1 2 3; do
+        printf '[network] %s: attempt %s/3\n' "$label" "$attempt" >&2
+        if "$@"; then return 0; else rc=$?; fi
+        case "$attempt" in 1) sleep 2 ;; 2) sleep 5 ;; esac
+    done
+    printf '[network] %s: failed after 3 attempts (exit %s)\n' "$label" "$rc" >&2
+    NET_RETRY_EXHAUSTED=1
+    return "$rc"
+}
+# <<< dev-bundle network policy <<<
+
 
 # Exit script immediately on any error
 set -e
@@ -88,19 +116,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2> /dev/null && pwd || true)"
 [ -n "$SCRIPT_DIR" ] || SCRIPT_DIR="$PWD"
 export ASSETS="$SCRIPT_DIR/assets"
-mkdir -p "$ASSETS/logs" "$ASSETS/downloads"
 
-# v93: a connection timeout for every wget and curl this run starts, setup's own and those of the installers
-# it runs (they inherit the environment): a dead address now fails in 20 seconds and the next address is
-# tried, instead of hanging for minutes (Oct 4 2026: Chrome's download waited on one IPv6 address after
-# another). Your own ~/.wgetrc and ~/.curlrc are copied in first, so their settings still apply. The files
-# live in ~/.cache/dev-setup, rewritten each run, and only this run points at them; it covers the connect
-# step only, so a slow large download is not cut off. 'sudo wget' and 'sudo curl' do not see them.
-DEV_NET_DIR="$HOME/.cache/dev-setup"
-mkdir -p "$DEV_NET_DIR/curl"
-{ cat "$HOME/.wgetrc" 2> /dev/null || true; echo; echo "connect_timeout = 20"; } > "$DEV_NET_DIR/wgetrc"
-{ cat "$HOME/.curlrc" 2> /dev/null || true; echo; echo "connect-timeout = 20"; } > "$DEV_NET_DIR/curl/.curlrc"
-export WGETRC="$DEV_NET_DIR/wgetrc" CURL_HOME="$DEV_NET_DIR/curl"
 
 # v62: Homebrew's default "ask mode" stops for [y/n] whenever a formula pulls in dependencies.
 # This is an unattended installer, so turn it off for every brew call below. Exported here only,
@@ -112,6 +128,7 @@ export HOMEBREW_NO_ENV_HINTS=1
 # =================================================================
 # FLAG EXPANSION (STACK SWITCHES)
 # =================================================================
+DEV_REQUESTED_FLAGS=("$@")
 FLAGS=" $* "
 
 echo "Active Installation Flags: $FLAGS"
@@ -304,7 +321,229 @@ if [[ "$FLAGS" =~ " install-gemma " ]] || [[ "$FLAGS" =~ " install-models " ]] |
 fi
 # =================================================================
 
-echo "Starting comprehensive Chromebook Linux provisioning (Version 98)..."
+# >>> dev-bundle apt output >>>
+# v99 (Oct 31 2026: 64,364 identical lines): Debian apt #1111554, not a bad font.
+# Only consecutive copies of this precise warning are counted. All other diagnostics stream through.
+apt_dedupe() {
+    awk '
+        function flush() {
+            if (count > 1) { print "[apt] warning repeated " count-1 " more times (" count " total)"; fflush() }
+            count=0; last=""
+        }
+        /^W: Tried to start delayed item .*, but failed$/ {
+            if ($0 == last) { count++; next }
+            flush(); last=$0; count=1; print; fflush(); next
+        }
+        { flush(); print; fflush() }
+        END { flush() }
+    '
+}
+apt_get() {
+    local -a status apt_env=(DEBIAN_FRONTEND=noninteractive)
+    while [[ "${1:-}" == *=* ]]; do apt_env+=("$1"); shift; done
+    # Capture both statuses even with errexit/pipefail inherited. The filter cannot make apt pass.
+    if sudo "${apt_env[@]}" apt-get "$@" 2>&1 | apt_dedupe; then
+        status=("${PIPESTATUS[@]}")
+    else
+        status=("${PIPESTATUS[@]}")
+    fi
+    [ "${status[0]}" = 0 ] || return "${status[0]}"
+    return "${status[1]}"
+}
+# <<< dev-bundle apt output <<<
+
+# >>> dev-bundle stages >>>
+# v99 (Oct 31 2026: agentic stopped install-all): simple markers, not conditionally called stages.
+# Only the explicitly handled bulk retries may continue; unexpected errors retain errexit.
+declare -a STAGE_ORDER=() STAGE_SKIPS=()
+declare -A STAGE_FLAGS=() STAGE_STATE=() STAGE_REASON=()
+CURRENT_STAGE=bootstrap
+STAGE_EXIT_RC=0
+stage_expect() {   # stage_expect NAME [FLAG...]; no flags = always selected
+    local name=$1 flag selected=0 selected_flags=''
+    shift
+    [ "$#" -gt 0 ] || selected=1
+    for flag in "$@"; do
+        if [[ "$FLAGS" == *" $flag "* ]]; then
+            selected=1; selected_flags="${selected_flags:+$selected_flags }$flag"
+        fi
+    done
+    [ "$selected" = 1 ] || return 0
+    STAGE_ORDER+=("$name")
+    STAGE_FLAGS[$name]="$selected_flags"
+    STAGE_STATE[$name]=not-reached
+}
+stage() {
+    if [ "${STAGE_STATE[$CURRENT_STAGE]:-}" = running ]; then STAGE_STATE[$CURRENT_STAGE]=succeeded; fi
+    CURRENT_STAGE=$1
+    STAGE_STATE[$CURRENT_STAGE]=running
+    printf '\n[stage] %s\n' "$CURRENT_STAGE"
+}
+stage_failed() {
+    # Validation/helper failures that did not exhaust net_retry remain unexpected fatal errors.
+    [ "${NET_RETRY_EXHAUSTED:-0}" = 1 ] || exit "${2:-1}"
+    STAGE_STATE[$CURRENT_STAGE]=failed
+    STAGE_REASON[$CURRENT_STAGE]="bulk install exhausted: $1"
+    printf '[stage] %s FAILED: %s; continuing with independent stages\n' "$CURRENT_STAGE" "$1" >&2
+}
+stage_skip() {   # safe labels only; disk/media/credential decisions are not acquisition failures
+    STAGE_SKIPS+=("$CURRENT_STAGE: $1")
+    printf '[skip] %s: %s\n' "$CURRENT_STAGE" "$1"
+}
+stage_exit() {   # Reporting must not replace the original failure/signal if the disk is full.
+    local rc=$1 name flags failed=0 pending=0 rerun='' state report
+    STAGE_EXIT_RC=$rc
+    if [ "${STAGE_STATE[$CURRENT_STAGE]:-}" = running ]; then
+        if [ "$rc" = 0 ]; then STAGE_STATE[$CURRENT_STAGE]=succeeded
+        else STAGE_STATE[$CURRENT_STAGE]=failed; STAGE_REASON[$CURRENT_STAGE]="unexpected exit $rc"; fi
+    fi
+    report="$ASSETS/logs/setup-stages-${DEV_RUN_STAMP:-$(date +%Y%m%d-%H%M%S)}.tsv"
+    {
+        printf 'stage\tstatus\tflags\treason\n'
+        for name in "${STAGE_ORDER[@]}"; do
+            printf '%s\t%s\t%s\t%s\n' "$name" "${STAGE_STATE[$name]}" "${STAGE_FLAGS[$name]}" "${STAGE_REASON[$name]:-}"
+        done
+        for name in "${STAGE_SKIPS[@]}"; do printf 'skip\tskipped\t\t%s\n' "$name"; done
+    } > "$report" && cp "$report" "$ASSETS/setup-stages.tsv"
+    echo '================================================================='
+    echo 'Setup stage summary (Version 99)'
+    for name in "${STAGE_ORDER[@]}"; do
+        state=${STAGE_STATE[$name]}
+        printf '  %-26s %s%s\n' "$name" "$state" "${STAGE_REASON[$name]:+: ${STAGE_REASON[$name]}}"
+        case "$state" in
+            failed) failed=$((failed+1)) ;;
+            not-reached) pending=$((pending+1)) ;;
+            *) continue ;;
+        esac
+        flags=${STAGE_FLAGS[$name]}
+        # A failed base prerequisite requires the original selection, not a made-up install-base flag.
+        [ -n "$flags" ] || flags=${DEV_REQUESTED_FLAGS[*]}
+        for flags in $flags; do [[ " $rerun " == *" $flags "* ]] || rerun="${rerun:+$rerun }$flags"; done
+    done
+    echo "Stages: $failed failed; $pending selected stages not reached."
+    if [ "$rc" != 0 ]; then echo "Stopped in stage: $CURRENT_STAGE (exit $rc)."; fi
+    if [ ${#STAGE_SKIPS[@]} -gt 0 ]; then printf 'Separate disk/media/credential skips:\n'; printf '  %s\n' "${STAGE_SKIPS[@]}"; fi
+    [ -z "$rerun" ] || printf 'Rerun: %q %s\n' "$SCRIPT_DIR/dev-setup-chromebook.sh" "$rerun"
+    echo "Stage report: $report"
+    if [ "$rc" = 0 ]; then
+        if [ "$failed" = 0 ] && [ "$pending" = 0 ]; then echo 'Setup Version 99 complete!'
+        else STAGE_EXIT_RC=1; echo 'Setup Version 99 complete with failures; see stages above.'; fi
+    fi
+    echo '================================================================='
+    return 0
+}
+trap 'stage_rc=$?; trap - EXIT; stage_exit "$stage_rc" || :; exit "$STAGE_EXIT_RC"' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+# <<< dev-bundle stages <<<
+
+stage_expect network
+stage_expect system
+stage_expect python-tools
+stage_expect ssh
+stage_expect docker
+stage_expect homebrew
+stage_expect chrome
+stage_expect devmem
+stage_expect devclean
+stage_expect shared-helpers
+stage_expect install-rust install-rust
+stage_expect install-go install-go
+stage_expect install-node install-node
+stage_expect install-web install-web
+stage_expect install-tanstack install-tanstack
+stage_expect install-drupal install-drupal
+stage_expect install-laravel install-laravel
+stage_expect install-symfony install-symfony
+stage_expect install-graphql install-graphql
+stage_expect install-pwsh install-pwsh
+stage_expect install-cpp install-cpp
+stage_expect install-asm install-asm
+stage_expect install-asm-arm install-asm-arm
+stage_expect install-dotnet install-dotnet
+stage_expect install-java install-java
+stage_expect install-ruby install-ruby
+stage_expect install-vscode install-vscode
+stage_expect install-cursor install-cursor
+stage_expect install-windsurf install-windsurf
+stage_expect install-lazarus install-lazarus
+stage_expect install-godot install-godot install-godot-templates
+stage_expect install-media install-media
+stage_expect install-antigravity install-antigravity
+stage_expect android-tools install-mobile install-tauri install-rn install-flutter install-android-native
+stage_expect install-android-native install-android-native
+stage_expect install-db install-db
+stage_expect install-db-extra install-db-extra
+stage_expect install-interbase install-interbase
+stage_expect db-server-tools install-mssql install-oracle
+stage_expect install-mssql install-mssql
+stage_expect install-oracle install-oracle
+stage_expect db-server-commands install-mssql install-oracle
+stage_expect install-ldap install-ldap
+stage_expect devsvc-config install-redis install-memcached install-solr install-opensearch install-elasticsearch install-meilisearch install-typesense install-qdrant install-milvus install-mongodb install-mongodb-atlas-local install-selenium
+stage_expect install-redis install-redis
+stage_expect install-memcached install-memcached
+stage_expect install-solr install-solr
+stage_expect install-opensearch install-opensearch
+stage_expect install-elasticsearch install-elasticsearch
+stage_expect install-meilisearch install-meilisearch
+stage_expect install-typesense install-typesense
+stage_expect install-qdrant install-qdrant
+stage_expect install-vector install-vector
+stage_expect install-milvus install-milvus
+stage_expect install-mongodb install-mongodb
+stage_expect install-mongodb-atlas-local install-mongodb-atlas-local
+stage_expect install-selenium-grid install-selenium
+stage_expect devsvc-commands install-redis install-memcached install-solr install-opensearch install-elasticsearch install-meilisearch install-typesense install-qdrant install-milvus install-mongodb install-mongodb-atlas-local install-selenium
+stage_expect testing-tools install-testing install-playwright install-selenium install-bdd install-robot install-cypress
+stage_expect install-playwright install-playwright
+stage_expect install-selenium install-selenium
+stage_expect install-bdd install-bdd
+stage_expect install-robot install-robot
+stage_expect install-cypress install-cypress
+stage_expect install-gitlab install-gitlab
+stage_expect install-gitlab-runner install-gitlab-runner
+stage_expect install-vue install-vue
+stage_expect install-puppet install-puppet
+stage_expect install-chef install-chef
+stage_expect install-lakehouse install-lakehouse
+stage_expect install-ollama install-ollama
+stage_expect install-gemma install-gemma
+stage_expect install-models install-models
+stage_expect install-agentic install-agentic
+stage_expect install-aws install-aws
+stage_expect install-azure install-azure
+stage_expect install-gcp install-gcp
+stage_expect install-vercel install-vercel
+stage_expect install-cloudflare install-cloudflare
+stage_expect install-cloudflared install-cloudflared
+stage_expect install-jev install-jev
+stage_expect install-iac install-iac
+stage_expect ansible install-ansible-full install-ansible-core
+stage_expect install-k8s install-k8s
+stage_expect install-lan install-lan
+stage_expect install-com install-com
+stage_expect install-retro install-retro
+stage_expect install-herdr install-herdr
+stage_expect install-hermes install-hermes
+stage_expect install-openclaw install-openclaw
+stage_expect finalize
+
+echo "Starting comprehensive Chromebook Linux provisioning (Version 99)..."
+
+stage network
+mkdir -p "$ASSETS/logs" "$ASSETS/downloads"
+# v93: a connection timeout for every wget and curl this run starts, setup's own and those of the installers
+# it runs (they inherit the environment): a dead address now fails in 20 seconds and the next address is
+# tried, instead of hanging for minutes (Oct 4 2026: Chrome's download waited on one IPv6 address after
+# another). Your own ~/.wgetrc and ~/.curlrc are copied in first, so their settings still apply. The files
+# live in ~/.cache/dev-setup, rewritten each run, and only this run points at them; it covers the connect
+# step only, so a slow large download is not cut off. 'sudo wget' and 'sudo curl' do not see them.
+DEV_NET_DIR="$HOME/.cache/dev-setup"
+mkdir -p "$DEV_NET_DIR/curl"
+{ cat "$HOME/.wgetrc" 2> /dev/null || true; echo; echo "connect_timeout = 20"; } > "$DEV_NET_DIR/wgetrc"
+{ cat "$HOME/.curlrc" 2> /dev/null || true; echo; echo "connect-timeout = 20"; } > "$DEV_NET_DIR/curl/.curlrc"
+export WGETRC="$DEV_NET_DIR/wgetrc" CURL_HOME="$DEV_NET_DIR/curl"
 
 # v93: prefer IPv4 when this network's IPv6 does not get out. On Oct 4 2026 a Chromebook's Linux got IPv6
 # addresses for dl.google.com but no IPv6 route out, and wget hung on one address after another (the
@@ -346,16 +585,64 @@ else
     fi
 fi
 
+
+
+# >>> dev-bundle random generator >>>
+# v99 (Oct 31 2026: tr | head broke its pipe): finite CSPRNG output, checked before use.
+random_chars() {   # random_chars LENGTH [ALPHABET]; caller must check status, never log the result
+    /usr/bin/python3 - "$1" "${2:-ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789}" <<'RANDOM_PY'
+import secrets
+import sys
+n = int(sys.argv[1])
+alphabet = sys.argv[2]
+if not 1 <= n <= 128 or not alphabet:
+    raise SystemExit("invalid random generator parameters")
+value = "".join(secrets.choice(alphabet) for _ in range(n))
+if len(value) != n or any(c not in alphabet for c in value):
+    raise SystemExit("random generator validation failed")
+print(value, end="")
+RANDOM_PY
+}
+dev_password() {
+    local a b
+    a=$(random_chars 16) || return 1
+    b=$(random_chars 1 ABCDEFGHIJKLMNOPQRSTUVWXYZ) || return 1
+    [[ "$a" =~ ^[A-Za-z0-9]{16}$ && "$b" =~ ^[A-Z]$ ]] || return 1
+    printf 'Dev_%s_%s9' "$a" "$b"
+}
+# <<< dev-bundle random generator <<<
+
+# v99: fetch completely before executing; a retry must never feed a running shell partial input.
+vendor_install() {   # vendor_install LABEL URL SHELL [INSTALLER_ARGS...]
+    local label=$1 url=$2 shell=$3 file
+    shift 3
+    file="$ASSETS/downloads/$label-install.sh"
+    net_retry "$label download" curl -fsSL -o "$file" "$url" || return $?
+    # v99 (Nov 1 2026): installer side effects run once; only fetching may exhaust retries.
+    NET_RETRY_EXHAUSTED=0
+    [ -s "$file" ] && head -n 1 "$file" | grep -q '^#!' || return 1
+    "$shell" "$file" "$@" || return $?
+    rm -f "$file"
+}
+
+# v99: root apt and Playwright's sudo child share these bounded acquisition settings.
+sudo install -d -m 755 /etc/apt/apt.conf.d
+printf '%s\n' 'Acquire::Retries "3";' 'Acquire::http::Timeout "60";' 'Acquire::https::Timeout "60";' \
+    | sudo tee /etc/apt/apt.conf.d/80dev-bundle-network > /dev/null
+
+stage system
 # 1. System Setup, Base Packages & Headless Dependencies
 echo "Updating system and installing base packages, Python tools, and Puppeteer dependencies..."
 # Public release: 'passwd -d' leaves the Linux user with no password. It is here for ChromeOS's Linux,
 # where sudo asks for none; on any other machine (DEV_BUNDLE_ANY_HOST=1) it would delete a real login
 # password, so it runs on ChromeOS only (DEV_ON_CHROMEOS comes from the host guard above).
 if [ "${DEV_ON_CHROMEOS:-0}" = 1 ]; then sudo passwd -d "$USER"; fi
-sudo apt update && sudo apt upgrade -y
+# v99 (Nov 1 2026): abort on a failed update before upgrade; later stages stay unreached.
+apt_get update
+apt_get upgrade -y
 
 # Consolidated apt install (Debian Trixie Compatible - PEP 668 & no software-properties-common)
-sudo apt install -y \
+apt_get install -y \
   apt-file apt-transport-https build-essential ca-certificates \
   dpkg git gnupg gnupg2 libnss3-tools lsb-release nano php-cli \
   tree wget zip unzip curl file libfuse2 \
@@ -375,17 +662,19 @@ sudo apt install -y \
 # v52: librsvg2-dev is a Tauri Linux prerequisite ('tauri build' icon/bundle generation);
 #      'tauri info' reported it missing. libfuse2 resolves to libfuse2t64 on trixie via Provides.
 
+stage python-tools
 # 2. Python Tooling Initialization
 echo "Configuring Python tools (pipx & uv)..."
 pipx ensurepath
 export PATH="$HOME/.local/bin:$PATH"
-pipx install uv || true
+net_retry "pipx packages" pipx install uv
 
 # v58: direnv loads a project's .envrc on cd (per-project env on top of the global secrets.env).
 if ! grep -q 'direnv hook bash' ~/.bashrc; then
     echo 'eval "$(direnv hook bash)"' >> ~/.bashrc
 fi
 
+stage ssh
 # 3. SSH Key Generation (Modern Ed25519)
 echo "Generating SSH key..."
 if [ ! -f ~/.ssh/id_ed25519 ]; then
@@ -394,13 +683,14 @@ else
     echo "SSH key already exists, skipping generation."
 fi
 
+stage docker
 # 4. Docker Installation
 echo "Installing Docker..."
 sudo mkdir -m 0755 -p /etc/apt/keyrings
 curl -fsSL https://download.docker.com/linux/debian/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg --yes
 echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/debian $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
-sudo apt update
-sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+apt_get update
+apt_get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 sudo usermod -aG docker $USER
 # v69: GPU access. Crostini hands the container a virgl GPU as /dev/dri/card0 (group video) and
 # /dev/dri/renderD128 (group render, mode 0660). Windowed OpenGL clients open the RENDER node, and
@@ -411,12 +701,13 @@ for grp in video render; do
     if getent group "$grp" > /dev/null; then sudo usermod -aG "$grp" "$USER"; fi
 done
 
+stage homebrew
 # 5. Homebrew, DDEV, and GitHub CLI
 echo "Installing Homebrew and brew packages..."
 if [ -x /home/linuxbrew/.linuxbrew/bin/brew ]; then
     echo "Homebrew already installed, skipping installer."
 else
-    NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+    NONINTERACTIVE=1 vendor_install homebrew https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh /bin/bash
 fi
 # v68: Homebrew AFTER the system directories. shellenv prepends linuxbrew/bin, which let formula
 # dependencies (python3, sqlite3, as, ld, java...) shadow Debian's tools. The block below still
@@ -473,7 +764,7 @@ brew_after_system() {   # v68: move Homebrew's bin/sbin to the END of PATH (see 
 }
 brew_after_system
 
-brew install gcc ddev/ddev/ddev gh mkcert
+net_retry "Homebrew packages" brew install gcc ddev/ddev/ddev gh mkcert
 mkcert -install
 
 # v96: DDEV's router on 8080/8443 (Oct 26 2026, on dragonair: ChromeOS's browser got ERR_CONNECTION_REFUSED for
@@ -546,6 +837,7 @@ if [ "$DEV_ON_CHROMEOS" = 1 ] && [ -f "$(mkcert -CAROOT 2> /dev/null)/rootCA.pem
     echo "  identifying websites\", then delete ~/ddev-rootCA.pem. (docs/init-checklist.md, DDEV in ChromeOS's browser)"
 fi
 
+stage chrome
 # 6. Google Chrome (Unconditional)
 echo "Installing Google Chrome..."
 # v97 (found in the v97 Chromebook run 4, Oct 27 2026): every run downloaded the 138 MB .deb, then apt said "already
@@ -554,14 +846,14 @@ echo "Installing Google Chrome..."
 # google-chrome-stable from dl.google.com/linux/chrome (present, enabled, and read by this run's apt update).
 if apt-cache policy google-chrome-stable 2> /dev/null | grep -q 'dl\.google\.com/linux/chrome'; then
     echo "Google Chrome: from Google's apt source (no .deb download)."
-    sudo apt-get install -y google-chrome-stable
+    apt_get install -y google-chrome-stable
 else
     # A first install: the .deb, which also adds Google's apt source.
     # v65: downloaded into assets/downloads, not the current directory. Always fetched fresh (-nc would
     # reinstall a stale .deb left by an interrupted run).
     rm -f "$ASSETS/downloads/google-chrome-stable_current_amd64.deb"
     wget -P "$ASSETS/downloads" https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
-    sudo apt install -y "$ASSETS/downloads/google-chrome-stable_current_amd64.deb"
+    apt_get install -y "$ASSETS/downloads/google-chrome-stable_current_amd64.deb"
     rm -f "$ASSETS/downloads/google-chrome-stable_current_amd64.deb"
 fi
 
@@ -589,6 +881,7 @@ else
     echo "NOTICE: no garcon_host_browser.desktop (not ChromeOS?), so Linux's handler for web links is unchanged."
 fi
 
+stage devmem
 # 7. devmem, a memory report (v96)
 # v96: Oct 26 2026, with Devin Desktop freezing: Linux showed 6.4 GB total, 4.9 GB used, 1.5 GB available and no
 # swap, while its processes held only 2.2 GB (Devin 1.65 GB of it) and slab plus shmem ~0.2 GB: ChromeOS had taken
@@ -741,6 +1034,7 @@ chmod +x "$HOME/.local/bin/devmem.new"
 mv -f "$HOME/.local/bin/devmem.new" "$HOME/.local/bin/devmem"
 echo "Wrote ~/.local/bin/devmem (what is using memory, what ChromeOS has taken back, what to close)."
 
+stage devclean
 # 8. devclean, a disk cleanup (v96)
 # v96 (plan item 8): Oct 26 2026, dragonair's 38 GB Linux disk: DDEV's image pull ran it out of space twice, and the
 # full disk left ~/.ddev/.state.yaml and ~/.ddev/.update at 0 bytes, after which every 'ddev start' panicked
@@ -1326,6 +1620,7 @@ mv -f "$HOME/.local/bin/devclean.new" "$HOME/.local/bin/devclean"
 echo "Wrote ~/.local/bin/devclean (what fills the disk; 'devclean --run' clears the safe caches)."
 
 # =================================================================
+stage shared-helpers
 # SHARED HELPERS
 # =================================================================
 # v93: a .tar.gz download that is checked before it is unpacked. On Oct 4 2026 dragonair's PowerShell
@@ -1371,7 +1666,7 @@ add_microsoft_prod_repo() {
     curl -fsSL "https://packages.microsoft.com/config/debian/${debian_major}/packages-microsoft-prod.deb" -o /tmp/packages-microsoft-prod.deb
     sudo dpkg -i /tmp/packages-microsoft-prod.deb
     rm -f /tmp/packages-microsoft-prod.deb
-    sudo apt update
+    apt_get update
     MS_PROD_REPO_DONE=1
 }
 
@@ -1381,10 +1676,10 @@ add_microsoft_prod_repo() {
 COREPACK_DONE=0
 enable_corepack() {
     [ "$COREPACK_DONE" = 1 ] && return 0
-    command -v corepack > /dev/null 2>&1 || npm install -g corepack
-    corepack enable
+    command -v corepack > /dev/null 2>&1 || { net_retry "corepack" npm install -g corepack || return 1; }
+    corepack enable || return $?
     if ! grep -q 'COREPACK_ENABLE_DOWNLOAD_PROMPT' ~/.bashrc; then
-        echo 'export COREPACK_ENABLE_DOWNLOAD_PROMPT=0   # let the pnpm/yarn shims fetch without asking' >> ~/.bashrc
+        echo 'export COREPACK_ENABLE_DOWNLOAD_PROMPT=0   # let the pnpm/yarn shims fetch without asking' >> ~/.bashrc || return $?
     fi
     export COREPACK_ENABLE_DOWNLOAD_PROMPT=0
     COREPACK_DONE=1
@@ -1429,7 +1724,7 @@ unlink_brew_openjdk() {
 JDK_DONE=0
 install_jdk_and_java_home() {
     [ "$JDK_DONE" = 1 ] && return 0
-    sudo apt install -y default-jdk
+    apt_get install -y default-jdk
     if [ -d /usr/lib/jvm/default-java ]; then
         JAVA_DIR=/usr/lib/jvm/default-java
     else
@@ -1476,8 +1771,10 @@ ensure_ollama_server() {
 
 # Rust Toolchain
 if [[ "$FLAGS" =~ " install-rust " ]]; then
+    stage install-rust
+    for _dev_stage_once in 1; do
     echo "Installing Rust toolchain..."
-    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+    vendor_install rustup https://sh.rustup.rs sh -y || { stage_failed "vendor installer" "$?"; break; }
     export PATH="$HOME/.cargo/bin:$PATH"
     if ! grep -q 'export PATH="$HOME/.cargo/bin:$PATH"' ~/.bashrc; then
         echo 'export PATH="$HOME/.cargo/bin:$PATH"' >> ~/.bashrc
@@ -1486,13 +1783,15 @@ if [[ "$FLAGS" =~ " install-rust " ]]; then
     rustup target add wasm32-unknown-unknown
     # v62: -f overwrites an existing ~/.cargo/bin/wasm-pack without the [y/N] prompt, so a rerun
     # still upgrades it but no longer waits for input.
-    curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh -s -- -f
+    vendor_install wasm-pack https://rustwasm.github.io/wasm-pack/installer/init.sh sh -f || { stage_failed "vendor installer" "$?"; break; }
+    done # v99: end this stage; exhausted retries break only this block
 else
     echo "Skipping Rust toolchain. (Run with 'install-rust' flag to enable)"
 fi
 
 # Go (Golang) Toolchain
 if [[ "$FLAGS" =~ " install-go " ]]; then
+    stage install-go
     echo "Installing Latest Go (Golang) Toolchain..."
     # v93: a failed lookup or download skips Go (a NOTICE, and the summary names it) instead of stopping the
     # run; the download is checked before the old /usr/local/go is removed, so a bad one leaves Go as it was.
@@ -1523,10 +1822,12 @@ fi
 
 # Node.js (via NVM) & AI Coding Agents
 if [[ "$FLAGS" =~ " install-node " ]]; then
+    stage install-node
+    for _dev_stage_once in 1; do
     echo "Installing NVM, Node.js, Claude Code, Codex, Gemini CLI, and aider..."
     # Alternatives deliberately not installed: fnm (a faster nvm drop-in) and bun (runtime +
     # package manager). Both would change the shell setup the test and init scripts reproduce.
-    curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.2/install.sh | bash
+    vendor_install nvm https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.2/install.sh bash || { stage_failed "vendor installer" "$?"; break; }
     if [ -d "$HOME/.config/nvm" ]; then
         export NVM_DIR="$HOME/.config/nvm"
     else
@@ -1555,7 +1856,7 @@ if [[ "$FLAGS" =~ " install-node " ]]; then
     # (With install-openclaw on this run, its own section below does it.)
     if [ -n "$NEW_NODE" ] && [ "$PREV_NODE" != "$NEW_NODE" ] && [[ ! "$FLAGS" =~ " install-openclaw " ]] \
         && npm ls -g --depth=0 openclaw > /dev/null 2>&1; then
-        npm install -g --allow-scripts=openclaw,koffi,protobufjs openclaw@latest || echo "NOTICE: rerun setup with install-openclaw to repair OpenClaw on $NEW_NODE."
+        net_retry "npm globals" npm install -g --allow-scripts=openclaw,koffi,protobufjs openclaw@latest || { stage_failed "npm globals" "$?"; break; }
     fi
     # v58: Gemini CLI next to Codex (both npm). It signs in with a Google account on first run,
     # or uses the GEMINI_API_KEY that dev-init exports.
@@ -1564,7 +1865,7 @@ if [[ "$FLAGS" =~ " install-node " ]]; then
     # node-pty and keytar are the native modules these CLIs build (terminal emulation, keychain).
     # The list is by name: if a later release adds another native dependency, npm's
     # "install-scripts" warning at the end of this step names it; add it here.
-    npm install -g --allow-scripts=@github/keytar,node-pty @openai/codex @google/gemini-cli
+    net_retry "npm globals" npm install -g --allow-scripts=@github/keytar,node-pty @openai/codex @google/gemini-cli || { stage_failed "npm globals" "$?"; break; }
     # v58: aider, a model-agnostic terminal coding agent. It reads ANTHROPIC_API_KEY / OPENAI_API_KEY /
     # GEMINI_API_KEY, or talks to local Ollama.
     # v59: aider's pipx route only supports Python 3.9-3.12 and trixie ships 3.13, so use the route
@@ -1621,7 +1922,7 @@ if [[ "$FLAGS" =~ " install-node " ]]; then
     # about multiple installations and may keep running the stale one.
     npm uninstall -g @anthropic-ai/claude-code > /dev/null 2>&1 || true
     echo "Installing Claude Code (native installer)..."
-    curl -fsSL https://claude.ai/install.sh | bash
+    vendor_install claude https://claude.ai/install.sh bash || { stage_failed "vendor installer" "$?"; break; }
 
     # Puppeteer: use the system Google Chrome (installed unconditionally above) instead of
     # downloading a ~300MB Chromium into ~/.cache/puppeteer for every project.
@@ -1631,17 +1932,23 @@ if [[ "$FLAGS" =~ " install-node " ]]; then
     fi
     export PUPPETEER_SKIP_DOWNLOAD=true
     export PUPPETEER_EXECUTABLE_PATH="/usr/bin/google-chrome-stable"
+    done # v99: end this stage; exhausted retries break only this block
 else
     echo "Skipping Node.js & AI agents. (Run with 'install-node' flag to enable)"
 fi
 
 # Web tooling: Angular CLI, corepack (pnpm/yarn shims), Composer (added in v58)
 if [[ "$FLAGS" =~ " install-web " ]]; then
+    stage install-web
+    for _dev_stage_once in 1; do
     echo "Installing web tooling (Angular CLI, corepack, Composer)..."
     # Node is guaranteed by the dependency guard. v65: corepack is enable_corepack() (shared with
     # install-tanstack).
-    enable_corepack
-    npm install -g @angular/cli
+    if enable_corepack; then :; else
+        corepack_rc=$?
+        stage_failed corepack "$corepack_rc"; break
+    fi
+    net_retry "npm globals" npm install -g @angular/cli || { stage_failed "npm globals" "$?"; break; }
     ng analytics disable --global > /dev/null 2>&1 || true
     # Composer for host-side Drupal/PHP work (ddev runs its own copy inside the web container).
     # Debian's package uses the php-cli installed in the base section.
@@ -1652,22 +1959,25 @@ if [[ "$FLAGS" =~ " install-web " ]]; then
     # v89: php-redis (phpredis) and php-memcached for the shared cache services (install-cache): Drupal's
     # redis and memcache modules, Laravel's default Redis client and Symfony's cache, lock and Messenger
     # adapters all use these two. Loaded by PHP whether or not a service runs; they only connect on use.
-    sudo apt install -y composer php-gd php-xml php-mbstring php-curl php-zip php-intl \
+    apt_get install -y composer php-gd php-xml php-mbstring php-curl php-zip php-intl \
         php-sqlite3 php-mysql php-pgsql php-redis php-memcached
     # v89: php-mongodb, the MongoDB driver (install-mongodb), on its own so a Debian without it only costs a
     # NOTICE. Laravel's mongodb/laravel-mongodb 5 and Doctrine's MongoDB ODM 2 accept ext-mongodb ^1.21 or 2.x;
     # Composer then picks the mongodb/mongodb library release that matches the extension (the newest 2.x
     # releases of that library want ext-mongodb 2.4+, which 'pecl install mongodb' would give).
-    sudo apt install -y php-mongodb \
+    apt_get install -y php-mongodb \
         || echo "NOTICE: could not install php-mongodb; PHP projects using MongoDB need it (pecl install mongodb works too)."
     echo "Angular CLI: $(ng version 2>/dev/null | grep -m1 'Angular CLI' || echo 'installed')"
     echo "Composer: $(composer --version 2>/dev/null | head -n 1)"
+    done # v99: end this stage; exhausted retries break only this block
 else
     echo "Skipping web tooling. (Run with 'install-web' flag to enable)"
 fi
 
 # TanStack CLI (added in v65)
 if [[ "$FLAGS" =~ " install-tanstack " ]]; then
+    stage install-tanstack
+    for _dev_stage_once in 1; do
     echo "Installing the TanStack CLI (@tanstack/cli) and enabling corepack for pnpm..."
     # Node is guaranteed by the dependency guard. The CLI's dependency tree has no install scripts,
     # so unlike the agent CLIs it needs no --allow-scripts list under npm 12.
@@ -1677,16 +1987,21 @@ if [[ "$FLAGS" =~ " install-tanstack " ]]; then
     #   tanstack add tanstack-query drizzle    add-ons to an existing project
     #   tanstack doc / tanstack search-docs    docs lookup (replaced the CLI's MCP server)
     # Bun stays out for the reason given in the Node section; the CLI scaffolds with pnpm.
-    enable_corepack
-    npm install -g @tanstack/cli
+    if enable_corepack; then :; else
+        corepack_rc=$?
+        stage_failed corepack "$corepack_rc"; break
+    fi
+    net_retry "npm globals" npm install -g @tanstack/cli || { stage_failed "npm globals" "$?"; break; }
     echo "TanStack CLI: $(tanstack --version 2>/dev/null || echo 'installed')"
     echo "E2E: Playwright can use the installed Chrome (use: { channel: 'chrome' }) with no browser download."
+    done # v99: end this stage; exhausted retries break only this block
 else
     echo "Skipping TanStack CLI. (Run with 'install-tanstack' flag to enable)"
 fi
 
 # Drupal hosting CLIs: Pantheon (Terminus), Acquia (acli), Upsun; DDEV global settings (added in v68)
 if [[ "$FLAGS" =~ " install-drupal " ]]; then
+    stage install-drupal
     echo "Installing Drupal hosting CLIs (Terminus, Acquia CLI, Upsun CLI)..."
     # One machine-level CLI per platform. Everything else Drupal (Drush, PHPStan + phpstan-drupal,
     # PHPCS + Coder, Rector, the ddev-drupal-contrib add-on) is a per-project Composer / DDEV
@@ -1696,7 +2011,7 @@ if [[ "$FLAGS" =~ " install-drupal " ]]; then
     # platform tokens into DDEV's global config, which is what makes 'ddev pull' work.
     # Composer and Drupal's PHP extensions come from install-web (dependency guard).
     # rsync and a MariaDB client: both CLIs shell out to them for file and database pulls.
-    sudo apt install -y rsync mariadb-client bash-completion
+    apt_get install -y rsync mariadb-client bash-completion
     mkdir -p ~/.local/bin ~/.local/share/bash-completion/completions
 
     # Release tags come from the releases/latest redirect, not the rate-limited GitHub API.
@@ -1796,10 +2111,11 @@ fi
 # 'devsvc info redis' has the .env lines to switch).
 # =================================================================
 if [[ "$FLAGS" =~ " install-laravel " ]]; then
+    stage install-laravel
     echo "================================================================="
     echo "Installing Laravel tooling (the Laravel installer, php-bcmath)..."
     echo "================================================================="
-    sudo DEBIAN_FRONTEND=noninteractive apt install -y php-bcmath
+    apt_get install -y php-bcmath
     PHP_OK=$(php -r 'echo PHP_VERSION_ID >= 80300 ? "yes" : "no";' 2> /dev/null || echo no)
     if [ "$PHP_OK" != yes ]; then
         echo "NOTICE: Laravel 13 needs PHP 8.3 or newer; php-cli here is $(php -r 'echo PHP_VERSION;' 2> /dev/null || echo missing)."
@@ -1847,6 +2163,7 @@ fi
 # user.name and user.email (dev-init sets them from secrets.env).
 # =================================================================
 if [[ "$FLAGS" =~ " install-symfony " ]]; then
+    stage install-symfony
     echo "================================================================="
     echo "Installing the Symfony CLI..."
     echo "================================================================="
@@ -1869,8 +2186,11 @@ if [[ "$FLAGS" =~ " install-symfony " ]]; then
         # Not fatal under set -e: a failed download or checksum leaves the rest of setup running.
         if curl -fsSL --retry 3 -o "$SF_TMP/$SF_DEB" "$SF_BASE/$SF_DEB" \
             && curl -fsSL --retry 3 -o "$SF_TMP/checksums.txt" "$SF_BASE/checksums.txt" \
-            && ( cd "$SF_TMP" && awk -v f="$SF_DEB" '$2 == f' checksums.txt | sha256sum -c - > /dev/null ); then
-            sudo DEBIAN_FRONTEND=noninteractive apt install -y "$SF_TMP/$SF_DEB" \
+            && ( cd "$SF_TMP" && awk -v f="$SF_DEB" '$2 == f' checksums.txt | sha256sum -c - > /dev/null ) \
+            && dpkg-deb --info "$SF_TMP/$SF_DEB" > /dev/null 2>&1; then
+            # v99 (Oct 31 2026: _apt could not traverse mktemp's 0700 directory).
+            chmod 755 "$SF_TMP"; chmod 644 "$SF_TMP/$SF_DEB"
+            apt_get install -y "$SF_TMP/$SF_DEB" \
                 && echo "Symfony CLI ${SF_TAG#v} installed${SF_HAVE:+ (was $SF_HAVE)}." \
                 || echo "NOTICE: apt could not install $SF_DEB; rerun setup with install-symfony."
         else
@@ -1922,6 +2242,7 @@ fi
 # GraphOS, where the Free plan caps self-hosted routers at 60 requests a minute.
 # =================================================================
 if [[ "$FLAGS" =~ " install-graphql " ]]; then
+    stage install-graphql
     echo "================================================================="
     echo "Installing Apollo GraphQL tooling (Rover, Router v2, Apollo MCP Server)..."
     echo "================================================================="
@@ -2020,6 +2341,7 @@ fi
 
 # PowerShell
 if [[ "$FLAGS" =~ " install-pwsh " ]]; then
+    stage install-pwsh
     echo "Installing PowerShell..."
     PWSH_DOWNLOAD_URL=$(curl -fsSL https://api.github.com/repos/PowerShell/PowerShell/releases/latest | grep "browser_download_url.*linux-x64.tar.gz" | cut -d '"' -f 4 | head -n 1)
     if [ -z "$PWSH_DOWNLOAD_URL" ]; then
@@ -2053,6 +2375,7 @@ fi
 
 # C / C++ toolchain extras (added in v63)
 if [[ "$FLAGS" =~ " install-cpp " ]]; then
+    stage install-cpp
     echo "Installing C/C++ tooling (gdb, valgrind, cmake, ninja, clang tools, lldb, ccache, meson)..."
     # gcc, g++, make and binutils are already there (build-essential, base section); this adds what
     # sits around the compiler. clang/cmake/ninja-build also appear under install-flutter; apt is
@@ -2060,7 +2383,7 @@ if [[ "$FLAGS" =~ " install-cpp " ]]; then
     # memcheck start on Debian (it needs ld.so's debug symbols for its mandatory redirections).
     # Debian's gcc is the C/C++ compiler here: Homebrew's gcc formula only provides gcc-NN / g++-NN
     # names for brew's own builds and does not shadow /usr/bin/gcc.
-    sudo apt install -y gdb valgrind libc6-dbg cmake ninja-build pkg-config \
+    apt_get install -y gdb valgrind libc6-dbg cmake ninja-build pkg-config \
         clang clangd clang-format clang-tidy lldb ccache meson
     echo "g++: $(g++ --version | head -n 1)   clang: $(clang --version | head -n 1)"
     echo "cmake: $(cmake --version | head -n 1)"
@@ -2071,10 +2394,11 @@ fi
 
 # Assembly (added in v63)
 if [[ "$FLAGS" =~ " install-asm " ]]; then
+    stage install-asm
     echo "Installing x86-64 assemblers (nasm, yasm)..."
     # GNU as and ld (AT&T or '.intel_syntax noprefix') are part of binutils via build-essential.
     # nasm is what most x86 books and tutorials assume; yasm reads the same syntax.
-    sudo apt install -y nasm yasm
+    apt_get install -y nasm yasm
     echo "nasm: $(nasm -v)"
 else
     echo "Skipping assemblers. (Run with 'install-asm' flag to enable)"
@@ -2082,17 +2406,19 @@ fi
 
 # AArch64 assembly/C cross toolchain + user-mode emulation (added in v63; opt-in, NOT in install-all)
 if [[ "$FLAGS" =~ " install-asm-arm " ]]; then
+    stage install-asm-arm
     echo "Installing AArch64 cross toolchain and qemu-user..."
     # The Chromebooks are all x86-64, so ARM code is cross-built (aarch64-linux-gnu-as/-ld/-gcc)
     # and run under qemu-aarch64. Static binaries run as-is; dynamically linked ones need
     # 'qemu-aarch64 -L /usr/aarch64-linux-gnu ./prog'.
-    sudo apt install -y gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu qemu-user
+    apt_get install -y gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu qemu-user
 else
     echo "Skipping AArch64 cross toolchain. (Run with 'install-asm-arm' flag to enable; not part of install-all)"
 fi
 
 # .NET SDK: C# and VB.NET (added in v63)
 if [[ "$FLAGS" =~ " install-dotnet " ]]; then
+    stage install-dotnet
     echo "Installing the .NET 10 SDK (C#, VB.NET)..."
     # PowerShell (install-pwsh) bundles a private runtime and provides no 'dotnet' command, so this is
     # the only .NET SDK on the machine. Microsoft's Debian 13 feed carries dotnet-sdk-10.0 (LTS);
@@ -2102,7 +2428,7 @@ if [[ "$FLAGS" =~ " install-dotnet " ]]; then
     # Works on Linux: console apps, libraries, ASP.NET Core, Avalonia GUIs. WinForms and WPF are
     # Windows-only, in both C# and VB.
     add_microsoft_prod_repo
-    sudo apt install -y dotnet-sdk-10.0
+    apt_get install -y dotnet-sdk-10.0
     # Guarded line by line: dev-init can add the opt-out on its own, which must not suppress the rest.
     grep -q 'DOTNET_CLI_TELEMETRY_OPTOUT' ~/.bashrc || echo 'export DOTNET_CLI_TELEMETRY_OPTOUT=1' >> ~/.bashrc
     grep -q 'DOTNET_NOLOGO' ~/.bashrc || echo 'export DOTNET_NOLOGO=1' >> ~/.bashrc
@@ -2119,6 +2445,8 @@ fi
 
 # Java: JDK, Maven, Gradle (added in v63)
 if [[ "$FLAGS" =~ " install-java " ]]; then
+    stage install-java
+    for _dev_stage_once in 1; do
     echo "Installing Java tooling (default-jdk, Maven, Gradle)..."
     # One JDK for everything: Debian's default-jdk, the same one the Android stacks use. Projects
     # pinned to another release (17, 25) would need SDKMAN or the Adoptium repo; deliberately not
@@ -2129,21 +2457,23 @@ if [[ "$FLAGS" =~ " install-java " ]]; then
     # which on Linux links its own java/javac ahead of /usr/bin (v64: unlinked right after).
     # gradle's launcher honours an exported JAVA_HOME, so with the line above both build tools
     # run on the Debian JDK. Projects that ship ./gradlew keep using their own pinned Gradle.
-    sudo apt install -y maven
-    brew install gradle
+    apt_get install -y maven
+    net_retry "Homebrew packages" brew install gradle || { stage_failed "Homebrew packages" "$?"; break; }
     unlink_brew_openjdk
     echo "java: $(java -version 2>&1 | head -n 1)"
     echo "maven: $(mvn -version 2>/dev/null | head -n 1)"
     echo "gradle: $(gradle --version 2>/dev/null | grep -m1 '^Gradle')"
     echo "Editors: Red Hat's Java extension is on Open VSX too, so VS Code, Cursor and Windsurf all take it."
+    done # v99: end this stage; exhausted retries break only this block
 else
     echo "Skipping Java tooling. (Run with 'install-java' flag to enable)"
 fi
 
 # Ruby Toolchain & Jekyll Dependencies
 if [[ "$FLAGS" =~ " install-ruby " ]]; then
+    stage install-ruby
     echo "Installing Ruby and Jekyll dependencies..."
-    sudo apt install -y ruby-full ruby-dev zlib1g-dev libyaml-dev
+    apt_get install -y ruby-full ruby-dev zlib1g-dev libyaml-dev
 
     if ! grep -q 'export GEM_HOME="$HOME/.gems"' ~/.bashrc; then
         echo 'export GEM_HOME="$HOME/.gems"' >> ~/.bashrc
@@ -2159,20 +2489,22 @@ fi
 
 # Visual Studio Code
 if [[ "$FLAGS" =~ " install-vscode " ]]; then
+    stage install-vscode
     echo "Installing VS Code..."
     KEY_TMP=$(mktemp)   # v65: was written to the current directory
     wget -qO- https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor > "$KEY_TMP"
     sudo install -D -o root -g root -m 644 "$KEY_TMP" /etc/apt/keyrings/packages.microsoft.gpg
     echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/packages.microsoft.gpg] https://packages.microsoft.com/repos/code stable main" | sudo tee /etc/apt/sources.list.d/vscode.list > /dev/null
     rm -f "$KEY_TMP"
-    sudo apt update
-    sudo apt install -y code
+    apt_get update
+    apt_get install -y code
 else
     echo "Skipping VS Code. (Run with 'install-vscode' flag to enable)"
 fi
 
 # Cursor
 if [[ "$FLAGS" =~ " install-cursor " ]]; then
+    stage install-cursor
     echo "Installing Cursor..."
     mkdir -p ~/.local/bin
 
@@ -2291,21 +2623,22 @@ fi
 
 # Windsurf
 if [[ "$FLAGS" =~ " install-windsurf " ]]; then
+    stage install-windsurf
     echo "Installing Windsurf..."
     KEY_TMP=$(mktemp)   # v65: was written to the current directory
     wget -qO- "https://windsurf-stable.codeiumdata.com/wVxQEIWkwPUEAGf3/windsurf.gpg" | gpg --dearmor > "$KEY_TMP"
     sudo install -D -o root -g root -m 644 "$KEY_TMP" /etc/apt/keyrings/windsurf-stable.gpg
     echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/windsurf-stable.gpg] https://windsurf-stable.codeiumdata.com/wVxQEIWkwPUEAGf3/apt stable main" | sudo tee /etc/apt/sources.list.d/windsurf.list > /dev/null
     rm -f "$KEY_TMP"
-    sudo apt update
+    apt_get update
     # v96: Windsurf is now Devin Desktop (1.126.0, Oct 26 2026): the package is devin-desktop, and windsurf is a
     # transitional package that pulls it in. Install devin-desktop by name, or windsurf where the source has no
     # devin-desktop yet. The flag keeps its name.
     if apt-cache policy devin-desktop 2> /dev/null | grep -q 'Candidate: [0-9]'; then
-        sudo apt install -y devin-desktop
+        apt_get install -y devin-desktop
     else
         echo "NOTICE: the Windsurf apt source offers no devin-desktop package yet; installing windsurf."
-        sudo apt install -y windsurf
+        apt_get install -y windsurf
     fi
     # v96: Devin Desktop on X11, from its own launcher entry and a terminal wrapper (Oct 26 2026). Under ChromeOS's
     # Wayland its window froze at sign-in (62 s of silence after devin.login, then "Fatal Wayland communication
@@ -2383,6 +2716,7 @@ fi
 
 # Lazarus 4.8
 if [[ "$FLAGS" =~ " install-lazarus " ]]; then
+    stage install-lazarus
     # v97 (found in the v97 Chromebook run 4, Oct 27 2026): every run downloaded the three debs (215 MB) and apt then
     # said "already the newest version". Each deb with the package version it installs (the file names carry the
     # build too: fpc-laz_3.2.2-210709 installs fpc-laz 3.2.2); when dpkg-query has all three at those versions, the
@@ -2424,9 +2758,9 @@ if [[ "$FLAGS" =~ " install-lazarus " ]]; then
         done
 
         echo "Installing Lazarus packages in strict order..."
-        sudo apt install -y "$ASSETS"/downloads/fpc-laz_*.deb
-        sudo apt install -y "$ASSETS"/downloads/fpc-src_*.deb
-        sudo apt install -y "$ASSETS"/downloads/lazarus-project_*.deb
+        apt_get install -y "$ASSETS"/downloads/fpc-laz_*.deb
+        apt_get install -y "$ASSETS"/downloads/fpc-src_*.deb
+        apt_get install -y "$ASSETS"/downloads/lazarus-project_*.deb
     fi
 
     echo "Cleaning up Lazarus installers..."
@@ -2481,7 +2815,7 @@ if [[ "$FLAGS" =~ " install-lazarus " ]]; then
     # install-cpp, and Lazarus 4's own debugger is FpDebug); GNU Global (gtags, global) is what the Pascal extension
     # (alefragnani.pascal) uses for Go to Definition and Find References, which otherwise says 'The "global" command
     # is not available'.
-    sudo apt install -y gdb global
+    apt_get install -y gdb global
 
     # v96: Go to Definition for Pascal (chosen Oct 27 2026, after the build found that gtags' built-in parsers don't
     # read Pascal: the tags gtags wrote for TDaemon were empty, and the Pascal extension's README says Global needs a
@@ -2491,7 +2825,7 @@ if [[ "$FLAGS" =~ " install-lazarus " ]]; then
     # per project would sit outside .vscode). The block takes the native setup from the system gtags.conf by
     # reference (tc=gtags@FILE, tc=htags@FILE), so Debian's file stays the source for everything but Pascal.
     if apt-cache policy universal-ctags 2> /dev/null | grep -q 'Candidate: [0-9]'; then
-        sudo apt install -y universal-ctags
+        apt_get install -y universal-ctags
     else
         echo "NOTICE: no universal-ctags package in the apt sources, so Go to Definition for Pascal was skipped (GNU Global's"
         echo "        own parsers don't read Pascal; the Pascal extension's code navigation finds nothing without it)."
@@ -2552,7 +2886,7 @@ if [[ "$FLAGS" =~ " install-lazarus " ]]; then
         exit 1
     fi
     echo "Setting up the Lazarus $LAZ_VER IDE on Qt5 (light and dark profiles, docked and floating layouts)..."
-    sudo apt install -y libqt5pas-dev qt5ct
+    apt_get install -y libqt5pas-dev qt5ct
     # The SourceForge tree is root's and read-only. The IDE's own units build into ~/.lazarus, but the final
     # make step of a Qt5 build writes here too and stops with "mkdir: Permission denied" without it (Oct 24 2026).
     # install -d also takes over a folder made by hand as root.
@@ -3585,6 +3919,7 @@ fi
 
 # Godot game engine: standard (GDScript) and .NET (C#) editors, side by side (added in v66)
 if [[ "$FLAGS" =~ " install-godot " ]] || [[ "$FLAGS" =~ " install-godot-templates " ]]; then
+    stage install-godot
     echo "Installing Godot (standard + .NET editors)..."
     # Crostini's GPU acceleration is OpenGL through virgl; Vulkan is not exposed. Godot's Forward+
     # and Mobile renderers need Vulkan, its Compatibility renderer needs OpenGL 3.3 / GLES 3.0,
@@ -3612,7 +3947,7 @@ if [[ "$FLAGS" =~ " install-godot " ]] || [[ "$FLAGS" =~ " install-godot-templat
 
     # Runtime libraries the official binaries dlopen. Chrome and GTK already pull most of them in;
     # named here so a base-only machine gets them too.
-    sudo apt install -y unzip libxcursor1 libxinerama1 libxrandr2 libxi6 libxkbcommon0 libgl1 libegl1 \
+    apt_get install -y unzip libxcursor1 libxinerama1 libxrandr2 libxi6 libxkbcommon0 libgl1 libegl1 \
         libpulse0 libfontconfig1 libdbus-1-3 mesa-utils
     # mesa-utils (glxinfo, eglinfo): the test script uses them to tell WHERE software rendering
     # comes from when Godot reports llvmpipe: no GPU in the VM, or only the X11 path unaccelerated.
@@ -3729,8 +4064,9 @@ fi
 
 # Flatpak & Media Tools
 if [[ "$FLAGS" =~ " install-media " ]]; then
+    stage install-media
     echo "Installing Flatpak, Handbrake, and KDiff3..."
-    sudo apt install -y flatpak gnome-software-plugin-flatpak plasma-discover-backend-flatpak
+    apt_get install -y flatpak gnome-software-plugin-flatpak plasma-discover-backend-flatpak
     sudo flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
     sudo flatpak install -y flathub fr.handbrake.ghb org.kde.kdiff3
 else
@@ -3739,13 +4075,17 @@ fi
 
 # Google Antigravity Platform
 if [[ "$FLAGS" =~ " install-antigravity " ]]; then
+    stage install-antigravity
+    for _dev_stage_once in 1; do
     echo "Installing Google Antigravity Platform..."
 
     echo "Creating Python virtual environment for Antigravity SDK..."
     make_venv "$HOME/.antigravity-env"
-    ~/.antigravity-env/bin/pip install google-antigravity
+    net_retry "pip packages" ~/.antigravity-env/bin/pip install google-antigravity || { stage_failed "pip packages" "$?"; break; }
 
-    curl -fsSL https://antigravity.google/cli/install.sh | bash
+    # v99: upstream's logging-before-google.Init prefix also labels successful information lines.
+    # Its local-bin prepend does not reorder Debian versus Homebrew. Keep genuine errors visible.
+    vendor_install antigravity https://antigravity.google/cli/install.sh bash || { stage_failed "vendor installer" "$?"; break; }
 
     # v73: install the graphical Antigravity from a tarball you downloaded into ./assets. Google ships the
     # current IDE (and the separate Antigravity 2.0 desktop app) only as tarballs on
@@ -3838,6 +4178,7 @@ EOF
         echo "================================================================="
         echo "NOTICE: no Antigravity IDE / desktop-app tarball found."
         echo "Download the Linux x64 tarball of Antigravity IDE (and/or the Antigravity 2.0"
+        stage_skip "media: Antigravity desktop archives not supplied"
         echo "desktop app) from https://antigravity.google/download, put it in"
         echo "  $ASSETS"
         echo "and rerun with install-antigravity. The CLI (agy) and the SDK are installed already."
@@ -3849,18 +4190,21 @@ EOF
     echo "you must activate the virtual environment first by running:"
     echo "  source ~/.antigravity-env/bin/activate"
     echo "================================================================="
+    done # v99: end this stage; exhausted retries break only this block
 else
     echo "Skipping Google Antigravity Platform. (Run with 'install-antigravity' flag to enable)"
 fi
 
 # Mobile App Development Frameworks
 if [[ "$FLAGS" =~ " install-mobile " ]] || [[ "$FLAGS" =~ " install-tauri " ]] || [[ "$FLAGS" =~ " install-rn " ]] || [[ "$FLAGS" =~ " install-flutter " ]] || [[ "$FLAGS" =~ " install-android-native " ]]; then
+    stage android-tools
+    for _dev_stage_once in 1; do
     echo "================================================================="
     echo "Installing Base Android Dependencies & Command-Line Tools..."
     echo "================================================================="
     # v63: JDK + JAVA_HOME now come from install_jdk_and_java_home() (shared with install-java).
     install_jdk_and_java_home
-    sudo apt install -y wget unzip
+    apt_get install -y wget unzip
 
     mkdir -p $HOME/.android/sdk/cmdline-tools
     export ANDROID_HOME="$HOME/.android/sdk"
@@ -3926,20 +4270,20 @@ if [[ "$FLAGS" =~ " install-mobile " ]] || [[ "$FLAGS" =~ " install-tauri " ]] |
         echo "Setting up Tauri for Mobile..."
         # v51: prebuilt CLI via npm instead of 'cargo install tauri-cli', which compiles from
         # source for 20-30 min on an N305. Node is guaranteed here by the dependency guard.
-        npm install -g @tauri-apps/cli
+        net_retry "npm globals" npm install -g @tauri-apps/cli || { stage_failed "npm globals" "$?"; break; }
         rustup target add aarch64-linux-android armv7-linux-androideabi i686-linux-android x86_64-linux-android
     fi
 
     if [[ "$FLAGS" =~ " install-mobile " ]] || [[ "$FLAGS" =~ " install-rn " ]]; then
         echo "Setting up React Native (Expo CLI)..."
         # v62: same npm 12 allow-list as install-node; these two are eas-cli's scripted dependencies.
-        npm install -g --allow-scripts=dtrace-provider,protobufjs eas-cli
+        net_retry "npm globals" npm install -g --allow-scripts=dtrace-provider,protobufjs eas-cli || { stage_failed "npm globals" "$?"; break; }
     fi
 
     if [[ "$FLAGS" =~ " install-mobile " ]] || [[ "$FLAGS" =~ " install-flutter " ]]; then
         echo "Setting up Flutter..."
         # v52: Linux desktop target toolchain ('flutter doctor' flagged these); harmless if unused.
-        sudo apt install -y clang cmake ninja-build mesa-utils
+        apt_get install -y clang cmake ninja-build mesa-utils
         if [ -d "$HOME/.flutter/.git" ]; then
             echo "Flutter already present at ~/.flutter, updating instead of cloning..."
             git -C "$HOME/.flutter" pull --ff-only
@@ -3955,12 +4299,15 @@ if [[ "$FLAGS" =~ " install-mobile " ]] || [[ "$FLAGS" =~ " install-tauri " ]] |
     if [[ "$FLAGS" =~ " install-mobile " ]] || [[ "$FLAGS" =~ " install-tauri " ]]; then
         echo "Tauri CLI is the npm build: use 'tauri android init' (not 'cargo tauri ...')."
     fi
+    done # v99: end this stage; exhausted retries break only this block
 else
     echo "Skipping Mobile Frameworks. (Run with 'install-mobile', 'install-tauri', 'install-rn', or 'install-flutter' flag to enable)"
 fi
 
 # Native Android (Kotlin) development: Android Studio + Kotlin compiler
 if [[ "$FLAGS" =~ " install-android-native " ]]; then
+    stage install-android-native
+    for _dev_stage_once in 1; do
     echo "================================================================="
     echo "Installing Native Android (Kotlin) Development Tools..."
     echo "================================================================="
@@ -3980,7 +4327,7 @@ if [[ "$FLAGS" =~ " install-android-native " ]]; then
         # partial is kept on failure rather than deleted.
         if wget -c --tries=10 --waitretry=5 --retry-connrefused --progress=bar:force \
                 -O /tmp/android-studio.deb "$ANDROID_STUDIO_URL"; then
-            sudo apt install -y /tmp/android-studio.deb
+            apt_get install -y /tmp/android-studio.deb
             rm -f /tmp/android-studio.deb
         else
             echo "ERROR: Android Studio download failed after retries; the partial file is kept."
@@ -4019,7 +4366,7 @@ if [[ "$FLAGS" =~ " install-android-native " ]]; then
     # Standalone Kotlin compiler for scripts/REPL use. Android projects don't need this
     # (the Gradle Kotlin plugin ships its own compiler), but it's handy for kotlinc/kts.
     echo "Installing standalone Kotlin compiler via Homebrew..."
-    brew install kotlin
+    net_retry "Homebrew packages" brew install kotlin || { stage_failed "Homebrew packages" "$?"; break; }
     unlink_brew_openjdk   # v64: kotlin depends on brew's openjdk too; kotlinc uses JAVA_HOME
 
     echo ""
@@ -4032,17 +4379,19 @@ if [[ "$FLAGS" =~ " install-android-native " ]]; then
     echo "     'flutter devices' all show the Chromebook as a connected device."
     echo "  3. Give the Linux VM more disk (ChromeOS Settings -> Linux -> Disk size);"
     echo "     Studio + SDK + Gradle caches need ~10GB, and close Ollama while building."
+    done # v99: end this stage; exhausted retries break only this block
 else
     echo "Skipping Native Android (Kotlin) tools. (Run with 'install-android-native' flag to enable)"
 fi
 
 # Database Connectivity & Extraction
 if [[ "$FLAGS" =~ " install-db " ]]; then
+    stage install-db
     echo "================================================================="
     echo "Installing Database Connectivity & Extraction Tools..."
     echo "================================================================="
 
-    sudo apt install -y unixodbc unixodbc-dev odbc-mdbtools
+    apt_get install -y unixodbc unixodbc-dev odbc-mdbtools
 
     # v63: the repo step is now add_microsoft_prod_repo() (shared with install-dotnet).
     add_microsoft_prod_repo
@@ -4050,12 +4399,12 @@ if [[ "$FLAGS" =~ " install-db " ]]; then
     sudo env ACCEPT_EULA=Y apt install -y msodbcsql18
 
     echo "Installing pxlib for Paradox data extraction..."
-    sudo apt install -y pxlib1 pxlib-dev
+    apt_get install -y pxlib1 pxlib-dev
 
     echo "Installing native Lazarus database client libraries..."
-    sudo apt install -y libpq-dev       # PostgreSQL
-    sudo apt install -y libmariadb-dev  # MariaDB / MySQL
-    sudo apt install -y libsqlite3-dev  # SQLite
+    apt_get install -y libpq-dev       # PostgreSQL
+    apt_get install -y libmariadb-dev  # MariaDB / MySQL
+    apt_get install -y libsqlite3-dev  # SQLite
 
     # v80: Firebird 4 (Debian's firebird4.0): client library, tools and the embedded engine, so a
     # program or a Lazarus app opens a .fdb file directly with no server running. Firebird forked
@@ -4073,7 +4422,7 @@ if [[ "$FLAGS" =~ " install-db " ]]; then
     # library names does not always match what Debian ships, and with InterBase installed too the
     # loader is how a program says which of the two it means.
     echo "Installing Firebird 4 (client library, tools, embedded engine)..."
-    sudo DEBIAN_FRONTEND=noninteractive apt install -y libfbclient2 firebird-dev firebird-utils firebird4.0-utils firebird4.0-server-core
+    apt_get install -y libfbclient2 firebird-dev firebird-utils firebird4.0-utils firebird4.0-server-core
     # Embedded access keeps lock files in a shared directory (/tmp/firebird unless told otherwise).
     # If another user or a server package created it first, every embedded open fails with "Can
     # not access lock files directory". Probe once with a throwaway database; if the default fails
@@ -4213,6 +4562,7 @@ DUCKDB_MEMBERS
 
 # Extra ODBC drivers: SQLite, PostgreSQL, MariaDB, and DuckDB (CSV/TSV/JSON/Parquet over SQL)
 if [[ "$FLAGS" =~ " install-db-extra " ]]; then
+    stage install-db-extra
     echo "================================================================="
     echo "Installing Extra ODBC Drivers (SQLite, PostgreSQL, MariaDB, DuckDB)..."
     echo "================================================================="
@@ -4220,7 +4570,7 @@ if [[ "$FLAGS" =~ " install-db-extra " ]]; then
     #   libsqliteodbc   -> [SQLite3]            (includes SQLite's csv virtual-table module)
     #   odbc-postgresql -> [PostgreSQL Unicode]  (and [PostgreSQL ANSI])
     #   odbc-mariadb    -> [MariaDB Unicode]     (works for MySQL too)
-    sudo apt install -y unixodbc libsqliteodbc odbc-postgresql odbc-mariadb
+    apt_get install -y unixodbc libsqliteodbc odbc-postgresql odbc-mariadb
 
     echo "Installing DuckDB ODBC driver (queries CSV/TSV/JSON/Parquet files directly with SQL)..."
     DUCKDB_ODBC_DIR="/opt/duckdb-odbc"
@@ -4284,6 +4634,7 @@ fi
 # exists. That folder is removed once InterBase is installed; the zip itself stays in ./assets.
 # =================================================================
 if [[ "$FLAGS" =~ " install-interbase " ]]; then
+    stage install-interbase
     echo "================================================================="
     echo "Installing Embarcadero InterBase from ./assets..."
     echo "================================================================="
@@ -4305,6 +4656,7 @@ if [[ "$FLAGS" =~ " install-interbase " ]]; then
         IB_SH=$(find "$ASSETS" -maxdepth 5 -type f -name 'install_linux_x86_64.sh' 2> /dev/null | head -n 1 || true)
         IB_SLIP=$(find "$ASSETS" -maxdepth 5 -type f \( -name '*.slip' -o -name 'reg_*.txt' \) 2> /dev/null | head -n 1 || true)
         if [ -z "$IB_BIN$IB_SH" ]; then
+            stage_skip "media: InterBase installer not supplied"
             echo "================================================================="
             echo "NOTICE: no InterBase installer found. Download InterBase for Linux (the free Developer"
             echo "Edition: https://www.embarcadero.com/products/interbase/developer/free-download), put the"
@@ -4521,10 +4873,11 @@ fi
 # One file lands outside /opt and your home directory: the libaio compatibility link (see below).
 # =================================================================
 if [[ "$FLAGS" =~ " install-mssql " ]] || [[ "$FLAGS" =~ " install-oracle " ]]; then
+    stage db-server-tools
     echo "================================================================="
     echo "Installing database servers (Docker containers, clients, ODBC drivers)..."
     echo "================================================================="
-    sudo apt install -y unixodbc unixodbc-dev unzip bzip2
+    apt_get install -y unixodbc unixodbc-dev unzip bzip2
     mkdir -p ~/.local/bin
     DB_MIN_FREE_GB="${DEV_DB_MIN_FREE_GB:-$(disk_margin_gb 10)}"
     # v92: why an engine's container was not created goes into ~/.config/devdb/<engine>.skipped (engine,
@@ -4533,6 +4886,7 @@ if [[ "$FLAGS" =~ " install-mssql " ]] || [[ "$FLAGS" =~ " install-oracle " ]]; 
     # The file is removed once the container exists.
     mkdir -p "$HOME/.config/devdb"
     db_skipped() {   # db_skipped ENGINE REASON: record why ENGINE's container is missing
+        case "$2" in disk:*) stage_skip "disk: install-$1" ;; esac
         printf '%s\n' "$2" > "$HOME/.config/devdb/$1.skipped"
     }
     # Every docker call here goes through sudo: the docker group from the base section only applies
@@ -4549,9 +4903,7 @@ if [[ "$FLAGS" =~ " install-mssql " ]] || [[ "$FLAGS" =~ " install-oracle " ]]; 
     }
     # Letters, digits and '_', starting with a letter: both engines take it unquoted, and it meets SQL
     # Server's policy (three of upper case, lower case, digits and symbols).
-    db_new_password() {
-        printf 'Dev_%s_%s9' "$(tr -dc 'A-Za-z0-9' < /dev/urandom | head -c 16)" "$(tr -dc 'A-Z' < /dev/urandom | head -c 1)"
-    }
+    db_new_password() { dev_password; }
     db_pull() {   # db_pull IMAGE ESTIMATED_GB ENGINE: pull it, or check for an update; 1 = the image is not here
         local img=$1 est=$2 engine=$3 free_gb
         if sudo docker image inspect "$img" > /dev/null 2>&1; then
@@ -4581,6 +4933,7 @@ fi
 
 # SQL Server 2025 (install-mssql, part of install-db-server; added in v82)
 if [[ "$FLAGS" =~ " install-mssql " ]]; then
+    stage install-mssql
     echo "--- SQL Server 2025 (install-mssql)"
     MSSQL_IMAGE="${MSSQL_IMAGE:-mcr.microsoft.com/mssql/server:2025-latest}"
     MSSQL_MEM_MB="${MSSQL_MEMORY_MB:-2048}"
@@ -4643,6 +4996,7 @@ fi
 
 # Oracle AI Database 26ai Free (install-oracle, part of install-db-server; added in v82)
 if [[ "$FLAGS" =~ " install-oracle " ]]; then
+    stage install-oracle
     echo "--- Oracle AI Database 26ai Free (install-oracle)"
     # Both images have a database built in, so a first start takes a minute or two. Oracle Free's
     # limits: 2 CPU threads, 2 GB of RAM, 12 GB of user data, and one instance per machine (a second
@@ -4708,7 +5062,7 @@ if [[ "$FLAGS" =~ " install-oracle " ]]; then
     # Instant Client is linked against libaio.so.1. Trixie's time_t transition renamed the library to
     # libaio.so.1t64 (the same ABI on 64-bit), so the usual compatibility link is added next to it, in
     # the system library directory: the one file this section puts outside /opt and your home.
-    sudo apt install -y libaio1t64 || sudo apt install -y libaio1
+    apt_get install -y libaio1t64 || apt_get install -y libaio1
     if [ ! -e /usr/lib/x86_64-linux-gnu/libaio.so.1 ] && [ -e /usr/lib/x86_64-linux-gnu/libaio.so.1t64 ]; then
         sudo ln -s libaio.so.1t64 /usr/lib/x86_64-linux-gnu/libaio.so.1
         echo "Added /usr/lib/x86_64-linux-gnu/libaio.so.1 -> libaio.so.1t64 (for Instant Client)."
@@ -4812,6 +5166,7 @@ fi
 
 # The 'mssql' and 'oracle' commands (v82): one script, ~/.local/bin/devdb, under two more names.
 if [[ "$FLAGS" =~ " install-mssql " ]] || [[ "$FLAGS" =~ " install-oracle " ]]; then
+    stage db-server-commands
     cat > "$HOME/.local/bin/devdb" << 'DEVDB_EOF'
 #!/bin/bash
 # devdb, mssql, oracle: start, stop and open the database servers of dev-setup's install-db-server
@@ -5012,7 +5367,7 @@ fi
 # (mode 600), which the 'ldap' command, dev-test, dev-init and dev-demo read, and from then on that file
 # wins: it holds what the directories were created with. Start over (deletes the directories):
 #   docker rm -f devldap-lldap && docker volume rm devldap-lldap-data
-#   sudo apt purge -y slapd && sudo rm -rf /var/lib/ldap /etc/ldap/slapd.d     (full only)
+#   apt_get purge -y slapd && sudo rm -rf /var/lib/ldap /etc/ldap/slapd.d     (full only)
 #   rm ~/.config/devldap/ldap.env, then rerun setup with the same flags
 # DDEV: Drupal in DDEV's web container reaches lldap as ldap://lldap:3890 (the container joins DDEV's
 # ddev_default network under that name; 'ldap up' joins it again once DDEV has recreated the network)
@@ -5022,6 +5377,7 @@ fi
 # on a newer image; the volume stays.
 # =================================================================
 if [[ "$FLAGS" =~ " install-ldap " ]]; then
+    stage install-ldap
     LDAP_FULL=0
     [[ "$FLAGS" =~ " install-ldap-full " ]] && LDAP_FULL=1
     echo "================================================================="
@@ -5031,7 +5387,7 @@ if [[ "$FLAGS" =~ " install-ldap " ]]; then
         echo "Installing an LDAP directory: lldap (install-ldap)..."
     fi
     echo "================================================================="
-    sudo apt install -y ldap-utils php-ldap jq
+    apt_get install -y ldap-utils php-ldap jq
     LDAP_CFG="$HOME/.config/devldap"
     LDAP_ENV_FILE="$LDAP_CFG/ldap.env"
     LDAP_BOOT="$LDAP_CFG/lldap-bootstrap"
@@ -5052,9 +5408,9 @@ if [[ "$FLAGS" =~ " install-ldap " ]]; then
         done
         printf '%s' "$v"
     }
-    ldap_random() { tr -dc 'A-Za-z0-9' < /dev/urandom | head -c "${1:-16}"; }
+    ldap_random() { random_chars "${1:-16}"; }
     # Letters, digits and '_', like the database passwords: safe unquoted everywhere, 8+ characters.
-    ldap_new_password() { printf 'Dev_%s_%s9' "$(ldap_random 16)" "$(tr -dc 'A-Z' < /dev/urandom | head -c 1)"; }
+    ldap_new_password() { dev_password; }
     ldap_quote() { printf "'%s'" "${1//\'/\'\\\'\'}"; }
 
     LDAP_BASE_DN=$(ldap_value LDAP_BASE_DN)
@@ -5200,7 +5556,7 @@ slapd slapd/backend select MDB
 slapd slapd/purge_database boolean false
 slapd slapd/move_old_database boolean true
 EOF
-            sudo DEBIAN_FRONTEND=noninteractive apt install -y slapd
+            apt_get install -y slapd
             sudo systemctl enable slapd > /dev/null 2>&1 || true
             sudo systemctl start slapd || true
             if ! systemctl is-active --quiet slapd; then
@@ -5507,6 +5863,7 @@ for DS_F in redis memcached solr opensearch elasticsearch meilisearch typesense 
     [[ "$FLAGS" == *" install-$DS_F "* ]] && DEVSVC_ANY=1
 done
 if [ "$DEVSVC_ANY" = 1 ]; then
+    stage devsvc-config
     echo "================================================================="
     echo "Installing shared development services (devsvc)..."
     echo "================================================================="
@@ -5547,7 +5904,11 @@ if [ "$DEVSVC_ANY" = 1 ]; then
             [ -n "$DS_V" ] || DS_V=$(devsvc_value "$DS_K")
             # Letters, digits and '_', upper and lower case and a digit: OpenSearch's password rules
             # (one of each, and a non-alphanumeric) and every URL and header take it as it is.
-            [ -n "$DS_V" ] || DS_V="Dev_$(tr -dc 'A-Za-z0-9' < /dev/urandom | head -c 20)9"
+            if [ -z "$DS_V" ]; then
+                DS_RANDOM=$(random_chars 20)   # failure aborts before any credential is stored
+                [[ "$DS_RANDOM" =~ ^[A-Za-z0-9]{20}$ ]] || { echo 'ERROR: invalid generated service credential' >&2; exit 1; }
+                DS_V="Dev_${DS_RANDOM}9"
+            fi
         fi
         printf -v "$DS_K" '%s' "$DS_V"
     done
@@ -5657,9 +6018,10 @@ fi
 
 # Redis 8 (install-redis, part of install-cache; added in v89)
 if [[ "$FLAGS" =~ " install-redis " ]]; then
+    stage install-redis
     echo "--- Redis 8 (install-redis)"
     # redis-cli and redis-benchmark on the host (Debian's redis-tools: 8.0 on trixie, which talks to 8.x).
-    sudo apt install -y redis-tools
+    apt_get install -y redis-tools
     REDIS_IMAGE="${REDIS_IMAGE:-redis:8}"
     REDIS_MAXMEMORY="${REDIS_MAXMEMORY:-256mb}"
     REDIS_MAXMEMORY_POLICY="${REDIS_MAXMEMORY_POLICY:-allkeys-lru}"
@@ -5695,19 +6057,26 @@ if [[ "$FLAGS" =~ " install-redis " ]]; then
             RI_DEB="Redis-Insight-linux-amd64.deb"
             RI_TMP=$(mktemp -d)
             if curl -fsSL --retry 3 -o "$RI_TMP/$RI_DEB" "$RI_BASE/$RI_DEB" && dpkg-deb --info "$RI_TMP/$RI_DEB" > /dev/null 2>&1; then
-                RI_OK=1
+                # v99: a public checksum is published here; a failed fetch must not bypass it
+                # before making the package apt-readable (bundle download-verification rule).
+                RI_OK=0
                 if curl -fsSL --retry 3 -o "$RI_TMP/latest-linux.yml" "$RI_BASE/latest-linux.yml" 2> /dev/null; then
                     RI_WANT=$(awk -v f="$RI_DEB" '$0 ~ "url: *"f"$" {getline; sub(/^ *sha512: */, ""); print; exit}' "$RI_TMP/latest-linux.yml")
                     RI_GOT=$(openssl dgst -sha512 -binary "$RI_TMP/$RI_DEB" | base64 -w0)
                     if [ -z "$RI_WANT" ]; then
-                        echo "NOTICE: latest-linux.yml does not list $RI_DEB; installing on dpkg's integrity check alone."
+                        echo "NOTICE: latest-linux.yml does not list $RI_DEB; keeping the installed version. Rerun setup with install-redis."
                     elif [ "$RI_WANT" != "$RI_GOT" ]; then
                         echo "NOTICE: $RI_DEB does not match the release's SHA-512; not installed. Rerun setup with install-redis."
-                        RI_OK=0
+                    else
+                        RI_OK=1
                     fi
+                else
+                    echo "NOTICE: could not fetch Redis Insight's checksum manifest; keeping the installed version. Rerun setup with install-redis."
                 fi
                 if [ "$RI_OK" = 1 ]; then
-                    sudo DEBIAN_FRONTEND=noninteractive apt install -y "$RI_TMP/$RI_DEB" \
+                    # v99: expose only the verified public package to apt's sandbox.
+                    chmod 755 "$RI_TMP"; chmod 644 "$RI_TMP/$RI_DEB"
+                    apt_get install -y "$RI_TMP/$RI_DEB" \
                         && echo "Redis Insight ${RI_TAG#v} installed${RI_HAVE:+ (was $RI_HAVE)}: pick it from the ChromeOS launcher." \
                         || echo "NOTICE: apt could not install $RI_DEB; rerun setup with install-redis."
                 fi
@@ -5724,6 +6093,7 @@ fi
 
 # Memcached 1.6 (install-memcached, part of install-cache; added in v89)
 if [[ "$FLAGS" =~ " install-memcached " ]]; then
+    stage install-memcached
     echo "--- Memcached 1.6 (install-memcached)"
     MEMCACHED_IMAGE="${MEMCACHED_IMAGE:-memcached:1.6}"
     MEMCACHED_MB="${MEMCACHED_MB:-64}"
@@ -5755,6 +6125,7 @@ devsvc_hub_tag() {
 
 # Solr 9.10 (install-solr, part of install-search)
 if [[ "$FLAGS" =~ " install-solr " ]]; then
+    stage install-solr
     echo "--- Solr 9.10 (install-solr)"
     # solr:9.10 follows 9.10's bug-fix releases. search_api_solr calls Solr 10 experimental; to try it:
     # SOLR_IMAGE=solr:10.0 (a 9.x data volume is not guaranteed to open in 10: start that one over).
@@ -5775,6 +6146,7 @@ fi
 
 # OpenSearch 3 (install-opensearch, part of install-search)
 if [[ "$FLAGS" =~ " install-opensearch " ]]; then
+    stage install-opensearch
     echo "--- OpenSearch 3 (install-opensearch)"
     OPENSEARCH_IMAGE="${OPENSEARCH_IMAGE:-opensearchproject/opensearch:3}"
     # The security plugin stays on (user admin, OPENSEARCH_ADMIN_PASSWORD, which the image's demo setup
@@ -5794,6 +6166,7 @@ fi
 
 # Elasticsearch 9 (install-elasticsearch: opt-in, in no group, not in install-all)
 if [[ "$FLAGS" =~ " install-elasticsearch " ]]; then
+    stage install-elasticsearch
     echo "--- Elasticsearch 9 (install-elasticsearch)"
     ELASTICSEARCH_IMAGE="${ELASTICSEARCH_IMAGE:-elasticsearch:$(devsvc_hub_tag library/elasticsearch '^9\.[0-9]+\.[0-9]+$' 9.5.4 devsvc-elasticsearch)}"
     # Host port 9201, so it never clashes with OpenSearch's 9200 (inside Docker's networks it is 9200).
@@ -5813,6 +6186,7 @@ fi
 
 # Meilisearch 1.x (install-meilisearch, part of install-search)
 if [[ "$FLAGS" =~ " install-meilisearch " ]]; then
+    stage install-meilisearch
     echo "--- Meilisearch (install-meilisearch)"
     MEILISEARCH_IMAGE="${MEILISEARCH_IMAGE:-getmeili/meilisearch:$(devsvc_hub_tag getmeili/meilisearch '^v1\.[0-9]+\.[0-9]+$' v1.54.0 devsvc-meilisearch)}"
     # The Community Edition (MIT). MEILI_ENV=development keeps the search preview page at
@@ -5830,11 +6204,54 @@ fi
 
 # Typesense 30 (install-typesense, part of install-search)
 if [[ "$FLAGS" =~ " install-typesense " ]]; then
+    stage install-typesense
     echo "--- Typesense (install-typesense)"
     TYPESENSE_IMAGE="${TYPESENSE_IMAGE:-typesense/typesense:$(devsvc_hub_tag typesense/typesense '^30\.[0-9]+$' 30.2 devsvc-typesense)}"
     # Typesense keeps its index in RAM (and on disk for restarts): small projects only on this machine.
     # Every request carries the API key, local ones included.
     DS_ARGS=(-p 127.0.0.1:8108:8108 -v devsvc-typesense-data:/data --memory 1g)
+    # v99 (Nov 1 2026: eldrid exit 139, empty logs, even --version): Typesense #2998.
+    # Missing optional kernel I/O accounting triggers brpc logging before glog initialization.
+    # Scope the upstream-documented shim to this container only; retain real metrics where present.
+    if [ ! -r /proc/self/io ]; then
+        TS_COMPAT_ROOT="$ASSETS/tools/typesense"
+        mkdir -p "$TS_COMPAT_ROOT"
+        cat > "$TS_COMPAT_ROOT/proc-io-compat.c" << 'TS_PROC_IO_C'
+/* dev-bundle v99, Nov 1 2026: Typesense #2998, brpc logs before glog is initialized.
+ * Kernel process-I/O accounting is optional. Only ENOENT on this one read-only path
+ * gets zero counters; do not hide access errors or replace real kernel metrics. */
+#define _GNU_SOURCE
+#include <dlfcn.h>
+#include <errno.h>
+#include <stdatomic.h>
+#include <stdio.h>
+#include <string.h>
+#include <unistd.h>
+
+static FILE *open_stream(const char *path, const char *mode, const char *symbol) {
+    FILE *(*next_open)(const char *, const char *) = dlsym(RTLD_NEXT, symbol);
+    if (!next_open) { errno = ENOSYS; return NULL; }
+    FILE *stream = next_open(path, mode);
+    if (stream || errno != ENOENT || strcmp(path, "/proc/self/io") != 0 ||
+        (strcmp(mode, "r") != 0 && strcmp(mode, "re") != 0)) return stream;
+    static char counters[] = "rchar: 0\nwchar: 0\nsyscr: 0\nsyscw: 0\nread_bytes: 0\nwrite_bytes: 0\ncancelled_write_bytes: 0\n";
+    static atomic_flag warned = ATOMIC_FLAG_INIT;
+    if (!atomic_flag_test_and_set(&warned)) {
+        static const char note[] = "dev-bundle: kernel /proc/self/io unavailable; Typesense process-I/O counters report zero (upstream #2998).\n";
+        (void)write(STDERR_FILENO, note, sizeof(note) - 1);
+    }
+    return fmemopen(counters, sizeof(counters) - 1, "r");
+}
+FILE *fopen(const char *path, const char *mode) { return open_stream(path, mode, "fopen"); }
+FILE *fopen64(const char *path, const char *mode) { return open_stream(path, mode, "fopen64"); }
+TS_PROC_IO_C
+        gcc -std=c11 -shared -fPIC -O2 -Wall -Wextra -Werror \
+            -o "$TS_COMPAT_ROOT/proc-io-compat.so.new" "$TS_COMPAT_ROOT/proc-io-compat.c" -ldl
+        mv -f "$TS_COMPAT_ROOT/proc-io-compat.so.new" "$TS_COMPAT_ROOT/proc-io-compat.so"
+        DS_ARGS+=(--mount "type=bind,src=$TS_COMPAT_ROOT/proc-io-compat.so,dst=/opt/dev-bundle/proc-io-compat.so,readonly"
+            --env LD_PRELOAD=/opt/dev-bundle/proc-io-compat.so)
+        echo "Typesense: kernel /proc/self/io absent; compatibility shim enabled (process-I/O counters zero; upstream #2998)."
+    fi
     DS_CMD=(--data-dir /data --api-key "$TYPESENSE_API_KEY" --enable-cors)
     devsvc_container typesense "$TYPESENSE_IMAGE" || true
     echo "Typesense: http://127.0.0.1:8108 here, http://devtypesense:8108 from DDEV, API key 'devsvc password typesense'. 'devsvc up typesense'."
@@ -5860,7 +6277,9 @@ devsvc_deb() {
     if ! dpkg-deb --info "$tmp/$pkg.deb" > /dev/null 2>&1; then
         echo "NOTICE: the $pkg download is not a valid .deb; not installed."; rm -rf "$tmp"; return 0
     fi
-    sudo DEBIAN_FRONTEND=noninteractive apt install -y "$tmp/$pkg.deb" > /dev/null \
+    # v99: verification above is private; _apt may read the validated public .deb now.
+    chmod 755 "$tmp"; chmod 644 "$tmp/$pkg.deb"
+    apt_get install -y "$tmp/$pkg.deb" > /dev/null \
         && echo "$pkg $ver installed${have:+ (was $have)}." \
         || echo "NOTICE: apt could not install $pkg $ver."
     rm -rf "$tmp"
@@ -5874,6 +6293,7 @@ gh_latest() {
 
 # Qdrant (install-qdrant, part of install-vector)
 if [[ "$FLAGS" =~ " install-qdrant " ]]; then
+    stage install-qdrant
     echo "--- Qdrant (install-qdrant)"
     QDRANT_IMAGE="${QDRANT_IMAGE:-qdrant/qdrant:$(devsvc_hub_tag qdrant/qdrant '^v1\.[0-9]+\.[0-9]+$' v1.19.0 devsvc-qdrant)}"
     DS_ARGS=(-p 127.0.0.1:6333:6333 -p 127.0.0.1:6334:6334 -v devsvc-qdrant-data:/qdrant/storage --memory 1g
@@ -5889,6 +6309,7 @@ fi
 # sqlite-vec (install-vector): vector search inside SQLite, as a loadable extension for Debian's sqlite3.
 # Its Python and npm packages stay per project (pip install sqlite-vec, npm install sqlite-vec).
 if [[ "$FLAGS" =~ " install-vector " ]]; then
+    stage install-vector
     echo "--- sqlite-vec (install-vector)"
     SV_DIR="$HOME/.local/lib/sqlite-vec"
     SV_VER=$(gh_latest asg017/sqlite-vec)
@@ -5936,6 +6357,7 @@ fi
 
 # Milvus 3 standalone (install-milvus: opt-in, in no group, not in install-all)
 if [[ "$FLAGS" =~ " install-milvus " ]]; then
+    stage install-milvus
     echo "--- Milvus standalone (install-milvus)"
     echo "NOTICE: Milvus asks for 8 GB of RAM; this Linux sees about 6.4 GB. It is created stopped, and 'devsvc up milvus'"
     echo "        stops the other heavy engines first. Milvus Lite (pip install pymilvus, per project) needs no server."
@@ -5966,6 +6388,7 @@ fi
 
 # MongoDB 8 (install-mongodb; in install-all)
 if [[ "$FLAGS" =~ " install-mongodb " ]]; then
+    stage install-mongodb
     echo "--- MongoDB 8 (install-mongodb)"
     # Clients: mongosh (GitHub's latest release, MongoDB's .deb), the Database Tools (MongoDB's release feed,
     # with its SHA-256) and Compass (GitHub's latest release, MongoDB's .deb; a launcher icon like Cursor).
@@ -6036,6 +6459,7 @@ fi
 
 # MongoDB Atlas Local and the Atlas CLI (install-mongodb-atlas-local: opt-in, not in install-all)
 if [[ "$FLAGS" =~ " install-mongodb-atlas-local " ]]; then
+    stage install-mongodb-atlas-local
     echo "--- MongoDB Atlas Local (install-mongodb-atlas-local)"
     # The Atlas CLI: 'atlas' for Atlas accounts (optional; dev-init logs in when ATLAS_* keys are set) and its
     # 'atlas deployments' commands. The container below is run by devsvc, not by 'atlas deployments setup'.
@@ -6068,6 +6492,7 @@ fi
 # Drupal in DDEV reaches the Grid as devselenium:4444 once it has joined DDEV's network; per-project, the
 # ddev/ddev-selenium-standalone-chrome add-on is the usual route for Drupal's own tests (dev-demo uses it).
 if [[ "$FLAGS" =~ " install-selenium " ]]; then
+    stage install-selenium-grid
     echo "--- Selenium Grid (install-selenium)"
     SELENIUM_IMAGE="${SELENIUM_IMAGE:-selenium/standalone-chrome:$(devsvc_hub_tag selenium/standalone-chrome '^4\.[0-9]+\.[0-9]+-[0-9]{8}$' 4.49.0-20260909 devsvc-selenium)}"
     DS_ARGS=(-p 127.0.0.1:4444:4444 -p 127.0.0.1:7900:7900 --shm-size 2g --memory 1536m
@@ -6083,6 +6508,7 @@ fi
 
 # The 'devsvc' command (v89): rewritten on every run with any of the service flags.
 if [ "$DEVSVC_ANY" = 1 ]; then
+    stage devsvc-commands
     cat > "$HOME/.local/bin/devsvc" << 'DEVSVC_EOF'
 #!/bin/bash
 # devsvc: the shared development services of dev-setup (v89): Redis, Memcached, Solr, OpenSearch,
@@ -6607,6 +7033,7 @@ for T_F in playwright selenium bdd robot cypress; do
     [[ "$FLAGS" == *" install-$T_F "* ]] && TESTING_ANY=1
 done
 if [ "$TESTING_ANY" = 1 ]; then
+    stage testing-tools
     echo "================================================================="
     echo "Installing test tools (Playwright, Selenium, Gherkin runners, Robot Framework, Cypress)..."
     echo "================================================================="
@@ -6614,15 +7041,48 @@ fi
 
 # Playwright (install-playwright, part of install-testing)
 if [[ "$FLAGS" =~ " install-playwright " ]]; then
+    stage install-playwright
+    for _dev_stage_once in 1; do
     echo "--- Playwright browsers (install-playwright)"
-    # --with-deps installs the browsers' system libraries through sudo apt-get (Playwright's own list for
-    # Debian 13). Chromium also brings chromium-headless-shell, the slim build headless runs use.
-    if npx -y playwright@latest install --with-deps chromium firefox webkit; then
-        echo "Playwright $(npx -y playwright@latest --version 2> /dev/null | awk '{print $2}'): $(find "$HOME/.cache/ms-playwright" -mindepth 1 -maxdepth 1 -type d -printf '%f ' 2> /dev/null)"
-    else
-        echo "NOTICE: 'playwright install --with-deps' failed (cdn.playwright.dev or apt unreachable?); rerun setup with install-playwright."
-        echo "        Tests can still use the system Chrome: use: { channel: 'chrome' } in playwright.config."
+    # v99 (Oct 31 2026: npx project warning and apt flood): use one managed installer release,
+    # separate upstream's own OS-dependency step from user-owned browser downloads, and only
+    # update the version record once both succeed. Other projects keep their own pinned libraries.
+    PW_ROOT="$ASSETS/tools/playwright"
+    mkdir -p "$PW_ROOT"
+    pw_release() { npm view playwright version > "$PW_ROOT/latest-version"; }
+    net_retry "Playwright release" pw_release \
+        || { stage_failed "Playwright release" "$?"; break; }
+    PW_WANT=$(cat "$PW_ROOT/latest-version")
+    [[ "$PW_WANT" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo 'ERROR: invalid Playwright release'; exit 1; }
+    PW_DIR="$PW_ROOT/$PW_WANT"
+    if [ ! -x "$PW_DIR/node_modules/.bin/playwright" ]; then
+        PW_TMP=$(mktemp -d "$PW_ROOT/.install.XXXXXX")
+        printf '%s\n' '{"private":true,"name":"dev-bundle-playwright-installer"}' > "$PW_TMP/package.json"
+        if net_retry "Playwright installer package" npm install --prefix "$PW_TMP" --save-exact \
+                --ignore-scripts --no-audit --no-fund "playwright@$PW_WANT"; then
+            # Preserve an incomplete previous attempt for diagnosis, never overwrite an active record.
+            if [ -e "$PW_DIR" ]; then mv "$PW_DIR" "$PW_TMP/previous-incomplete"; fi
+            mv "$PW_TMP" "$PW_DIR"
+        else
+            stage_failed "Playwright installer package" "$?"; break
+        fi
     fi
+    # This is a command helper, not a stage function; cd/exec failures propagate explicitly.
+    pw_cli() { (cd "$PW_DIR" && exec node node_modules/playwright/cli.js "$@"); }
+    PW_ACTUAL=$(pw_cli --version)
+    [ "$PW_ACTUAL" = "Version $PW_WANT" ] || { echo 'ERROR: Playwright installer version mismatch'; exit 1; }
+    # Upstream supplies the version-specific Debian dependency list; root sees our apt.conf policy.
+    # pipefail is local to this pipeline, and the narrow filter keeps all other diagnostics.
+    # v99 (Nov 1 2026): retry the checked pipeline in the parent shell, retaining exhaustion state.
+    pw_deps() { (set -o pipefail; pw_cli install-deps chromium firefox webkit 2>&1 | apt_dedupe); }
+    net_retry "Playwright system dependencies" pw_deps \
+        || { stage_failed "Playwright system dependencies" "$?"; break; }
+    PLAYWRIGHT_DOWNLOAD_CONNECTION_TIMEOUT=60000 net_retry "Playwright browsers" pw_cli install chromium firefox webkit \
+        || { stage_failed "Playwright browsers" "$?"; break; }
+    printf '%s\n' "$PW_WANT" > "$PW_ROOT/version.new"
+    mv -f "$PW_ROOT/version.new" "$PW_ROOT/version"
+    echo "Playwright $PW_WANT: managed CLI and matching browsers installed."
+
     # Old browser builds from earlier Playwright releases stay until 'npx playwright uninstall' (no --all:
     # that would also remove the builds other projects pinned). The disk report in dev-test lists them.
     if npx -y @playwright/mcp@latest --help > /dev/null 2>&1; then
@@ -6630,12 +7090,14 @@ if [[ "$FLAGS" =~ " install-playwright " ]]; then
     else
         echo "NOTICE: could not fetch @playwright/mcp (npm registry unreachable?); npx fetches it on first use."
     fi
+    done # v99: exhausted Playwright retries skip the remainder of this block
 else
     echo "Skipping Playwright. (Run with 'install-playwright' or 'install-testing')"
 fi
 
 # Selenium Manager (install-selenium, part of install-testing); the Grid itself is the devsvc service above.
 if [[ "$FLAGS" =~ " install-selenium " ]]; then
+    stage install-selenium
     echo "--- Selenium Manager (install-selenium)"
     sed -i '/^# >>> dev-setup selenium >>>$/,/^# <<< dev-setup selenium <<<$/d' ~/.bashrc
     cat >> ~/.bashrc << 'EOF'
@@ -6667,6 +7129,7 @@ fi
 
 # Gherkin runners (install-bdd, part of install-testing)
 if [[ "$FLAGS" =~ " install-bdd " ]]; then
+    stage install-bdd
     echo "--- Gherkin / BDD runners (install-bdd)"
     if command -v dotnet > /dev/null 2>&1; then
         if dotnet new list reqnroll-project > /dev/null 2>&1; then
@@ -6687,6 +7150,7 @@ fi
 
 # Robot Framework (install-robot, part of install-testing)
 if [[ "$FLAGS" =~ " install-robot " ]]; then
+    stage install-robot
     echo "--- Robot Framework (install-robot)"
     # On Debian's Python (as the bundle's venvs are), so a Homebrew Python on PATH never becomes its home.
     # --with-executables-from puts rfbrowser on PATH next to robot, rebot and libdoc.
@@ -6711,9 +7175,10 @@ fi
 
 # Cypress's system libraries (install-cypress: opt-in, in no group, not in install-all)
 if [[ "$FLAGS" =~ " install-cypress " ]]; then
+    stage install-cypress
     echo "--- Cypress system libraries (install-cypress)"
     # Cypress's own list for Debian 13 (the t64 package names). Xvfb is what headless 'cypress run' draws into.
-    sudo apt install -y libgtk-3-0t64 libgbm-dev libnotify-dev libnss3 libxss1 libasound2t64 libxtst6 xauth xvfb
+    apt_get install -y libgtk-3-0t64 libgbm-dev libnotify-dev libnss3 libxss1 libasound2t64 libxtst6 xauth xvfb
     sed -i '/^# >>> dev-setup cypress >>>$/,/^# <<< dev-setup cypress <<<$/d' ~/.bashrc
     cat >> ~/.bashrc << 'EOF'
 # >>> dev-setup cypress >>>
@@ -6756,38 +7221,42 @@ fi
 # or git.drupalcode.org.
 # =================================================================
 if [[ "$FLAGS" =~ " install-gitlab " ]]; then
+    stage install-gitlab
+    for _dev_stage_once in 1; do
     echo "================================================================="
     echo "Installing GitLab tooling (glab, gitlab-ci-local)..."
     echo "================================================================="
     # 'brew install' also upgrades an outdated glab.
-    if brew install glab; then
+    if net_retry "bulk packages" brew install glab; then
         mkdir -p ~/.local/share/bash-completion/completions
         GLAB_BIN=$(brew --prefix)/bin/glab
         timeout 60 "$GLAB_BIN" completion -s bash < /dev/null > ~/.local/share/bash-completion/completions/glab 2> /dev/null \
             || rm -f ~/.local/share/bash-completion/completions/glab
         echo "glab: $("$GLAB_BIN" version 2> /dev/null | head -n 1)"
     else
-        echo "NOTICE: 'brew install glab' failed; rerun setup with install-gitlab."
+        stage_failed "GitLab CLI" "$?"; break
     fi
-    sudo apt install -y rsync git
-    if npm install -g gitlab-ci-local@latest; then
+    apt_get install -y rsync git
+    if net_retry "bulk packages" npm install -g gitlab-ci-local@latest; then
         echo "gitlab-ci-local: $(gitlab-ci-local --version 2> /dev/null)"
     else
-        echo "NOTICE: 'npm install -g gitlab-ci-local' failed (npm registry unreachable?); rerun setup with install-gitlab."
+            stage_failed "bulk packages" "$?"; break
     fi
     echo "Try: gitlab-ci-local --list (in a project with a .gitlab-ci.yml); glab auth status once dev-init has run."
+    done # v99: end this stage; exhausted retries break only this block
 else
     echo "Skipping GitLab tooling. (Run with 'install-gitlab' flag to enable)"
 fi
 
 if [[ "$FLAGS" =~ " install-gitlab-runner " ]]; then
+    stage install-gitlab-runner
     echo "--- GitLab Runner (install-gitlab-runner)"
     GLR_CODENAME=$(. /etc/os-release && echo "${VERSION_CODENAME:-trixie}")
     GLR_KEYRING=/usr/share/keyrings/runner_gitlab-runner-archive-keyring.gpg
     GLR_LIST=/etc/apt/sources.list.d/runner_gitlab-runner.list
     # glr_apt_update: refresh only GitLab's source; 1 when apt refuses it (no key, a bad signature).
     glr_apt_update() {
-        sudo apt-get update -o Dir::Etc::sourcelist="$GLR_LIST" -o Dir::Etc::sourceparts=- -o APT::Get::List-Cleanup=0 2>&1 \
+        apt_get update -o Dir::Etc::sourcelist="$GLR_LIST" -o Dir::Etc::sourceparts=- -o APT::Get::List-Cleanup=0 2>&1 \
             | tee /dev/stderr | grep -qE '^(E:|W: GPG error|Err:)' && return 1
         return 0
     }
@@ -6802,7 +7271,7 @@ if [[ "$FLAGS" =~ " install-gitlab-runner " ]]; then
             fi
         fi
     fi
-    if sudo apt install -y gitlab-runner; then
+    if apt_get install -y gitlab-runner; then
         # The Docker executor runs jobs in containers: the service's user needs the docker group.
         getent group docker > /dev/null && sudo usermod -aG docker gitlab-runner
         sudo systemctl restart gitlab-runner > /dev/null 2>&1 || true
@@ -6820,6 +7289,7 @@ else
 fi
 
 if [[ "$FLAGS" =~ " install-vue " ]]; then
+    stage install-vue
     echo "================================================================="
     echo "Preparing Vue.js scaffolding (create-vue, create-nuxt)..."
     echo "================================================================="
@@ -6863,6 +7333,7 @@ fi
 # Not here: an OpenVox or Cinc server (Java / Erlang services wanting 2-4 GB; development runs masterless).
 # =================================================================
 if [[ "$FLAGS" =~ " install-puppet " ]]; then
+    stage install-puppet
     echo "================================================================="
     echo "Installing OpenVox (Puppet) and OpenBolt..."
     echo "================================================================="
@@ -6872,14 +7343,14 @@ if [[ "$FLAGS" =~ " install-puppet " ]]; then
     OVX_OTHER=$(dpkg-query -W -f='${db:Status-Abbrev} ${Package}\n' puppet-agent puppet 2> /dev/null | awk '$1 ~ /^ii/ {print $2}' | xargs)
     if [ -n "$OVX_OTHER" ]; then
         echo "NOTICE: $OVX_OTHER is installed (Perforce's or Debian's Puppet); OpenVox cannot be installed next to it."
-        echo "        Remove it first ('sudo apt purge $OVX_OTHER', after backing up /etc/puppetlabs), then rerun setup with install-puppet."
+        echo "        Remove it first ('apt_get purge $OVX_OTHER', after backing up /etc/puppetlabs), then rerun setup with install-puppet."
     else
         # The release packages add the repository and its keyring; one major line at a time.
         for OVX_REL in "openvox${OVX_MAJOR}-release" tools-release; do
             OVX_DEB="$ASSETS/downloads/$OVX_REL-$OVX_DIST.deb"
             if curl -fsSL "https://apt.voxpupuli.org/$OVX_REL-$OVX_DIST.deb" -o "$OVX_DEB.part"; then
                 mv "$OVX_DEB.part" "$OVX_DEB"
-                sudo apt install -y "$OVX_DEB" > /dev/null || echo "NOTICE: could not install $OVX_REL."
+                apt_get install -y "$OVX_DEB" > /dev/null || echo "NOTICE: could not install $OVX_REL."
             else
                 rm -f "$OVX_DEB.part"
                 [ "$OVX_REL" = tools-release ] || echo "NOTICE: could not download $OVX_REL-$OVX_DIST.deb from apt.voxpupuli.org."
@@ -6887,17 +7358,17 @@ if [[ "$FLAGS" =~ " install-puppet " ]]; then
         done
         for OVX_REL in openvox7-release openvox8-release openvox9-release; do
             [ "$OVX_REL" = "openvox${OVX_MAJOR}-release" ] && continue
-            dpkg -s "$OVX_REL" > /dev/null 2>&1 && sudo apt purge -y "$OVX_REL" > /dev/null
+            dpkg -s "$OVX_REL" > /dev/null 2>&1 && apt_get purge -y "$OVX_REL" > /dev/null
         done
-        sudo apt update
-        if sudo apt install -y openvox-agent; then
+        apt_get update
+        if apt_get install -y openvox-agent; then
             # Masterless: no agent daemon polling a server that does not exist.
             sudo systemctl disable --now puppet > /dev/null 2>&1 || true
             echo "OpenVox: puppet $(/opt/puppetlabs/bin/puppet --version 2> /dev/null), facter $(/opt/puppetlabs/bin/facter --version 2> /dev/null)"
         else
             echo "NOTICE: 'apt install openvox-agent' failed; rerun setup with install-puppet."
         fi
-        if sudo apt install -y openbolt; then
+        if apt_get install -y openbolt; then
             echo "OpenBolt: $(/opt/puppetlabs/bin/bolt --version 2> /dev/null || bolt --version 2> /dev/null)"
         else
             echo "NOTICE: 'apt install openbolt' failed (not in the repositories for $OVX_DIST?); 'gem install openbolt' is the other route."
@@ -6917,6 +7388,7 @@ else
 fi
 
 if [[ "$FLAGS" =~ " install-chef " ]]; then
+    stage install-chef
     echo "================================================================="
     echo "Installing Cinc Workstation (Chef)..."
     echo "================================================================="
@@ -6934,7 +7406,7 @@ if [[ "$FLAGS" =~ " install-chef " ]]; then
     else
         CINC_DEB="$ASSETS/downloads/$(basename "$CINC_URL")"
         if curl -fL --retry 3 -C - -o "$CINC_DEB" "$CINC_URL" && echo "$CINC_SHA  $CINC_DEB" | sha256sum -c --quiet; then
-            sudo apt install -y "$CINC_DEB" && rm -f "$CINC_DEB"
+            apt_get install -y "$CINC_DEB" && rm -f "$CINC_DEB"
             echo "Cinc Workstation $CINC_VER installed${CINC_HAVE:+ (was $CINC_HAVE)}."
         else
             echo "NOTICE: the Cinc Workstation download failed or did not match its SHA-256; rerun setup with install-chef."
@@ -6965,6 +7437,8 @@ fi
 
 # Local lakehouse stack: DuckDB + Iceberg/DuckLake/Delta + dbt (Fusion v2 and classic Core v1)
 if [[ "$FLAGS" =~ " install-lakehouse " ]]; then
+    stage install-lakehouse
+    for _dev_stage_once in 1; do
     echo "================================================================="
     echo "Installing Local Lakehouse Stack (DuckDB, Iceberg, DuckLake, Delta Lake, dbt)..."
     echo "================================================================="
@@ -6989,10 +7463,10 @@ if [[ "$FLAGS" =~ " install-lakehouse " ]]; then
     # Kept in its own venv (like ~/.gemma-env) so its 'dbt' doesn't collide with Fusion's.
     echo "Creating Python virtual environment for the lakehouse stack..."
     make_venv "$HOME/.lakehouse-env"
-    "$HOME/.lakehouse-env/bin/pip" install -U pip
+    net_retry "pip packages" "$HOME/.lakehouse-env/bin/pip" install -U pip || { stage_failed "pip packages" "$?"; break; }
     # v79: deltalake is delta-rs, the Rust Delta Lake library (no Spark, no JVM): it creates Delta
     # tables and does the writes DuckDB cannot yet (UPDATE, DELETE, MERGE, OPTIMIZE, VACUUM).
-    "$HOME/.lakehouse-env/bin/pip" install -U "duckdb==$DUCKDB_VERSION" 'dbt-core<2' dbt-duckdb pyarrow pandas deltalake
+    net_retry "pip packages" "$HOME/.lakehouse-env/bin/pip" install -U "duckdb==$DUCKDB_VERSION" 'dbt-core<2' dbt-duckdb pyarrow pandas deltalake || { stage_failed "pip packages" "$?"; break; }
     [ "$("$HOME/.lakehouse-env/bin/python" -c 'import duckdb; print(duckdb.__version__)')" = "$DUCKDB_VERSION" ]
     "$HOME/.lakehouse-env/bin/python" -c "import duckdb; c=duckdb.connect(); [c.install_extension(e) for e in ('iceberg','ducklake','delta','httpfs')]"
     if ! grep -q 'alias dbt1=' ~/.bashrc; then
@@ -7002,7 +7476,7 @@ if [[ "$FLAGS" =~ " install-lakehouse " ]]; then
     # --- dbt v2 (Fusion engine): Rust binary at ~/.local/bin/dbt, also aliased as dbtf ---
     # Fusion is what supports Iceberg/DuckLake catalogs.yml for DuckDB; Core v1 above supports DuckLake only.
     echo "Installing dbt v2 (Fusion engine)..."
-    curl -fsSL https://public.cdn.getdbt.com/fs/install/install.sh | sh -s -- --update
+    vendor_install dbt-fusion https://public.cdn.getdbt.com/fs/install/install.sh sh --update || { stage_failed "vendor installer" "$?"; break; }
 
     # Sensible defaults for an 8GB machine: cap DuckDB's memory so it spills to disk instead
     # of OOMing the VM. Edit ~/.duckdbrc to raise the limit on a bigger machine.
@@ -7025,6 +7499,7 @@ EOF_RC
     echo "  dbt --version   (Fusion v2)      dbt1 --version   (classic Core v1 + dbt-duckdb)"
     echo "  Start a project: cd ~/lakehouse && dbt init my_lake   (choose the duckdb adapter)"
     echo "  Close Ollama (ollama stop <model>) before large loads; RAM is shared."
+    done # v99: end this stage; exhausted retries break only this block
 else
     echo "Skipping Local Lakehouse stack. (Run with 'install-lakehouse' flag to enable)"
 fi
@@ -7039,6 +7514,8 @@ fi
 # nothing else running; 8B and up is for a bigger machine ('ollama-remote') or a :cloud model.
 # =================================================================
 if [[ "$FLAGS" =~ " install-ollama " ]]; then
+    stage install-ollama
+    for _dev_stage_once in 1; do
     echo "================================================================="
     echo "Installing the Ollama server..."
     echo "================================================================="
@@ -7052,7 +7529,7 @@ if [[ "$FLAGS" =~ " install-ollama " ]]; then
         echo "Ollama $OLLAMA_HAVE is the latest release; skipping the download (OLLAMA_REINSTALL=1 forces it)."
     else
         echo "Installing Ollama ${OLLAMA_LATEST:-(latest)}${OLLAMA_HAVE:+ over $OLLAMA_HAVE} for Linux..."
-        curl -fsSL https://ollama.com/install.sh | sh
+        vendor_install ollama https://ollama.com/install.sh sh || { stage_failed "vendor installer" "$?"; break; }
     fi
 
     # Server settings go into a systemd drop-in, so Ollama's own unit file stays untouched and its
@@ -7151,12 +7628,15 @@ EOF
     echo "Curated models for this machine: rerun with install-models. A bigger machine's Ollama: OLLAMA_REMOTE in"
     echo "secrets.env, then 'ollama-remote run <model>'. Cloud models (pay per token, e.g. deepseek-v4.1-flash:cloud):"
     echo "'ollama signin' once, then 'ollama run <model>:cloud'."
+    done # v99: end this stage; exhausted retries break only this block
 else
     echo "Skipping the Ollama server. (Run with 'install-ollama'; install-gemma, install-models and install-ollama-containers include it)"
 fi
 
 # Google Gemma 4 Developer Setup
 if [[ "$FLAGS" =~ " install-gemma " ]]; then
+    stage install-gemma
+    for _dev_stage_once in 1; do
     echo "================================================================="
     echo "Installing Google Gemma 4 Developer & Hybrid Setup..."
     echo "================================================================="
@@ -7179,8 +7659,8 @@ if [[ "$FLAGS" =~ " install-gemma " ]]; then
 
     echo "Installing Python dependencies (transformers, torch, accelerate, ollama, google-genai)..."
     # CPU-only torch: avoids ~3GB of CUDA libraries that are useless on a Chromebook
-    ~/.gemma-env/bin/pip install -U torch --index-url https://download.pytorch.org/whl/cpu
-    ~/.gemma-env/bin/pip install -U transformers accelerate ollama google-genai
+    net_retry "pip packages" ~/.gemma-env/bin/pip install -U torch --index-url https://download.pytorch.org/whl/cpu || { stage_failed "pip packages" "$?"; break; }
+    net_retry "pip packages" ~/.gemma-env/bin/pip install -U transformers accelerate ollama google-genai || { stage_failed "pip packages" "$?"; break; }
 
     echo "Creating gemma_client.py hybrid script..."
     # v65: written to ./assets, not the home directory.
@@ -7413,6 +7893,7 @@ EOF
         echo "Logging in to Hugging Face non-interactively..."
         ~/.gemma-env/bin/hf auth login --token "$HF_TOKEN" || echo "NOTICE: Hugging Face rejected HF_TOKEN; dev-init will report it. Ollama needs no login."
     else
+        stage_skip "credential: optional Hugging Face login (no token)"
         echo "No HF_TOKEN in the environment or in secrets.env: leaving the Hugging Face login to dev-init."
     fi
 
@@ -7420,8 +7901,8 @@ EOF
     echo "Gemma 4 Setup Complete!"
     echo "The lightweight ${GEMMA_MODEL} model has been pulled into Ollama"
     echo "(chosen for 8GB RAM; larger variants like gemma4:e4b may freeze this Chromebook)."
-    echo "Remember to export your GEMINI_API_KEY into your ~/.bashrc"
-    echo "so the Python script can route to the cloud API when online."
+    echo "Optional cloud route: set GEMINI_API_KEY in ~/.config/dev-init/secrets.env, then run dev-init with install-gemma."
+    echo "Local models work without a Google key."
     echo ""
     echo "Run it with:  gemma      (after 'source ~/.bashrc' or in a new terminal)"
     echo "Any local model:  gemma -m deepseek-r1:1.5b   (local route only; 'gemma --help' lists the options)"
@@ -7429,6 +7910,7 @@ EOF
     echo "  source ~/.gemma-env/bin/activate"
     echo "Then run: python3 \"$ASSETS/gemma_client.py\""
     echo "================================================================="
+    done # v99: end this stage; exhausted retries break only this block
 else
     echo "Skipping Google Gemma 4 Developer Setup. (Run with 'install-gemma' flag to enable)"
 fi
@@ -7451,6 +7933,7 @@ fi
 # registry manifest; when that lookup fails, only the margin is checked.
 # =================================================================
 if [[ "$FLAGS" =~ " install-models " ]]; then
+    stage install-models
     echo "================================================================="
     echo "Pulling local models (install-models)..."
     echo "================================================================="
@@ -7509,6 +7992,7 @@ if [[ "$FLAGS" =~ " install-models " ]]; then
             echo "NOTICE: skipping $m ($size_txt): it would leave ${left_gb} GB free, under DEV_MODELS_MIN_FREE_GB=$MIN_FREE_GB."
             echo "        Give Linux more disk (ChromeOS Settings > About ChromeOS > Linux development environment > Disk size),"
             echo "        remove a model you no longer use ('ollama rm <model>'), or rerun with DEV_MODELS_MIN_FREE_GB=<lower>."
+            stage_skip "disk: curated model $m"
             SKIPPED_MODELS+=("$m (disk)")
             continue
         fi
@@ -7521,22 +8005,51 @@ if [[ "$FLAGS" =~ " install-models " ]]; then
         fi
     done
 
-    # What dev-test checks and dev-demo uses: every model of this flag that is present now. Left as it
-    # was when the server was down, so one bad run does not erase the record.
-    if [ "$OLLAMA_UP" = 1 ]; then
+    # v99 (Oct 31 2026: qwen was skipped but still recommended): one post-pull snapshot,
+    # then presence + completion capability, never embeddings as a chat fallback. A show/list call
+    # only reads metadata; it cannot pull a missing model or load it into RAM.
+    MODEL_SNAPSHOT=''
+    MODEL_CHAT=''
+    if [ "$OLLAMA_UP" = 1 ] && MODEL_SNAPSHOT=$(ollama list 2>/dev/null); then
         : > "$ASSETS/ollama-models.txt"
         for m in "${MODELS_DEFAULT[@]}" "${MODELS_EXTRA[@]}"; do
-            if [ -n "$m" ] && have_model "$m"; then echo "$m" >> "$ASSETS/ollama-models.txt"; fi
+            [ -n "$m" ] || continue
+            want=$m; [[ "$want" == *:* ]] || want="$want:latest"
+            if printf '%s\n' "$MODEL_SNAPSHOT" | awk 'NR>1 {print $1}' | grep -qxF "$want"; then
+                echo "$m" >> "$ASSETS/ollama-models.txt"
+            fi
+        done
+        for m in qwen3.5:4b deepseek-r1:1.5b gemma4:e2b-it-qat "${MODELS_DEFAULT[@]}" "${MODELS_EXTRA[@]}"; do
+            [ -n "$m" ] || continue
+            want=$m; [[ "$want" == *:* ]] || want="$want:latest"
+            if printf '%s\n' "$MODEL_SNAPSHOT" | awk 'NR>1 {print $1}' | grep -qxF "$want" \
+                && MODEL_INFO=$(ollama show "$m" 2>/dev/null) \
+                && printf '%s\n' "$MODEL_INFO" | awk '
+                    $1=="Capabilities" {caps=1; next}
+                    caps && NF==0 {caps=0}
+                    caps && $1=="completion" {found=1}
+                    END {exit !found}'; then
+                MODEL_CHAT=$m; break
+            fi
         done
     fi
     touch "$ASSETS/ollama-models.txt"
-
     echo "Models: ${#PULLED[@]} pulled, ${#PRESENT[@]} already present, ${#SKIPPED_MODELS[@]} skipped${SKIPPED_MODELS[*]:+: ${SKIPPED_MODELS[*]}}"
     echo "Recorded in $ASSETS/ollama-models.txt:"
     sed 's/^/  /' "$ASSETS/ollama-models.txt"
-    echo "Try:  ollama run deepseek-r1:1.5b                (reasoning model; add --think=false for a direct answer)"
-    echo "      gemma -m qwen3.5:4b                        (the hybrid client on any local model; install-gemma)"
-    echo "      aider --model ollama_chat/qwen3.5:4b       (works, but a 4B model makes a basic coding agent)"
+    {
+        if [ -n "$MODEL_CHAT" ]; then
+            echo "Try: ollama run $MODEL_CHAT"
+            if [ -x "$HOME/.gemma-env/bin/python" ] && [ -s "$ASSETS/gemma_client.py" ]; then echo "     gemma -m $MODEL_CHAT"; fi
+            if command -v aider >/dev/null 2>&1; then echo "     aider --model ollama_chat/$MODEL_CHAT"; fi
+        elif [ -n "$MODEL_SNAPSHOT" ]; then
+            echo 'No present generation-capable model confirmed; generation examples omitted.'
+            echo 'Embedding models in the recorded list can be used with Ollama /api/embed.'
+        else
+            echo 'Ollama metadata unavailable; previous model record kept, generation examples omitted.'
+        fi
+    } > "$ASSETS/ollama-model-hints.txt"
+    cat "$ASSETS/ollama-model-hints.txt"
     echo "Up to two models stay loaded when they fit: 'ollama ps' shows them, 'ollama stop <model>' gives the RAM back."
 else
     echo "Skipping the curated local models. (Run with 'install-models' to enable; not part of install-all)"
@@ -7548,6 +8061,8 @@ fi
 # Docker). Idempotent: safe to re-run; every step checks before it installs.
 # =================================================================
 if [[ "$FLAGS" =~ " install-agentic " ]]; then
+    stage install-agentic
+    for _dev_stage_once in 1; do
     echo "================================================================="
     echo "Installing Agentic Workflow Stack (Temporal, LangGraph, Pydantic, Langfuse)..."
     echo "================================================================="
@@ -7559,10 +8074,10 @@ if [[ "$FLAGS" =~ " install-agentic " ]]; then
     # Same channel as ddev/gh/mkcert, so it lands on PATH via brew shellenv.
     if brew list --formula temporal &>/dev/null; then
         echo "Temporal CLI already installed; upgrading if needed..."
-        brew upgrade temporal || true
+        net_retry "Homebrew packages" brew upgrade temporal || { stage_failed "Homebrew packages" "$?"; break; }
     else
         echo "Installing Temporal CLI..."
-        brew install temporal
+        net_retry "Homebrew packages" brew install temporal || { stage_failed "Homebrew packages" "$?"; break; }
     fi
     TEMPORAL_BIN="$(brew --prefix)/bin/temporal"
     echo "Temporal CLI: $("$TEMPORAL_BIN" --version 2>/dev/null || echo 'installed (version check skipped)')"
@@ -7570,7 +8085,7 @@ if [[ "$FLAGS" =~ " install-agentic " ]]; then
     # --- Python venv (same pattern as ~/.gemma-env and ~/.lakehouse-env) ----
     echo "Creating (or reusing) the Python virtual environment for the agentic stack..."
     make_venv "$AGENTIC_ENV"
-    "$AGENTIC_ENV/bin/pip" install -U pip
+    net_retry "pip packages" "$AGENTIC_ENV/bin/pip" install -U pip || { stage_failed "pip packages" "$?"; break; }
     # temporalio            : SDK; temporalio.contrib.pydantic gives the Pydantic data converter
     # langgraph + sqlite    : graph runtime + SqliteSaver checkpointer for local interrupt/resume
     # langfuse              : v4 SDK (@observe decorator, langfuse.langchain.CallbackHandler);
@@ -7578,13 +8093,13 @@ if [[ "$FLAGS" =~ " install-agentic " ]]; then
     #                         'langchain' package, not just langchain-core, so it is listed too.
     # langchain-ollama      : local Gemma via install-gemma; -anthropic/-google-genai for hosted
     # pytest-asyncio        : Temporal's WorkflowEnvironment tests are async
-    "$AGENTIC_ENV/bin/pip" install -U \
+    net_retry "pip packages" "$AGENTIC_ENV/bin/pip" install -U \
         temporalio \
         langgraph langchain langchain-core langgraph-checkpoint-sqlite \
         pydantic pydantic-settings \
         langfuse \
         langchain-ollama langchain-anthropic langchain-google-genai \
-        python-dotenv rich pytest pytest-asyncio
+        python-dotenv rich pytest pytest-asyncio || { stage_failed "pip packages" "$?"; break; }
 
     # Smoke test: fail here, with a readable message, rather than on first 'python worker.py'
     echo "Verifying agentic stack imports..."
@@ -7665,12 +8180,36 @@ EOF_ENV
     # @modelcontextprotocol/inspector' and 'fastmcp dev inspector' start without downloading it first. It
     # needs Node: with install-node (install-all has it), otherwise a NOTICE.
     if command -v npm > /dev/null 2>&1; then
-        if npm install -g --allow-scripts=esbuild @modelcontextprotocol/inspector@latest > /dev/null 2>&1; then
-            # npx keeps its own copy per package: run it once (a no-op command) so that copy is complete.
-            timeout 300 npx --yes --package=@modelcontextprotocol/inspector@latest -c true > /dev/null 2>&1 || true
-            echo "MCP Inspector: $(npm ls -g --depth=0 @modelcontextprotocol/inspector 2> /dev/null | grep -o 'inspector@[0-9.]*' || echo installed) (mcp-inspector; npx cache warm)"
+        if net_retry "bulk packages" npm install -g --allow-scripts=esbuild @modelcontextprotocol/inspector@latest; then
+            # v99 (Nov 1 2026: warm-up claimed success after ENOTCACHED): execute the real
+            # npx/stdio tool call, then repeat offline. Keep full diagnostics and both statuses.
+            INSPECTOR_PROBE="$ASSETS/tools/mcp-inspector/cache-check.py"
+            INSPECTOR_LOG="$ASSETS/logs/inspector-cache-${DEV_RUN_STAMP:-$(date +%Y%m%d-%H%M%S)}.log"
+            mkdir -p "$(dirname "$INSPECTOR_PROBE")"
+            cat > "$INSPECTOR_PROBE" << 'PY'
+from fastmcp import FastMCP
+mcp = FastMCP("cache-check")
+@mcp.tool
+def add(a: int, b: int) -> int:
+    return a + b
+if __name__ == "__main__":
+    mcp.run()
+PY
+            inspector_cache_call() {
+                local rc=0
+                timeout 300 npx "$1" @modelcontextprotocol/inspector --cli fastmcp run "$INSPECTOR_PROBE" \
+                    --method tools/call --tool-name add --tool-arg a=2 --tool-arg b=3 > "$INSPECTOR_LOG.$2" 2>&1 || rc=$?
+                cat "$INSPECTOR_LOG.$2" >> "$INSPECTOR_LOG"
+                printf '\n%s exit=%s\n' "$2" "$rc" >> "$INSPECTOR_LOG"
+                [ "$rc" = 0 ] && tr -d ' \n' < "$INSPECTOR_LOG.$2" | grep -q '"result":5'
+            }
+            if inspector_cache_call --yes online && inspector_cache_call --offline offline; then
+                echo "MCP Inspector: installed globally; npx cache verified by an offline tools/call (result 5)."
+            else
+                echo "NOTICE: MCP Inspector installed globally; npx cache warm-up/offline call FAILED (see $INSPECTOR_LOG); rerun install-agentic online."
+            fi
         else
-            echo "NOTICE: 'npm install -g @modelcontextprotocol/inspector' failed (is the npm registry reachable?); rerun setup with install-agentic."
+            stage_failed "bulk packages" "$?"; break
         fi
     else
         echo "NOTICE: no npm, so no MCP Inspector (it is a Node app): rerun setup with install-agentic install-node."
@@ -7688,6 +8227,7 @@ EOF_ENV
     echo "               cd ~/agentic/langfuse && docker compose up -d      # UI at http://localhost:3000"
     echo "  RAM note:    Ollama (~3.5GB) + Temporal + worker fit in 8GB; add self-hosted Langfuse and it won't."
     echo "  MCP:         fastmcp run server.py | fastmcp dev inspector server.py | mcp-inspector --cli <server command> --method tools/list"
+    done # v99: end this stage; exhausted retries break only this block
 else
     echo "Skipping Agentic Workflow stack. (Run with 'install-agentic' flag to enable)"
 fi
@@ -7702,39 +8242,46 @@ fi
 
 # AWS CLI v2
 if [[ "$FLAGS" =~ " install-aws " ]]; then
+    stage install-aws
+    for _dev_stage_once in 1; do
     echo "Installing AWS CLI v2..."
     # Homebrew ships a bottled v2 for x86_64 Linux and upgrades it with 'brew upgrade';
     # Debian's apt package lags releases and AWS's zip installer has no upgrade path.
-    brew install awscli
+    net_retry "Homebrew packages" brew install awscli || { stage_failed "Homebrew packages" "$?"; break; }
     echo "AWS CLI: $(aws --version)"
     echo "Log in with dev-init (install-aws): 'aws configure sso', or static keys from secrets.env."
+    done # v99: end this stage; exhausted retries break only this block
 else
     echo "Skipping AWS CLI. (Run with 'install-aws' or 'install-cloud' flag to enable)"
 fi
 
 # Azure CLI
 if [[ "$FLAGS" =~ " install-azure " ]]; then
+    stage install-azure
+    for _dev_stage_once in 1; do
     echo "Installing Azure CLI..."
     # Homebrew rather than Microsoft's apt repo: aka.ms/InstallAzureCLIDeb keys the source list
     # to $(lsb_release -cs), and a suite missing for trixie would abort the run under set -e.
     # ('pipx install azure-cli' is the lighter alternative if brew's Python bottle is unwanted.)
-    brew install azure-cli
+    net_retry "Homebrew packages" brew install azure-cli || { stage_failed "Homebrew packages" "$?"; break; }
     echo "Azure CLI: $(az version --query '"azure-cli"' -o tsv 2>/dev/null || echo 'installed (version check skipped)')"
     echo "Log in with dev-init (install-azure): 'az login --use-device-code', or a service principal from secrets.env."
+    done # v99: end this stage; exhausted retries break only this block
 else
     echo "Skipping Azure CLI. (Run with 'install-azure' or 'install-cloud' flag to enable)"
 fi
 
 # Google Cloud CLI
 if [[ "$FLAGS" =~ " install-gcp " ]]; then
+    stage install-gcp
     echo "Installing Google Cloud CLI..."
     # Google's apt repo (the Homebrew cask is macOS-only), same signed-by keyring pattern as
     # Docker and VS Code above. Uses the system python3; trixie's 3.13 is within gcloud's range.
     sudo mkdir -m 0755 -p /etc/apt/keyrings
     curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo gpg --dearmor -o /etc/apt/keyrings/cloud.google.gpg --yes
     echo "deb [signed-by=/etc/apt/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" | sudo tee /etc/apt/sources.list.d/google-cloud-sdk.list > /dev/null
-    sudo apt update
-    sudo apt install -y google-cloud-cli
+    apt_get update
+    apt_get install -y google-cloud-cli
     echo "gcloud: $(gcloud --version 2>/dev/null | head -n 1)"
     echo "Log in with dev-init (install-gcp): 'gcloud auth login' + application-default login, or a service-account key from secrets.env."
 else
@@ -7743,21 +8290,26 @@ fi
 
 # Vercel CLI (added in v67; part of install-cloud)
 if [[ "$FLAGS" =~ " install-vercel " ]]; then
+    stage install-vercel
+    for _dev_stage_once in 1; do
     echo "Installing the Vercel CLI..."
     # Same rule as aws/az/gcloud: the CLI is machine-level (deploy, 'vercel link', 'vercel env pull'
     # to sync a project's variables into .env.local, 'vercel dev'); the AI SDK and AI Gateway
     # client stay per project. esbuild is the one dependency with an install script, allowed by
     # name for npm 12 (see the note in the Node section).
-    npm install -g --allow-scripts=esbuild vercel
+    net_retry "npm globals" npm install -g --allow-scripts=esbuild vercel || { stage_failed "npm globals" "$?"; break; }
     vercel telemetry disable > /dev/null 2>&1 || true
     echo "vercel: $(vercel --version 2>/dev/null | tail -n 1)"
     echo "Log in with dev-init (install-vercel): 'vercel login', or VERCEL_TOKEN from secrets.env."
+    done # v99: end this stage; exhausted retries break only this block
 else
     echo "Skipping Vercel CLI. (Run with 'install-vercel' or 'install-cloud' flag to enable)"
 fi
 
 # Cloudflare's wrangler (added in v89; part of install-cloud)
 if [[ "$FLAGS" =~ " install-cloudflare " ]]; then
+    stage install-cloudflare
+    for _dev_stage_once in 1; do
     echo "Installing Cloudflare's wrangler..."
     # Global, on nvm's Node, next to the Vercel CLI: for 'wrangler login', 'wrangler whoami' and one-off
     # commands (d1, kv, r2, tail). Projects pin their own wrangler in package.json, and
@@ -7765,13 +8317,14 @@ if [[ "$FLAGS" =~ " install-cloudflare " ]]; then
     # account; deploying needs CLOUDFLARE_API_TOKEN (and CLOUDFLARE_ACCOUNT_ID) or 'wrangler login'.
     # esbuild and workerd fetch their platform binaries in install scripts, allowed by name for npm 12.
     # Not fatal under set -e: the npm registry being unreachable leaves the rest of setup running.
-    if npm install -g --allow-scripts=esbuild,workerd,sharp wrangler@latest; then
+    if net_retry "bulk packages" npm install -g --allow-scripts=esbuild,workerd,sharp wrangler@latest; then
         wrangler telemetry disable > /dev/null 2>&1 || true
         echo "wrangler: $(wrangler --version 2> /dev/null | tail -n 1)"
     else
-        echo "NOTICE: 'npm install -g wrangler' failed; rerun setup with install-cloudflare."
+            stage_failed "bulk packages" "$?"; break
     fi
     echo "Log in with dev-init (install-cloudflare): CLOUDFLARE_API_TOKEN from secrets.env, or 'wrangler login'."
+    done # v99: end this stage; exhausted retries break only this block
 else
     echo "Skipping wrangler. (Run with 'install-cloudflare' or 'install-cloud' flag to enable)"
 fi
@@ -7787,6 +8340,7 @@ fi
 #   cloudflared tunnel login                           named tunnels on your own domain (an account)
 # =================================================================
 if [[ "$FLAGS" =~ " install-cloudflared " ]]; then
+    stage install-cloudflared
     echo "Installing cloudflared (Cloudflare Tunnel) from Cloudflare's apt repository..."
     CFD_SUITE=any
     curl -fsSI --max-time 20 https://pkg.cloudflare.com/cloudflared/dists/trixie/Release > /dev/null 2>&1 && CFD_SUITE=trixie
@@ -7795,7 +8349,7 @@ if [[ "$FLAGS" =~ " install-cloudflared " ]]; then
         sudo install -D -o root -g root -m 644 "$CFD_KEY" /usr/share/keyrings/cloudflare-main.gpg
         echo "deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared $CFD_SUITE main" \
             | sudo tee /etc/apt/sources.list.d/cloudflared.list > /dev/null
-        if sudo apt update && sudo apt install -y cloudflared; then
+        if apt_get update && apt_get install -y cloudflared; then
             echo "cloudflared: $(cloudflared --version 2> /dev/null | head -n 1) (suite $CFD_SUITE)"
             echo "Quick tunnel: cloudflared tunnel --url http://localhost:<port>  (the URL it prints is public; Ctrl-C closes it)"
         else
@@ -7813,6 +8367,7 @@ fi
 
 # Jev, TypeSafe AI's decision model (added in v67)
 if [[ "$FLAGS" =~ " install-jev " ]]; then
+    stage install-jev
     echo "Setting up for Jev (TypeSafe AI)..."
     # Jev is a hosted API: there is nothing to install on the machine. The SDKs are per-project
     # dependencies, like every other SDK in this bundle:
@@ -7846,12 +8401,14 @@ fi
 # install-all run has 'az' available for the Bicep step.
 # =================================================================
 if [[ "$FLAGS" =~ " install-iac " ]]; then
+    stage install-iac
+    for _dev_stage_once in 1; do
     echo "Installing Infrastructure-as-Code tools..."
     # Terraform comes from HashiCorp's tap: homebrew-core froze 'terraform' at 1.5.7 after the
     # BSL license change. Substitute 'brew install opentofu' (drop-in 'tofu' command) for
     # clients that require an OSI-approved license.
-    brew tap hashicorp/tap
-    brew install hashicorp/tap/terraform
+    net_retry "Homebrew packages" brew tap hashicorp/tap || { stage_failed "Homebrew packages" "$?"; break; }
+    net_retry "Homebrew packages" brew install hashicorp/tap/terraform || { stage_failed "Homebrew packages" "$?"; break; }
     # v61: tflint is no longer in homebrew-core and upstream's own tap is macOS-only, so on Linux
     # install the release binary and verify it against the published checksums. 'latest' means a
     # rerun upgrades in place. dpkg's arch names (amd64 / arm64) match the release asset names.
@@ -7872,6 +8429,7 @@ if [[ "$FLAGS" =~ " install-iac " ]]; then
     else
         echo "Azure CLI not present; skipping Bicep. (Add 'install-azure' to get it.)"
     fi
+    done # v99: end this stage; exhausted retries break only this block
 else
     echo "Skipping IaC tools. (Run with 'install-iac' flag to enable)"
 fi
@@ -7896,6 +8454,8 @@ fi
 # and SSH hosts, reached with the base section's ~/.ssh/id_ed25519.
 # =================================================================
 if [[ "$FLAGS" =~ " install-ansible-full " ]] || [[ "$FLAGS" =~ " install-ansible-core " ]]; then
+    stage ansible
+    for _dev_stage_once in 1; do
     ANSIBLE_MODE=core
     [[ "$FLAGS" =~ " install-ansible-full " ]] && ANSIBLE_MODE=full
     echo "Installing Ansible ($ANSIBLE_MODE)..."
@@ -7910,14 +8470,14 @@ if [[ "$FLAGS" =~ " install-ansible-full " ]] || [[ "$FLAGS" =~ " install-ansibl
         # Rerun: upgrade everything already in the venv in ONE resolve, the full package included
         # when present, so ansible-core never moves past what the 'ansible' package pins.
         pipx runpip ansible-core show ansible > /dev/null 2>&1 && ANSIBLE_PKGS+=(ansible)
-        pipx runpip ansible-core install -q --upgrade "${ANSIBLE_PKGS[@]}"
+        net_retry "pipx packages" pipx runpip ansible-core install -q --upgrade "${ANSIBLE_PKGS[@]}" || { stage_failed "pipx packages" "$?"; break; }
     else
-        pipx install --python /usr/bin/python3 ansible-core
+        net_retry "pipx packages" pipx install --python /usr/bin/python3 ansible-core || { stage_failed "pipx packages" "$?"; break; }
     fi
-    pipx inject --include-apps ansible-core ansible-lint molecule
-    pipx inject ansible-core docker     # a library with no commands: --include-apps would refuse it
+    net_retry "pipx packages" pipx inject --include-apps ansible-core ansible-lint molecule || { stage_failed "pipx packages" "$?"; break; }
+    net_retry "pipx packages" pipx inject ansible-core docker     || { stage_failed "pipx packages" "$?"; break; } # a library with no commands: --include-apps would refuse it
     if [ "$ANSIBLE_MODE" = full ]; then
-        pipx inject --include-apps ansible-core ansible
+        net_retry "pipx packages" pipx inject --include-apps ansible-core ansible || { stage_failed "pipx packages" "$?"; break; }
         # A community.docker left in ~/.ansible/collections by an earlier core install shadows the
         # bundled copy, so keep it current too (best effort: Galaxy being down must not stop setup).
         if [ -d ~/.ansible/collections/ansible_collections/community/docker ]; then
@@ -7934,6 +8494,7 @@ if [[ "$FLAGS" =~ " install-ansible-full " ]] || [[ "$FLAGS" =~ " install-ansibl
     echo "ansible: ${ANSIBLE_VERSION_TEXT%%$'\n'*}"
     [ "$ANSIBLE_MODE" = full ] && echo "$(ansible-community --version)"
     echo "Docker containers need no setup as targets; for SSH hosts: ssh-copy-id -i ~/.ssh/id_ed25519.pub user@host"
+    done # v99: end this stage; exhausted retries break only this block
 else
     echo "Skipping Ansible. (install-ansible-full comes with install-iac; install-ansible-core is the lean, standalone option)"
 fi
@@ -7951,8 +8512,10 @@ fi
 #      column, not 'free' or 'used'.
 # =================================================================
 if [[ "$FLAGS" =~ " install-k8s " ]]; then
+    stage install-k8s
+    for _dev_stage_once in 1; do
     echo "Installing Kubernetes tooling (kubectl, helm, kind, k9s)..."
-    brew install kubectl helm kind k9s
+    net_retry "Homebrew packages" brew install kubectl helm kind k9s || { stage_failed "Homebrew packages" "$?"; break; }
     # v74: completion is generated once into bash-completion's per-user directory (loaded on demand,
     # like terminus and acli) instead of 'source <(kubectl completion bash)' in ~/.bashrc, which runs
     # kubectl in every new shell and printed "kubectl: command not found" once the Homebrew block
@@ -7969,6 +8532,7 @@ if [[ "$FLAGS" =~ " install-k8s " ]]; then
     echo "kubectl: $(kubectl version --client 2>/dev/null | head -n 1)"
     echo "helm: $(helm version --short 2>/dev/null)   kind: $(kind version 2>/dev/null)"
     echo "A kind cluster takes ~2GB RAM: stop Ollama models ('ollama stop <model>') before 'kind create cluster'."
+    done # v99: exhausted retries skip the remainder of this stage
 else
     echo "Skipping Kubernetes tooling. (Run with 'install-k8s' flag to enable)"
 fi
@@ -8031,11 +8595,12 @@ fi
 # the v84 relay and ChromeOS forwards, and installs no Tailscale.
 # =================================================================
 if [[ "$FLAGS" =~ " install-lan " ]]; then
+    stage install-lan
     echo "================================================================="
     echo "Setting up the laptop network (install-lan$([[ "$FLAGS" =~ " install-lan-share " ]] && echo " + install-lan-share"))..."
     echo "================================================================="
     # iproute2 (ip, ss) is part of a standard Debian install; named so a trimmed container gets it back.
-    sudo apt install -y iproute2
+    apt_get install -y iproute2
     mkdir -p "$HOME/.local/bin"
     # v93: Tailscale in normal mode (see above). A failure is a NOTICE: the address book and the relay mode
     # work without it.
@@ -8051,8 +8616,8 @@ if [[ "$FLAGS" =~ " install-lan " ]]; then
                 && curl -fsSL --max-time 60 "https://pkgs.tailscale.com/stable/debian/$TS_CODENAME.tailscale-keyring.list" -o /tmp/tailscale.list; then
                 sudo install -m 644 /tmp/tailscale-keyring.gpg /usr/share/keyrings/tailscale-archive-keyring.gpg
                 sudo install -m 644 /tmp/tailscale.list /etc/apt/sources.list.d/tailscale.list
-                sudo apt update > /dev/null 2>&1 || true
-                sudo DEBIAN_FRONTEND=noninteractive apt install -y tailscale \
+                apt_get update > /dev/null 2>&1 || true
+                apt_get install -y tailscale \
                     || echo "NOTICE: apt could not install tailscale; 'curl -fsSL https://tailscale.com/install.sh | sh' is Tailscale's own route."
             else
                 echo "NOTICE: pkgs.tailscale.com did not answer; rerun setup with install-lan to install Tailscale."
@@ -9240,6 +9805,7 @@ fi
 # wine32 and needs no extra package; install-retro adds the tools to build 16-bit programs.
 # =================================================================
 if [[ "$FLAGS" =~ " install-com " ]]; then
+    stage install-com
     echo "================================================================="
     echo "Installing COM development tools: Wine (64 + 32), mingw-w64, widl, winetricks..."
     echo "================================================================="
@@ -9247,11 +9813,11 @@ if [[ "$FLAGS" =~ " install-com " ]]; then
         sudo dpkg --add-architecture i386
         # Not fatal under set -e: one third-party repository failing to refresh should not stop the
         # run when Debian's own i386 lists came in; if they did not, the install below says so.
-        sudo apt update || echo "NOTICE: apt update reported errors after adding i386; the Wine install below may fail."
+        apt_get update || echo "NOTICE: apt update reported errors after adding i386; the Wine install below may fail."
     fi
     # wine32:i386 pulls in libwine:i386 and a few hundred i386 runtime libraries (about 1.3 GB in all,
     # with the 64-bit side). cabextract is what winetricks unpacks Microsoft's .cab redistributables with.
-    sudo DEBIAN_FRONTEND=noninteractive apt install -y wine wine64 wine32:i386 libwine-dev \
+    apt_get install -y wine wine64 wine32:i386 libwine-dev \
         gcc-mingw-w64 g++-mingw-w64 mingw-w64-tools cabextract
     # winetricks lives in Debian's contrib section, which a Crostini container does not enable. The
     # script itself is one file: take the current one from its GitHub repository into ~/.local/bin
@@ -9377,20 +9943,21 @@ fi
 # (bsdtar) unpacks a Delphi CD's .iso. 'retro sizes' shows the sizes in effect.
 # =================================================================
 if [[ "$FLAGS" =~ " install-retro " ]]; then
+    stage install-retro
     echo "================================================================="
     echo "Installing retro development tools: DOSBox-X, QEMU, Open Watcom v2, the retro guests (win31, win95, winnt40, win2000, delphi1)..."
     echo "================================================================="
     # dosbox-x is in Debian 13 (trixie); an older container may not have it, which should not stop the
     # rest of setup (set -e), so a failure is a NOTICE and Open Watcom still installs.
-    sudo DEBIAN_FRONTEND=noninteractive apt install -y xz-utils
-    sudo DEBIAN_FRONTEND=noninteractive apt install -y dosbox-x \
+    apt_get install -y xz-utils
+    apt_get install -y dosbox-x \
         || echo "NOTICE: apt could not install dosbox-x (it is in Debian 13 'trixie'); DOS programs, 'win31' and 'win95' need it."
     # v92: QEMU for Windows NT 4.0 and 2000 (qemu-system-gui: the GTK window), mtools and dosfstools for the
     # exchange disk, x11-utils (xdpyinfo, xmessage; also in the base list) for the helper.
-    sudo DEBIAN_FRONTEND=noninteractive apt install -y qemu-system-x86 qemu-system-gui qemu-utils mtools dosfstools x11-utils \
+    apt_get install -y qemu-system-x86 qemu-system-gui qemu-utils mtools dosfstools x11-utils \
         || echo "NOTICE: apt could not install QEMU or mtools; 'winnt40', 'win2000' and the exchange disk need them."
     # v93: bsdtar unpacks a Delphi CD's .iso for 'delphi N setup' (Wine has no CD image support of its own).
-    sudo DEBIAN_FRONTEND=noninteractive apt install -y libarchive-tools \
+    apt_get install -y libarchive-tools \
         || echo "NOTICE: apt could not install libarchive-tools; 'delphi N setup' then needs the CD's files, not an .iso."
     if [ -e /dev/kvm ]; then
         # The group that owns /dev/kvm (kvm on Debian); nothing to add when it is root or open to everyone.
@@ -9708,7 +10275,7 @@ exch_create() {   # exch_create WS
         fi
         return 0
     fi
-    command -v mkfs.fat > /dev/null && command -v mcopy > /dev/null || die "mtools and dosfstools are missing: rerun dev-setup with install-retro."
+    [ -x /usr/sbin/mkfs.fat ] && command -v mcopy > /dev/null || die "mtools and dosfstools are missing: rerun dev-setup with install-retro."
     exch_setting; mb=$SET_VAL
     heads=${RETRO_EXCHANGE_HEADS:-16}
     case "$heads" in 16|255) ;; *) die "RETRO_EXCHANGE_HEADS=$heads: 16 (the default) or 255." ;; esac
@@ -9733,7 +10300,8 @@ with open(path, 'wb') as f:
 print(total)
 PY
     ) || die "could not create $img"
-    mkfs.fat -F 16 -n EXCHANGE --offset 63 -h 63 -g "$heads/63" "$img" $(( (total - 63) / 2 )) > /dev/null || { rm -f "$img"; die "mkfs.fat failed on $img"; }
+    # v99 (Nov 1 2026): Debian installs dosfstools in sbin, absent from a normal user PATH.
+    /usr/sbin/mkfs.fat -F 16 -n EXCHANGE --offset 63 -h 63 -g "$heads/63" "$img" $(( (total - 63) / 2 )) > /dev/null || { rm -f "$img"; die "mkfs.fat failed on $img"; }
     echo "Created the exchange disk $img ($mb MB, FAT16; RETRO_EXCHANGE_MB from $SET_SRC): D: in the guest."
 }
 exch_mount_size() {   # the -size value DOSBox-X's imgmount needs for the exchange disk of WS
@@ -11298,6 +11866,7 @@ fi
 # it), and its agent integrations are config, so dev-init installs them. tmux (base) is the general multiplexer.
 # =================================================================
 if [[ "$FLAGS" =~ " install-herdr " ]]; then
+    stage install-herdr
     echo "================================================================="
     echo "Installing herdr..."
     echo "================================================================="
@@ -11358,6 +11927,7 @@ fi
 # Linux container stops when the Chromebook sleeps, so an agent here is not reachable around the clock.
 # =================================================================
 if [[ "$FLAGS" =~ " install-hermes " ]]; then
+    stage install-hermes
     echo "================================================================="
     echo "Installing Hermes Agent (Nous Research)..."
     echo "================================================================="
@@ -11392,6 +11962,8 @@ else
 fi
 
 if [[ "$FLAGS" =~ " install-openclaw " ]]; then
+    stage install-openclaw
+    for _dev_stage_once in 1; do
     echo "================================================================="
     echo "Installing OpenClaw..."
     echo "================================================================="
@@ -11404,32 +11976,34 @@ if [[ "$FLAGS" =~ " install-openclaw " ]]; then
         # npm 12 blocks dependency install scripts unless allowed by name (see install-node): openclaw's
         # own postinstall sets up its bundled plugins, koffi picks its prebuilt native library,
         # protobufjs checks its version.
-        if npm install -g --allow-scripts=openclaw,koffi,protobufjs openclaw@latest; then
+        if net_retry "bulk packages" npm install -g --allow-scripts=openclaw,koffi,protobufjs openclaw@latest; then
             # Feature statistics are off by default; record the choice (in ~/.openclaw/openclaw.json,
             # which dev-init's onboarding keeps) so no wizard asks for it.
             openclaw telemetry off > /dev/null 2>&1 || echo "NOTICE: could not switch OpenClaw telemetry off; run 'openclaw telemetry off'."
             echo "OpenClaw installed: $(openclaw --version 2> /dev/null | head -n 1) on Node $OC_NODE"
             echo "(If you installed its gateway service, 'openclaw gateway restart' puts the new version in place.)"
         else
-            echo "NOTICE: npm could not install openclaw; rerun setup with install-openclaw."
+            stage_failed "OpenClaw" "$?"; break
         fi
     else
         echo "NOTICE: OpenClaw needs Node 24.16+ or 26.1+ and nvm's default is ${OC_NODE:-missing}; rerun setup with install-node install-openclaw."
     fi
+    done # v99: end this stage; exhausted retries break only this block
 else
     echo "Skipping OpenClaw. (Run with 'install-openclaw'; not part of install-all)"
 fi
 
 # v65: last look at the JDK on PATH. gradle and kotlin unlink brew's openjdk right after their own
 # install, but any later formula can depend on it too and link it again.
+stage finalize
 unlink_brew_openjdk
 
 # Final Cleanup
 echo "Cleaning up system packages..."
-sudo apt autoremove -y
+apt_get autoremove -y
 
 echo "================================================================="
-echo "Setup Version 98 complete! 🎉"
+echo "Setup finished its selected blocks; stage summary follows the hints."
 [ -n "${DEV_SCREEN_OUTPUT:-}" ] && echo "Screen output: $DEV_SCREEN_OUTPUT"
 echo "NEXT, in this order:"
 echo "  a. source ~/.bashrc                      (or open a new terminal)"

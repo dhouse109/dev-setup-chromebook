@@ -1,5 +1,46 @@
 # Init checklist
 
+v99 keeps the same flags and run order. During each bundle invocation, pip/pipx inherit retry and
+socket-timeout settings; setup writes apt's managed acquisition policy before installing packages.
+These settings require no keys. Bulk-install retries use three attempts with 2s/5s backoff.
+Setup reports failed/not-reached stages and rerun flags in its closing summary and
+`assets/logs/setup-stages-<timestamp>.tsv` (`assets/setup-stages.tsv` is the latest run). Exhausted
+optional bulk retries skip their block and continue; unexpected errors abort with an EXIT report.
+Failed requested stages make setup exit nonzero. Deliberate disk/media/credential skips stay separate. Playwright's managed installer/lockfile and successful release record live in
+`assets/tools/playwright`; dev-test uses that release instead of resolving latest again. Apt counts
+repeated delayed-item warnings, preserving other diagnostics and exit status. `REDIS_INSIGHT=0` and
+`MONGODB_COMPASS=0` deliberately disable those GUIs; use the same setting for setup and dev-test.
+The qwen disk guard is unchanged; generation examples only name confirmed present completion models.
+Optional GEMINI_API_KEY stays in secrets.env and is applied by init, never entered directly in .bashrc.
+
+Nov 1 acceptance follow-up: vendor downloads retry, fetched installers execute once, and failed
+system apt updates abort. Playwright's dependency pipeline retries before browsers/version recording.
+Reqnroll scratch tests select the SDK's major/minor framework and require that runtime. Retro uses
+`/usr/sbin/mkfs.fat`, independent of user PATH. Symfony logs the complete security result and checker
+status. Inspector setup runs a real npx tool call and verifies the same call offline; failure is a
+NOTICE with full diagnostics in `assets/logs/inspector-cache-*`, not a claim that the cache is warm.
+No new flags, secret variables or login steps are required.
+
+Shell-startup probes supervise and stop only their descendant ssh-agents. Their PID/start-time ledger
+is `assets/logs/shell-agents-<timestamp>.tsv`; dev-test checks it before its summary and again on EXIT.
+A pre-existing user agent is left alone. Failed service starts retain complete output/container logs
+in `assets/logs/devsvc-<service>-<timestamp>.startup.log`, including safe image/state/limit fields.
+Typesense's exit-139 investigation identified upstream #2998 (missing kernel `/proc/self/io`); setup now uses a scoped read-only preload shim only on affected hosts, with zero process-I/O counters and an explicit diagnostic. With approval, run
+`bash tests/typesense-investigate.sh` to collect full startup logs and image/host metadata under
+`assets/logs/typesense-investigation-<timestamp>`; do not upload raw logs or credential arguments.
+Targeted test commands also need individual approval; the owner performs final full acceptance. With approval,
+`python3 -B tests/refresh-retro-helper.py` refreshes only the installed helper after syntax checks,
+keeping a backup under assets/downloads/helper-backups. `python3 -B tests/warm-inspector-cache.py`
+replays only setup's real online/offline Inspector probe with managed nvm activated. Neither command
+runs the full installer; the cache probe's server starts only when executed directly or by FastMCP.
+
+The owner accepted full v99 setup → init → dev-test on Nov 1 2026 with
+`install-all install-db-server install-lan-share install-models install-ollama-containers install-retro`:
+PASS 594, FAIL 0, WARN 11, SKIP 1. The owner confirms init was run in between and dev-test returned to
+the prompt without Ctrl+C. Two non-credential WARNs are accepted Known issues: pre-existing offline
+Inspector cache availability and environmental disk headroom below the model reserve. The reserve
+stays unchanged. Read resulting .output/.log files by path; agent-run bundle commands still need approval.
+
 *Working notes kept alongside the scripts, copied at the v93 release, updated for v95. The "since vNN" remarks date each behaviour; [CHANGELOG.md](../CHANGELOG.md) has the full story.*
 
 ## Run order
@@ -73,7 +114,7 @@ The same expansion is used by all three scripts, so a flag set that installs is 
 | `install-cloudflared` | cloudflared from Cloudflare's apt repository, for tunnels; setup creates none. Opt-in, in no group (v89) |
 | `install-graphql` | Apollo's GraphQL tools as three binaries in \~/.local/bin from their GitHub releases (checksum-checked where the release has one): Rover, the Apollo Router (v2 only) and the Apollo MCP Server, plus Rover's composition and router plugins in \~/.rover. A \~/.bashrc block turns Apollo telemetry off and accepts the plugins' Elastic License v2. Local federation needs no account; APOLLO\_KEY is never exported. In install-all, no dependencies (v90) |
 | `install-testing` | The test tools: install-playwright, install-selenium, install-bdd and install-robot. Test libraries (@playwright/test, cucumber-js, Behat, behave, Reqnroll's packages) stay per project. In install-all (v91) |
-| `install-playwright` | Playwright's Chromium, Firefox and WebKit in \~/.cache/ms-playwright with their system libraries (playwright install --with-deps), and Playwright MCP warmed in npx's cache. Pulls in install-node. Part of install-testing (v91) |
+| `install-playwright` | Playwright's Chromium, Firefox and WebKit in \~/.cache/ms-playwright with their system libraries (separate filtered install-deps using that release’s list; v99 installer and version record in assets/tools/playwright), and Playwright MCP warmed in npx's cache. Pulls in install-node. Part of install-testing (v91) |
 | `install-selenium` | A Selenium Grid (selenium/standalone-chrome) as the devsvc service selenium: WebDriver on 127.0.0.1:4444, noVNC on 127.0.0.1:7900 to watch it, DDEV name devselenium, created stopped, a heavy engine (\~1.6 GB), no login and never LAN-shared. Plus Selenium Manager's chromedriver for the installed Chrome in \~/.cache/selenium (no chromedriver on PATH) and SE\_AVOID\_STATS in \~/.bashrc. Part of install-testing (v91) |
 | `install-bdd` | The Gherkin runners' machine-level part: Reqnroll's dotnet new templates (SpecFlow's successor) when .NET is installed. Cucumber, Behat (4.x for Symfony 8, 3.x with Drupal's Drupal Extension) and behave are per project. No dependencies. Part of install-testing (v91) |
 | `install-robot` | Robot Framework as a uv tool on Debian's Python with the Browser (Playwright), SeleniumLibrary and RequestsLibrary libraries; robot, rebot, libdoc and rfbrowser in \~/.local/bin; the Browser library's Node side without browsers (it uses the system Chrome). Pulls in install-node. Part of install-testing (v91) |

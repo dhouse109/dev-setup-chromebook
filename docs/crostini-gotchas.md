@@ -4,6 +4,40 @@ These are things that went wrong while building this bundle on ChromeOS's Linux 
 Chromebooks), and what fixed each one. Every fix is in the scripts. Search them for the flag in brackets
 to see it in context; the comment above each fix usually tells the story.
 
+- **Dev-test printed its summary but never returned** (setup/test recorder, v99; Nov 1 2026).
+  New-shell startup checks can leave an `ssh-agent -D` running. Passing `>(_copy)` as script(1)'s
+  output filename let that agent inherit the recorder's extra pipe descriptor, even with standard
+  output/error redirected. The copy waited forever for EOF after the test itself exited.
+  **Fix:** send script(1)'s output through a separate tee/copy branch; its pipe descriptor no longer
+  reaches the recorded command or shell-startup agents. Keep waiting for the final saved lines and
+  preserve script(1)'s exit status. A separate child-subreaper supervisor now wraps every startup
+  probe, adopts its detached agents and stops only those descendants. PID/start-time ledgers verify
+  no test-owned agent remains before the summary and again on EXIT; pre-existing agents stay alive.
+- **dosfstools installed but `mkfs.fat` reported missing** (`install-retro`, v99; Nov 1 2026).
+  Normal user PATH can omit `/usr/sbin`, where Debian installs `mkfs.fat`. Both the test and generated
+  exchange helper now use `/usr/sbin/mkfs.fat`; package presence alone did not prove helper operation.
+
+- **Typesense exits 139 before logging** (`install-typesense`, v99; Nov 1 2026, eldrid).
+  `/proc/self/io` is missing in this ChromeOS kernel. Typesense 30.2's bundled brpc samples it in a
+  global constructor, then logs the missing-file error through glog before initialization and
+  segfaults. Even `--version` crashes, with empty Docker logs; gdb confirms the static-init chain.
+  See [Typesense #2998](https://github.com/typesense/typesense/issues/2998) and
+  [brpc #3184](https://github.com/apache/brpc/pull/3184).
+  **Fix:** the upstream-documented `fopen` shim, compiled from embedded source into
+  `assets/tools/typesense`, mounted read-only and preloaded only in Typesense when the host lacks
+  that file. Only an ENOENT read of `/proc/self/io` receives zero counters, with one explicit warning;
+  real kernel counters, access errors and other paths are unchanged. This disables only the unavailable
+  process-I/O metric, not database writes, search or other monitoring. Keep the vendor image, existing
+  data volume and resource limits. Remove the workaround after a released upstream image fixes it.
+
+- **Oracle clock-drift errors after long uptime under memory pressure** (`install-oracle`, v99;
+  Nov 1 2026). Oracle can log time-drift errors and terminate its instance in these conditions.
+  In acceptance, the first startup failed with clock-drift errors; closing other windows and
+  restarting Linux cleared the condition, and the repeated Oracle round trip passed.
+  Restart Linux before retrying when this pattern occurs. This observation does not establish the
+  cause of a separate terminal reset; do not change database settings or merely increase its wait
+  limit without further evidence.
+
 ## Graphics
 
 - **Windowed OpenGL falls back to software rendering** (setup base). Crostini hands Linux a virgl GPU as
@@ -51,6 +85,19 @@ to see it in context; the comment above each fix usually tells the story.
   and don't help diagnose a hang.
 
 ## Network
+
+- **One dropped pip download ended the whole setup** (`install-agentic`, v99; Oct 31 2026). The v98 run
+  ended at an unhandled ConnectionResetError; pip's own partial retry did not recover. **Fix:** exported
+  pip retry/socket settings (resume retries when supported), three-attempt bulk-install retries with
+  2s/5s backoff, and early managed apt retries/timeouts. Vendor streaming installers are fetched fully
+  before execution. Only exhausted optional bulk retries continue to independent blocks; other errors
+  abort with stage/EXIT reporting and rerun flags. Reports live in assets, not in loose home files.
+- **Apt printed 64,364 copies of one font warning** (`install-playwright`, v99; Oct 31 2026). The font
+  actually installed; Debian apt 3.0.3's delayed acquisition queue emitted the same warning repeatedly
+  ([Debian #1111554](https://bugs.debian.org/1111554), moved to debug output in 3.1.8). **Fix:** separate
+  upstream's version-specific dependency install from browser downloads and count only identical
+  consecutive delayed-item warnings before terminal/log capture. Other diagnostics and both producer
+  and filter status survive. Retries/filtering do not repair apt's queue; don't add unstable apt feeds.
 
 - **Downloads hang on IPv6** (setup base). A Linux VM can get IPv6 addresses with no route out. `wget` then
   waits on one IPv6 address after another, while the ChromeOS browser works because it races IPv4 against
@@ -142,6 +189,25 @@ to see it in context; the comment above each fix usually tells the story.
   Ollama's models first.
 
 ## Packages and PATH
+
+- **Random password generation printed Broken pipe** (SQL Server, Oracle and devsvc, v99; Oct 31 2026).
+  `tr < /dev/urandom | head` closes the reader early; without pipefail the last command hides the
+  producer error, and surrounding printf/assignments can mask it even with pipefail. **Fix:** finite
+  Python secrets generation, checked before storing credentials. LDAP's latent copies use it too;
+  existing configured passwords are kept. This is a shell issue, not a ChromeOS-specific failure.
+- **Apt couldn't read a local .deb as `_apt`** (Symfony CLI / Redis Insight, v99; Oct 31 2026).
+  `mktemp -d` is private (0700). **Fix:** verify privately first, then chmod only that temp directory
+  (0755) and public package (0644) for apt-get. MongoDB clients use the same pattern. Never disable the
+  apt sandbox or broaden home/config permissions. Unattended package calls use apt-get.
+- **Antigravity printed ERROR for successful info messages** (v99 investigation, Oct 31 2026).
+  Its upstream Google logger runs before initialization; the following installation succeeds. Its
+  local-bin prepend duplicates PATH entries but does not reverse Debian/Homebrew ordering. Keep the
+  diagnostics and managed Homebrew block; dev-test checks the installed agy plus lookup order.
+- **Upstream notices can accompany successful installs** (v99 investigation, Oct 31 2026): sdkmanager
+  deprecation, EAS/npm deprecated transitives, brew's Landlock ABI 10 requirement on an ABI 3 kernel,
+  and RDoc scanning an http-parser fixture. Keep functional checks; no dependency override, Android
+  migration, kernel/sandbox bypass or removal of local RI docs is made for these notices. Java's
+  initial “No JRE found” notice is followed by its certificate trigger; dev-test checks the trust store.
 
 - **Homebrew shadows Debian** (setup base). Formula dependencies bring their own python3, sqlite3, `as`,
   `ld` and openjdk, and Homebrew's `shellenv` puts them ahead of Debian's. **Fix:** a marked `~/.bashrc`

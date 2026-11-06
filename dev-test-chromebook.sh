@@ -1,5 +1,5 @@
 #!/bin/bash
-# dev-test-chromebook - Version 98
+# dev-test-chromebook - Version 99
 # Version history: CHANGELOG.md, next to this script in the bundle
 # (one section per script, newest version first).
 #
@@ -138,9 +138,11 @@ if [ -z "${DEV_SCREEN_OUTPUT:-}" ] && [ "${DEV_SCREEN_SAVE:-1}" != 0 ]; then
         if [ -t 0 ] && [ -t 1 ] && command -v script > /dev/null 2>&1; then
             # script(1) runs its command with $SHELL -c: bash here, and the run gets your SHELL back.
             _cmd="SHELL=$(printf '%q' "${SHELL:-/bin/bash}") exec $(printf '%q ' "$BASH" "$0" "$@")"
-            SHELL=/bin/bash script -qfec "$_cmd" >(_copy)
-            _rc=$?
-            wait $! 2> /dev/null   # the copy's last lines
+            # v99 (Nov 1 2026: dev-test printed its summary but never returned): passing >(_copy)
+            # as script's filename leaks its pipe fd into new-shell checks and their ssh-agent.
+            # Keep that descriptor in tee's branch only; wait still drains the copy's last lines.
+            SHELL=/bin/bash script -qfec "$_cmd" /dev/null | (trap '' INT TERM; tee -p >(_copy); wait $! 2> /dev/null)
+            _rc=${PIPESTATUS[0]}
         else
             [ -t 1 ] && export DEV_SCREEN_TTY=1   # decided before the pipe: dev-test keeps its colors on a terminal
             "$BASH" "$0" "$@" 2>&1 | (trap '' INT TERM; tee -p >(_copy); wait $! 2> /dev/null)
@@ -148,12 +150,38 @@ if [ -z "${DEV_SCREEN_OUTPUT:-}" ] && [ "${DEV_SCREEN_SAVE:-1}" != 0 ]; then
         fi
         sed -i -e :a -e '/^\n*$/{$d;N;ba' -e '}' "$DEV_SCREEN_OUTPUT" 2> /dev/null   # no trailing blank lines
         # The run ends with its summary block, its last line a row of '='. Anything else: it stopped early.
-        if grep -q ' Version [0-9]* complete' "$DEV_SCREEN_OUTPUT" 2> /dev/null && tail -n 1 "$DEV_SCREEN_OUTPUT" | grep -q '^=\{20,\}$'; then :
+        # v99 (Nov 1 2026): fatal setup exits still print a complete stage summary.
+        if grep -Eq ' Version [0-9]+ complete|^Setup stage summary \(Version [0-9]+\)$' "$DEV_SCREEN_OUTPUT" 2> /dev/null && tail -n 1 "$DEV_SCREEN_OUTPUT" | grep -q '^=\{20,\}$'; then :
         else echo "Screen output (stopped before the summary): $DEV_SCREEN_OUTPUT" >&2; fi
         exit "$_rc"
     fi
 fi
 # <<< dev-bundle screen output <<<
+
+# >>> dev-bundle network policy >>>
+# v99 (Oct 31 2026: agentic pip reset ended install-all): invocation-only settings reach pipx
+# and subprocess pip too. Probe supported resume options; never change the user's pip config.
+export PIP_RETRIES=5 PIP_TIMEOUT=60
+if /usr/bin/python3 -m pip --help 2> /dev/null | grep -q -- '--resume-retries'; then
+    export PIP_RESUME_RETRIES=5
+else
+    unset PIP_RESUME_RETRIES
+fi
+net_retry() {   # net_retry SAFE_LABEL COMMAND [ARG...]; no expanded command/secret in our messages
+    local label=$1 attempt rc=1
+    shift
+    NET_RETRY_EXHAUSTED=0
+    for attempt in 1 2 3; do
+        printf '[network] %s: attempt %s/3\n' "$label" "$attempt" >&2
+        if "$@"; then return 0; else rc=$?; fi
+        case "$attempt" in 1) sleep 2 ;; 2) sleep 5 ;; esac
+    done
+    printf '[network] %s: failed after 3 attempts (exit %s)\n' "$label" "$rc" >&2
+    NET_RETRY_EXHAUSTED=1
+    return "$rc"
+}
+# <<< dev-bundle network policy <<<
+
 
 # Deliberately NO 'set -e': a failing check must be recorded, not abort the run.
 
@@ -416,7 +444,24 @@ mkdir -p "$HOME/.cache/dev-test"
 rm -rf "$HOME"/.cache/dev-test/run.* 2> /dev/null   # leftovers from a run that was killed (no EXIT trap)
 rm -rf "$HOME"/.hermes/.dev-test-* 2> /dev/null      # v86: the same for the Hermes offline check's scratch home
 export WORK; WORK=$(mktemp -d "$HOME/.cache/dev-test/run.XXXXXX")
-trap 'rm -rf "$WORK"' EXIT
+# v99 (Nov 1 2026): verify the ownership ledger again on exit, including early failures/signals.
+test_exit() {
+    local rc=$?
+    if [ -n "${LINKS_PID:-}" ]; then
+        kill "$LINKS_PID" 2> /dev/null
+        wait "$LINKS_PID" 2> /dev/null
+    fi
+    if [ -f "$WORK/shell_start.py" ]; then
+        python3 "$WORK/shell_start.py" --check >> "$LOG" 2>&1 || {
+            [ "$rc" != 0 ] || rc=1
+            echo "Shell-agent cleanup verification FAILED (see $LOG)" >&2
+        }
+    fi
+    rm -rf "$WORK"
+    trap - EXIT
+    exit "$rc"
+}
+trap test_exit EXIT
 
 if [ -t 1 ] || [ "${DEV_SCREEN_TTY:-}" = 1 ]; then GRN=$'\e[32m' RED=$'\e[31m' YEL=$'\e[33m' DIM=$'\e[2m' RST=$'\e[0m'; else GRN=; RED=; YEL=; DIM=; RST=; fi
 
@@ -478,7 +523,7 @@ info()  { printf '  %-62s %s\n' "$1" "${DIM}INFO${RST} $2"; echo "--- $1: INFO $
 # v92: a check that cannot run because an earlier one already failed for the same cause (counted as SKIP).
 skipped() { printf '  %-62s %s\n' "$1" "${DIM}SKIP${RST} $2"; SKIP=$((SKIP + 1)); LAST=skip; echo "--- $1: SKIP $2" >> "$LOG"; }
 
-echo "Testing Chromebook Linux provisioning (Version 98)... log: $LOG"
+echo "Testing Chromebook Linux provisioning (Version 99)... log: $LOG"
 [ "$QUICK" = 1 ] && echo "(quick mode: slow functional tests will be skipped)"
 
 # v68: say so when dev-init has not applied the secrets file yet. Filling in secrets.env logs
@@ -506,6 +551,42 @@ init_pending_note
 section "Base system, Python tooling, SSH, Docker, Homebrew, Chrome (always)"
 
 check "passwordless sudo (installer ran 'passwd -d')"      'sudo -n true'
+# v99: these are installation outcomes/settings, not optional credential warnings.
+check "pip acquisition policy inherited by subprocesses" '[ "$PIP_RETRIES" = 5 ] && [ "$PIP_TIMEOUT" = 60 ]; rc=$?; if /usr/bin/python3 -m pip --help 2>/dev/null | grep -q -- "--resume-retries"; then [ "$PIP_RESUME_RETRIES" = 5 ] || exit 1; fi; exit "$rc"'
+cat > "$WORK/apt-policy.py" <<'APT_POLICY_PY'
+import sys
+s = sys.stdin.read()
+assert all(x in s for x in ('Acquire::Retries "3";', 'Acquire::http::Timeout "60";',
+                           'Acquire::https::Timeout "60";')), "apt acquisition policy differs"
+print("apt: retries 3, HTTP/HTTPS timeout 60 seconds")
+APT_POLICY_PY
+check "managed apt acquisition policy file is installed" 'test -f /etc/apt/apt.conf.d/80dev-bundle-network'
+warn  "apt retry/timeout policy has no user override" 'apt-config dump | /usr/bin/python3 apt-policy.py'
+warn  "Debian Python, SQLite and binutils precede Homebrew" 'for t in python3 sqlite3 as ld; do p=$(readlink -f "$(command -v "$t")"); case "$p" in /usr/bin/*|/bin/*) ;; *) echo "$t resolves to $p"; exit 1;; esac; done'
+
+
+export DEV_TEST_FLAGS="$FLAGS"
+cat > "$WORK/setup-stages.py" <<'STAGES_PY'
+import csv
+import os
+from pathlib import Path
+p = Path(os.environ["ASSETS"]) / "setup-stages.tsv"
+if not p.is_file():
+    raise SystemExit("no v99 setup stage report: rerun setup with the same flags")
+requested = set(os.environ["DEV_TEST_FLAGS"].split())
+bad = []
+with p.open() as f:
+    for row in csv.DictReader(f, delimiter="\t"):
+        flags = set(row["flags"].split())
+        if row["status"] == "skipped":
+            print("SKIP:", row["reason"])
+        elif (not flags or flags & requested) and row["status"] != "succeeded":
+            bad.append(f'{row["stage"]}: {row["status"]} {row["reason"]}; rerun flags: {row["flags"]}')
+if bad:
+    raise SystemExit("\n".join(bad))
+print("selected stages in last setup report succeeded; tool checks still follow")
+STAGES_PY
+check "last setup has no selected failed/unreached stages" '/usr/bin/python3 setup-stages.py'
 check "apt is healthy"                                     'sudo -n apt-get check'
 check "key apt packages present"                           'for p in build-essential git curl wget nano php-cli pipx python3-venv python3-pip ffmpeg x11-utils libgtk-3-dev libwebkit2gtk-4.1-dev librsvg2-dev; do dpkg_has "$p" || { echo "missing: $p"; exit 1; }; done'
 # v93: a network whose IPv6 does not get out made downloads hang (Oct 4 2026); setup v93 then prefers IPv4.
@@ -566,13 +647,147 @@ check "Homebrew"                                           'brew --version'
 # v68: Homebrew after the system directories (see dev-setup's header).
 check ".bashrc has the v68 Homebrew block (brew last on PATH)"   'grep -q "^# >>> dev-setup homebrew >>>$" ~/.bashrc && ! grep -q "^eval \"\$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)\"$" ~/.bashrc'
 hint  "rerun the installer (any flags): v68 replaces the bare brew shellenv line with a block that moves Homebrew to the end of PATH"
+# v99 (Nov 1 2026: each startup probe leaked ssh-agent): a Linux child subreaper owns
+# orphaned descendants even when ssh-agent double-forks/setsid. Never kill by global PID diff/name.
+# Keep the PID + start time ledger after WORK is removed, so the final check can verify ownership.
+export SHELL_AGENT_LEDGER="$ASSETS/logs/shell-agents-${DEV_RUN_STAMP:-$(date +%Y%m%d-%H%M%S)}.tsv"
+: > "$SHELL_AGENT_LEDGER"
+cat > "$WORK/shell_start.py" << 'SHELL_START_PY'
+import ctypes
+import os
+from pathlib import Path
+import signal
+import subprocess
+import sys
+import time
+
+ledger = Path(os.environ["SHELL_AGENT_LEDGER"])
+
+def identity(pid):
+    try:
+        text = Path(f"/proc/{pid}/stat").read_text()
+        fields = text[text.rfind(")") + 2:].split()
+        return fields[19], fields[0], int(fields[1])  # start ticks, state, PPID; comm may contain spaces
+    except FileNotFoundError:
+        return None
+
+def verify():
+    remaining = []
+    for row in ledger.read_text().splitlines():
+        pid, start = row.split()
+        current = identity(int(pid))
+        if current and current[0] == start and current[1] != "Z":
+            remaining.append(pid)
+    if remaining:
+        print("test-owned ssh-agent still running: " + ", ".join(remaining))
+        return 1
+    print("no test-owned ssh-agent remains (PID/start-time ledger verified)")
+    return 0
+
+if sys.argv[1:] == ["--check"]:
+    sys.exit(verify())
+
+# Fail before starting any shell if ownership cannot be guaranteed.
+libc = ctypes.CDLL(None, use_errno=True)
+if libc.prctl(36, 1, 0, 0, 0) != 0:  # PR_SET_CHILD_SUBREAPER
+    raise OSError(ctypes.get_errno(), "cannot supervise shell descendants")
+
+def descendants(pid):
+    # Some procfs implementations omit task/.../children; PPID ancestry works there too.
+    parents = {}
+    for entry in Path("/proc").iterdir():
+        if entry.name.isdigit():
+            current = identity(int(entry.name))
+            if current:
+                parents.setdefault(current[2], []).append((int(entry.name), current[0]))
+    result = []
+    pending = [pid]
+    while pending:
+        children = parents.get(pending.pop(), [])
+        result.extend(children)
+        pending.extend(child for child, _ in children)
+    return result
+
+def cleanup():
+    owned = []
+    # The command has exited; detached agents are now adopted by this supervisor.
+    for pid, start in descendants(os.getpid()):
+        try:
+            fd = os.pidfd_open(pid)
+        except ProcessLookupError:
+            continue
+        try:
+            path = Path(f"/proc/{pid}")
+            current = identity(pid)
+            if (current and current[0] == start and current[1] != "Z" and path.stat().st_uid == os.getuid()
+                    and path.joinpath("comm").read_text().strip() == "ssh-agent"):
+                with ledger.open("a") as log:
+                    log.write(f"{pid}\t{current[0]}\n")
+                signal.pidfd_send_signal(fd, signal.SIGTERM)
+                owned.append((pid, fd))
+                fd = None
+        except (FileNotFoundError, ProcessLookupError):
+            pass
+        finally:
+            if fd is not None:
+                os.close(fd)
+    deadline = time.monotonic() + 1
+    while time.monotonic() < deadline and any(
+            (state := identity(pid)) and state[1] != "Z" for pid, _ in owned):
+        time.sleep(0.02)
+    for pid, fd in owned:
+        try:
+            state = identity(pid)
+            if state and state[1] != "Z":
+                signal.pidfd_send_signal(fd, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        finally:
+            os.close(fd)
+    # Reap adopted agents (including those killed above), avoiding zombie leaks too.
+    for _ in range(50):
+        try:
+            while os.waitpid(-1, os.WNOHANG)[0]:
+                pass
+        except ChildProcessError:
+            break
+        if all(identity(pid) is None for pid, _ in owned):
+            break
+        time.sleep(0.02)
+
+command = None
+def interrupted(signum, _frame):
+    raise SystemExit(128 + signum)
+
+signal.signal(signal.SIGTERM, interrupted)
+signal.signal(signal.SIGINT, interrupted)
+try:
+    command = subprocess.Popen(sys.argv[1:])
+    rc = command.wait()
+finally:
+    # Do not let a second terminal signal interrupt agent cleanup.
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+    if command is not None and command.poll() is None:
+        command.terminate()
+        try:
+            command.wait(timeout=1)
+        except subprocess.TimeoutExpired:
+            command.kill()
+            command.wait()
+    cleanup()
+sys.exit(rc if rc >= 0 else 128 - rc)
+SHELL_START_PY
+shell_start() { python3 "$WORK/shell_start.py" "$@"; }
+export -f shell_start
+
 # v69: 'bash -i' under the harness was stopped by job control (it is not the terminal's foreground
 # process group, so taking the tty raises SIGTTOU) and sat there until the 120 s timeout. setsid
 # gives it a session with no controlling terminal; the inner timeout keeps a stuck ~/.bashrc short.
 # v74: a new terminal must start silently. v68-v73 left "kubectl: command not found" on every one.
 # env -i: start like a real new terminal (system PATH only), not with this script's PATH, which
 # already contains Homebrew and would hide exactly this kind of ordering problem.
-check "a new interactive shell starts without errors"      'e=$(timeout 30 setsid -w env -i HOME="$HOME" USER="$USER" LOGNAME="$USER" SHELL=/bin/bash TERM=xterm-256color PATH=/usr/local/bin:/usr/bin:/bin bash -ic true < /dev/null 2>&1 > /dev/null | grep -v -e "cannot set terminal process group" -e "no job control in this shell"); [ -z "$e" ] || { echo "$e" | head -n 5; exit 1; }' 60
+check "a new interactive shell starts without errors"      'e=$(shell_start timeout -k 5 30 setsid -w env -i HOME="$HOME" USER="$USER" LOGNAME="$USER" SHELL=/bin/bash TERM=xterm-256color PATH=/usr/local/bin:/usr/bin:/bin bash -ic true < /dev/null 2>&1 > /dev/null); rc=$?; e=$(printf "%s" "$e" | grep -v -e "cannot set terminal process group" -e "no job control in this shell"); [ "$rc" = 0 ] && [ -z "$e" ] || { echo "shell exit=$rc"; echo "$e" | head -n 5; exit 1; }' 60
 hint  "these lines come from ~/.bashrc; 'command not found' there usually means a line needs a tool whose PATH entry comes later in the file"
 # v96: how long a new LOGIN shell takes (Oct 26 2026: Devin Desktop's first launcher-started log said "Unable to
 # resolve your shell environment in a reasonable time"). VS Code-based editors started from a launcher icon run
@@ -588,7 +803,7 @@ run_login() {   # run_login [bash option...]: one new login shell, as an editor 
     local extra=()
     [ -n "${PS4_SET:-}" ] && extra=(PS4="$PS4_SET")
     # -k 5: an interactive bash ignores SIGTERM, so a hung one needs the KILL that follows.
-    timeout -k 5 30 setsid -w env -i HOME="$HOME" USER="$USER" LOGNAME="$USER" SHELL=/bin/bash TERM=xterm-256color \
+    shell_start timeout -k 5 30 setsid -w env -i HOME="$HOME" USER="$USER" LOGNAME="$USER" SHELL=/bin/bash TERM=xterm-256color \
         PATH=/usr/local/bin:/usr/bin:/bin "${extra[@]}" bash "$@" -i -l -c true < /dev/null
 }
 case "$1" in
@@ -645,7 +860,7 @@ hint  "~/.bashrc (or ~/.profile) is slow to start; the lines below took longest 
 if [ "$LAST" = warn ] || [ "$LAST" = fail ]; then
     bash "$WORK/login_time.sh" slow 2>&1 | tee -a "$LOG"
 fi
-check "an interactive shell has /usr/bin ahead of Homebrew" 'p=$(timeout 30 setsid -w bash -ic "echo \"\$PATH\"" < /dev/null 2> /dev/null | tail -n 1); [ -n "$p" ] || { echo "could not read PATH from an interactive shell"; exit 1; }; echo "$p" | tr ":" "\n" | grep -n -x -e /usr/bin -e /home/linuxbrew/.linuxbrew/bin; u=$(echo "$p" | tr ":" "\n" | grep -n -x /usr/bin | head -n 1 | cut -d: -f1); b=$(echo "$p" | tr ":" "\n" | grep -n -x /home/linuxbrew/.linuxbrew/bin | head -n 1 | cut -d: -f1); [ -n "$u" ] && [ -n "$b" ] && [ "$u" -lt "$b" ]' 60
+check "an interactive shell has /usr/bin ahead of Homebrew" 'shell_start timeout -k 5 30 setsid -w bash -ic "echo \"\$PATH\"" < /dev/null > shell-path.txt 2> /dev/null || exit $?; p=$(tail -n 1 shell-path.txt); [ -n "$p" ] || { echo "could not read PATH from an interactive shell"; exit 1; }; echo "$p" | tr ":" "\n" | grep -n -x -e /usr/bin -e /home/linuxbrew/.linuxbrew/bin; u=$(echo "$p" | tr ":" "\n" | grep -n -x /usr/bin | head -n 1 | cut -d: -f1); b=$(echo "$p" | tr ":" "\n" | grep -n -x /home/linuxbrew/.linuxbrew/bin | head -n 1 | cut -d: -f1); [ -n "$u" ] && [ -n "$b" ] && [ "$u" -lt "$b" ]' 60
 hint  "something later in ~/.bashrc puts Homebrew back in front; look for a second brew shellenv line"
 check "python3 on PATH is Debian's"                        'p=$(command -v python3); echo "$p -> $(python3 --version)"; [ "$p" = /usr/bin/python3 ]'
 warn  "no Homebrew command shadows a system one"           'n=0; for f in /home/linuxbrew/.linuxbrew/bin/*; do c=${f##*/}; [ -x "/usr/bin/$c" ] || continue; w=$(command -v "$c" 2> /dev/null); case "$w" in /home/linuxbrew/*) echo "$c -> $w"; n=$((n+1));; esac; done; echo "$n shadowed"; [ "$n" -eq 0 ]'
@@ -1136,7 +1351,8 @@ if has install-symfony; then
     slow  "SQLite: make:entity + make:migration + migrate, schema in sync" 'cd "$WORK/symfony/sfapp" 2> /dev/null || { echo "create the app first"; exit 1; }; echo "DATABASE_URL=\"sqlite:///%kernel.project_dir%/var/data_%kernel.environment%.db\"" > .env.local; php bin/console make:entity Note --no-interaction > make.log 2>&1 && php bin/console make:migration --no-interaction >> make.log 2>&1 || { tail -n 5 make.log; exit 1; }; php bin/console doctrine:migrations:migrate --no-interaction --no-ansi > migrate.log 2>&1 || { tail -n 5 migrate.log; exit 1; }; grep -o "Successfully migrated.*" migrate.log; php bin/console doctrine:schema:validate --no-ansi 2>&1 | grep -i "in sync"' 300
     slow  "make:controller --with-tests, then PHPUnit"      'cd "$WORK/symfony/sfapp" 2> /dev/null || { echo "create the app first"; exit 1; }; php bin/console make:controller Hello --with-tests --no-interaction > make.log 2>&1 || { tail -n 5 make.log; exit 1; }; php bin/phpunit --colors=never > phpunit.log 2>&1; rc=$?; tail -n 2 phpunit.log; [ $rc -eq 0 ]' 300
     slow  "symfony server:start -d answers /hello, then stops" 'cd "$WORK/symfony/sfapp" 2> /dev/null || { echo "create the app first"; exit 1; }; P=$(python3 -c "import socket; s=socket.socket(); s.bind((\"127.0.0.1\",0)); print(s.getsockname()[1])"); symfony server:start -d --no-tls --no-workers --port="$P" --no-ansi > serve.log 2>&1 || { tail -n 5 serve.log; exit 1; }; trap "symfony server:stop --no-ansi > /dev/null 2>&1" EXIT; for i in $(seq 1 30); do curl -fsS -o /dev/null "http://127.0.0.1:$P/hello" 2> /dev/null && break; sleep 0.5; done; c=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:$P/hello"); echo "HTTP $c from symfony serve on :$P"; [ "$c" = 200 ]' 120
-    slowwarn "symfony check:security (the app against the advisory database)" 'cd "$WORK/symfony/sfapp" 2> /dev/null || { echo "create the app first"; exit 1; }; timeout 120 symfony check:security --no-ansi 2>&1 | tail -n 3 | tee /dev/stderr | grep -qi "no packages have known vulnerabilities"' 180
+    # v99 (Nov 1 2026): keep the complete advisory result and the checker's status, before filtering.
+    slowwarn "symfony check:security (the app against the advisory database)" 'cd "$WORK/symfony/sfapp" 2> /dev/null || { echo "create the app first"; exit 1; }; r=$(timeout 120 symfony check:security --no-ansi 2>&1); rc=$?; printf "%s\nsecurity checker exit=%s\n" "$r" "$rc"; [ "$rc" = 0 ] && printf "%s\n" "$r" | grep -qi "no packages have known vulnerabilities"' 180
     hint  "it downloads FriendsOfPHP/security-advisories from GitHub each run; a vulnerable package is named in the output"
     info  "DDEV and HTTPS" "ddev config --project-type=symfony --docroot=public; 'symfony server:ca:install' (optional) gives symfony serve https"
 fi
@@ -1486,6 +1702,13 @@ if has install-java; then
     section "Java: JDK, Maven, Gradle (install-java)"
     check "java and javac (default-jdk)"                   'java -version && javac -version'
     check "java and javac on PATH are Debian's JDK, not Homebrew's" 'for t in java javac jar; do p=$(readlink -f "$(command -v $t)"); echo "$t -> $p"; case "$p" in /usr/lib/jvm/*) ;; *) exit 1;; esac; done'
+    # v99: ca-certificates-java may configure before the JRE, then populate the store via triggers.
+    cat > "$WORK/java-trust.sh" <<'JAVA_TRUST'
+set -o pipefail
+test -s /etc/ssl/certs/java/cacerts || exit 1
+keytool -list -cacerts -storepass changeit 2>/dev/null | awk '/trustedCertEntry/ {n++} END {print n+0 " trusted certificates"; exit(n==0)}'
+JAVA_TRUST
+    check "Debian Java CA trust store is populated" 'bash java-trust.sh'
     hint  "brew's openjdk (a dependency of gradle and kotlin) links itself ahead of /usr/bin on Linux: 'brew unlink openjdk'"
     check "PATH javac and JAVA_HOME javac are the same release" '[ "$(javac -version 2>&1)" = "$("$JAVA_HOME/bin/javac" -version 2>&1)" ] || { javac -version; "$JAVA_HOME/bin/javac" -version; exit 1; }'
     check "JAVA_HOME in ~/.bashrc and javac there"         'grep -q "^export JAVA_HOME" ~/.bashrc && [ -x "$JAVA_HOME/bin/javac" ] && "$JAVA_HOME/bin/javac" -version'
@@ -1570,7 +1793,8 @@ case "$1" in
         awk '/^\[/ { m = ($0 == "[Desktop Entry]") } m && $0 == "NoDisplay=true" { f = 1 } END { exit !f }' "$f" || { echo "$f has no NoDisplay=true"; exit 1; }
         echo "$f: NoDisplay=true" ;;
     path)   # a terminal's devin-desktop is the wrapper (a login shell, as a new terminal has it)
-        p=$(bash -lc 'command -v devin-desktop' 2> /dev/null | tail -n 1)
+        shell_start timeout -k 5 30 bash -lc 'command -v devin-desktop' > "$WORK/devin-path.txt" 2> /dev/null || exit $?
+        p=$(tail -n 1 "$WORK/devin-path.txt")
         echo "devin-desktop on PATH: ${p:-none}"
         [ "$p" = "$W" ] ;;
 esac
@@ -2059,7 +2283,18 @@ if has install-antigravity; then
     section "Google Antigravity (install-antigravity)"
     check "~/.antigravity-env has google-antigravity"      '~/.antigravity-env/bin/pip show google-antigravity > /dev/null'
     # The remote install.sh puts the CLI at ~/.local/bin/agy.
-    check "agy (Antigravity CLI) in ~/.local/bin"           '[ -x ~/.local/bin/agy ] && agy --version'
+    check "agy (Antigravity CLI) in ~/.local/bin"           '[ -x ~/.local/bin/agy ] && ~/.local/bin/agy --version'
+    warn  "agy resolves to the installed local CLI" 'test "$(command -v agy)" = "$HOME/.local/bin/agy"'
+    # v99: inspect only the exact public PATH line seen in v98; never rewrite unrelated profile edits.
+    cat > "$WORK/agy-profile.sh" <<'AGY_PROFILE'
+needle='export PATH="'"$HOME"'/.local/bin:$PATH"'
+for f in "$HOME/.bashrc" "$HOME/.profile"; do
+    [ -f "$f" ] || continue
+    n=$(grep -cFx "$needle" "$f" || true)
+    [ "$n" -le 1 ] || { echo "${f##*/}: $n copies of Antigravity's local-bin PATH line"; exit 1; }
+done
+AGY_PROFILE
+    warn "Antigravity's profile PATH line is not duplicated" 'bash agy-profile.sh'
 
     # v73: the graphical app lives under /opt and is installed from a tarball you put in ./assets.
     warn  "Antigravity IDE or desktop app installed (from a tarball in ./assets)" 'ok=1; for p in /opt/antigravity-ide/current/antigravity-ide /opt/antigravity/current/antigravity; do [ -x "$p" ] && { echo "$p"; ok=0; }; done; exit $ok'
@@ -2714,7 +2949,8 @@ EOF
     # The app for this section, on a free port; stopped at the end of the section (and on exit).
     python3 "$WORK/testing/links_app.py" --port-file "$WORK/testing/links.port" > "$WORK/testing/links_app.log" 2>&1 &
     LINKS_PID=$!
-    trap '[ -n "${LINKS_PID:-}" ] && kill "$LINKS_PID" 2> /dev/null; rm -rf "$WORK"' EXIT
+    # v99 (Nov 1 2026): keep the central EXIT verifier; it also stops this app.
+    trap test_exit EXIT
     for _ in $(seq 1 20); do [ -s "$WORK/testing/links.port" ] && break; sleep 0.25; done
     LINKS_URL="http://127.0.0.1:$(cat "$WORK/testing/links.port" 2> /dev/null)"; export LINKS_URL
     check "the test app (links_app.py) answers on $LINKS_URL"  'curl -fsS "$LINKS_URL/links.json" | jq -e "length == 2"'
@@ -2722,13 +2958,24 @@ EOF
 fi
 
 if has install-playwright; then
-    # Playwright's browser builds are tied to its release: the scratch project uses the release setup's
-    # 'npx playwright@latest' installed the browsers for (npx's cache), so nothing is downloaded but the
-    # npm package.
+    # v99: browser builds are tied to setup's recorded managed release. The scratch project installs
+    # its matching test package; a newer latest release or cleared npx cache cannot select new browsers.
     check "Playwright's browsers in ~/.cache/ms-playwright (chromium, firefox, webkit)" 'cd ~/.cache/ms-playwright 2> /dev/null || { echo "no ~/.cache/ms-playwright"; exit 1; }; ls -d chromium-* chromium_headless_shell-* firefox-* webkit-* 2> /dev/null | xargs; for b in chromium firefox webkit; do ls -d "$b"-* > /dev/null 2>&1 || { echo "missing: $b"; exit 1; }; done'
-    hint  "rerun setup with install-playwright (playwright install --with-deps chromium firefox webkit)"
-    check "the Playwright release setup used is in npx's cache" 'v=$(timeout 60 npx -y --prefer-offline playwright@latest --version 2> /dev/null | awk "{print \$2}"); echo "playwright $v"; [ -n "$v" ] && echo "$v" > "$WORK/testing/pw.version"'
-    hint  "rerun setup with install-playwright; npm's cache (~/.npm/_npx) may have been cleared"
+    hint  "rerun setup with install-playwright (managed install-deps, then chromium/firefox/webkit)"
+    # v99: use setup's successful record, never a mutable latest lookup that might need new browsers.
+    cat > "$WORK/testing/pw-release.sh" <<'PW_RELEASE'
+root="$ASSETS/tools/playwright"
+v=$(cat "$root/version") || exit 1
+[[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || exit 1
+actual=$(node "$root/$v/node_modules/playwright/cli.js" --version) || exit 1
+[ "$actual" = "Version $v" ] || { echo "installer/record version mismatch"; exit 1; }
+printf '%s\n' "$v" > "$WORK/testing/pw.version"
+echo "Playwright $v, from setup's managed installer"
+PW_RELEASE
+    check "Playwright managed installer matches setup's recorded release" 'bash "$WORK/testing/pw-release.sh"'
+    check "Playwright fonts and Xvfb installed" 'for p in fonts-freefont-ttf fonts-noto-color-emoji fonts-ipafont-gothic fonts-wqy-zenhei fonts-unifont fonts-tlwg-loma-otf xvfb; do dpkg-query -W -f="\${Status}\n" "$p" | grep -qx "install ok installed" || exit 1; done'
+
+    hint  "rerun setup with install-playwright to restore the managed installer and successful version record"
     mkdir -p "$WORK/testing/pw/tests"
     cat > "$WORK/testing/pw/playwright.config.ts" << 'EOF'
 import { defineConfig, devices } from '@playwright/test'
@@ -2777,7 +3024,7 @@ EOF
         for _p in chromium firefox webkit chrome; do
             slow  "Playwright Test: the links spec passes in $_p" "cd testing/pw && BASE_URL=\$LINKS_URL npx playwright test --project=$_p --output=out-$_p" 300
         done
-        hint  "chrome = the system Chrome (channel: 'chrome'); the other three are Playwright's builds. A missing library: rerun setup with install-playwright (--with-deps)"
+        hint  "chrome = the system Chrome (channel: 'chrome'); the other three are Playwright's builds. A missing library: rerun setup with install-playwright (managed install-deps, then matching browsers)"
         check "Playwright wrote a trace for the Chromium run (npx playwright show-trace opens it)" 'ls testing/pw/out-chromium/*/trace.zip'
     fi
     slowwarn "pytest-playwright (Python, through uv) on the system Chrome" 'cd testing && cat > test_pw_links.py << "PY"
@@ -2830,7 +3077,8 @@ if has install-bdd; then
         check "Reqnroll's templates for 'dotnet new' (reqnroll-project)" 'dotnet new list reqnroll-project 2>&1 | grep -i reqnroll'
         hint  "rerun setup with install-bdd (dotnet new install Reqnroll.Templates.DotNet)"
         if [ "$LAST" = pass ]; then
-            slow  "Reqnroll (C#, NUnit): dotnet new reqnroll-project, links.feature passes" 'cd testing && rm -rf reqnroll && dotnet new reqnroll-project -t nunit -n LinksSpecs -o reqnroll > new.log 2>&1 || { tail -n 10 new.log; exit 1; }; cd reqnroll && rm -f Features/*.feature StepDefinitions/*.cs && mkdir -p Features StepDefinitions && cp ../links.feature Features/Links.feature && cat > StepDefinitions/LinksSteps.cs << "CS"
+            # v99 (Nov 1 2026): the template defaults to net8.0; this machine has runtime 10 only.
+            slow  "Reqnroll (C#, NUnit): dotnet new reqnroll-project, links.feature passes" 'cd testing && rm -rf reqnroll && sdk=$(dotnet --version) && tfm="net$(printf "%s" "$sdk" | cut -d. -f1,2)" && dotnet --list-runtimes | grep -Fq "Microsoft.NETCore.App ${tfm#net}." && echo "Reqnroll: SDK $sdk, target $tfm (installed runtime)" && dotnet new reqnroll-project --framework "$tfm" -t nunit -n LinksSpecs -o reqnroll > new.log 2>&1 || { echo "Reqnroll project generation/runtime selection failed"; tail -n 10 new.log; exit 1; }; cd reqnroll && rm -f Features/*.feature StepDefinitions/*.cs && mkdir -p Features StepDefinitions && cp ../links.feature Features/Links.feature && cat > StepDefinitions/LinksSteps.cs << "CS"
 using System;
 using System.Collections.Generic;
 using System.Net.Http;
@@ -2874,7 +3122,7 @@ public class LinksSteps
 }
 CS
 BASE_URL=$LINKS_URL dotnet test --nologo -v q 2>&1 | tail -n 5; [ "${PIPESTATUS[0]}" = 0 ]' 900
-            hint  "the first run fetches Reqnroll, NUnit and the test SDK from nuget.org into ~/.nuget"
+            hint  "Reqnroll targets the selected SDK's major/minor and requires that runtime; the first run also fetches NuGet packages (see the full log for the actual failure)"
         fi
     fi
     if has install-node; then
@@ -3544,7 +3792,18 @@ n=$1; c=devsvc-$n
 st=$(docker inspect -f '{{.State.Running}}' "$c" 2> /dev/null) || { echo "no $c container (rerun setup with install-$n)"; exit 1; }
 [ -f "svc_$n.was" ] || echo "$st" > "svc_$n.was"
 echo "$c was $( [ "$st" = true ] && echo running || echo stopped) before the test"
-DEVSVC_FORCE=1 devsvc up "$n" > "svc_$n.up" 2>&1; rc=$?; head -n 2 "svc_$n.up"; exit $rc
+# v99 (Nov 1 2026: Typesense exit 139 was hidden by head): retain the whole start and
+# failed-container logs outside WORK, including safe state/image fields (never its API-key args).
+up_log="$ASSETS/logs/devsvc-$n-${DEV_RUN_STAMP:-$(date +%Y%m%d-%H%M%S)}.startup.log"
+DEVSVC_FORCE=1 devsvc up "$n" > "$up_log" 2>&1; rc=$?
+printf '\ndevsvc up exit=%s\n' "$rc" >> "$up_log"
+if [ "$rc" != 0 ]; then
+    docker inspect "$c" --format 'image={{.Config.Image}} image_id={{.Image}} state={{json .State}} memory={{.HostConfig.Memory}}' >> "$up_log" 2>&1
+    docker logs --timestamps "$c" >> "$up_log" 2>&1
+fi
+cat "$up_log"
+echo "Full startup diagnostics: $up_log"
+exit "$rc"
 EOF
     cat > "$WORK/svc_restore.sh" << 'EOF'
 n=$1
@@ -3631,7 +3890,11 @@ echo "$r" | grep -qx alpha'
             hint  "'devsvc ddev' joins it (DDEV recreates the network after 'ddev poweroff')"
             slowwarn "a container on DDEV's network reaches devredis:6379" 'if ! docker network inspect ddev_default > /dev/null 2>&1; then echo "SKIPPED: no ddev_default network yet"; exit 0; fi; img=$(docker inspect -f "{{.Config.Image}}" devsvc-redis); docker run --rm --network ddev_default -e REDISCLI_AUTH --entrypoint redis-cli "$img" -h devredis --no-auth-warning ping | grep -q PONG && echo "devredis:6379 answers PONG from ddev_default"' 300
         fi
-        warn  "Redis Insight desktop app, in the ChromeOS launcher" 'dpkg-query -W -f="\${Package} \${Version}\n" "redisinsight*" 2> /dev/null | grep . || { echo "Redis Insight is not installed"; exit 1; }; ls /usr/share/applications | grep -i insight'
+        if [ "${REDIS_INSIGHT:-1}" = 1 ]; then
+            check "Redis Insight desktop app, in the ChromeOS launcher" 'dpkg-query -W -f="\${Package} \${Version}\n" "redisinsight*" 2> /dev/null | grep . || { echo "Redis Insight is not installed"; exit 1; }; ls /usr/share/applications | grep -i insight'
+        else
+            info "Redis Insight" "SKIP: explicitly disabled (REDIS_INSIGHT=0)"
+        fi
         hint  "setup downloads it from Redis Insight's GitHub release; its log says why it did not (rerun setup with install-redis). REDIS_INSIGHT=0 skips it on purpose"
     fi
     svc_release redis
@@ -3739,6 +4002,11 @@ EOF
     has install-meilisearch   && [ "$(docker inspect -f '{{.State.Running}}' devsvc-meilisearch 2> /dev/null)" = true ] \
         && slowwarn "Python client (meilisearch through uv)" 'uv run --no-project --with meilisearch python -c "import meilisearch, subprocess; k = subprocess.check_output([\"devsvc\", \"password\", \"meilisearch\"], stderr=subprocess.DEVNULL, text=True).strip(); print(\"meilisearch-python:\", meilisearch.Client(\"http://127.0.0.1:7700\", k).get_version()[\"pkgVersion\"])"' 300
     svc_release meilisearch
+    # v99 (Nov 1 2026): verify the missing-procfs compatibility before the real health/auth/search checks.
+    if has install-typesense && [ ! -r /proc/self/io ]; then
+        check "Typesense missing-kernel-I/O shim is mounted read-only" '[ -s "$ASSETS/tools/typesense/proc-io-compat.so" ] && docker inspect --format "{{json .Mounts}}" devsvc-typesense | jq -e --arg src "$ASSETS/tools/typesense/proc-io-compat.so" ".[] | select(.Destination == \"/opt/dev-bundle/proc-io-compat.so\" and .Source == \$src and .RW == false)" > /dev/null'
+        hint "rerun setup with install-typesense: upstream #2998 crashes before main without optional /proc/self/io"
+    fi
     has install-typesense     && svc_search typesense     8108 8108 devtypesense  "Typesense"     300
     svc_release typesense
     # --- v89 stage 3: vector stores and MongoDB ---
@@ -3830,10 +4098,14 @@ EOF
     fi
     svc_release milvus
     if has install-mongodb; then
-        warn  "mongosh on this machine"                        'mongosh --version'
+        check "mongosh on this machine"                        'mongosh --version'
         hint  "setup installs MongoDB's .deb (rerun setup with install-mongodb); 'devsvc cli mongodb' falls back to the container's mongosh"
-        warn  "MongoDB Database Tools (mongodump, mongorestore, mongoimport)" 'for c in mongodump mongorestore mongoimport mongoexport; do command -v "$c" > /dev/null || { echo "missing: $c"; exit 1; }; done; mongodump --version | head -n 1'
-        warn  "MongoDB Compass desktop app, in the ChromeOS launcher" 'dpkg-query -W -f="\${Package} \${Version}\n" mongodb-compass && ls /usr/share/applications | grep -i compass'
+        check "MongoDB Database Tools (mongodump, mongorestore, mongoimport)" 'for c in mongodump mongorestore mongoimport mongoexport; do command -v "$c" > /dev/null || { echo "missing: $c"; exit 1; }; done; mongodump --version | head -n 1'
+        if [ "${MONGODB_COMPASS:-1}" = 1 ]; then
+            check "MongoDB Compass desktop app, in the ChromeOS launcher" 'dpkg-query -W -f="\${Package} \${Version}\n" mongodb-compass && ls /usr/share/applications | grep -i compass'
+        else
+            info "MongoDB Compass" "SKIP: explicitly disabled (MONGODB_COMPASS=0)"
+        fi
         hint  "MONGODB_COMPASS=0 skips it on purpose; otherwise setup's log says why"
         check "devsvc-mongodb container: 127.0.0.1:27017, start policy per DEVSVC_AUTOSTART" "docker inspect devsvc-mongodb > mg.json || exit 1; jq -r -e --arg port 27017/tcp --arg policy $(svc_policy mongodb) -f devsvc.jq mg.json"
         hint  "no such container: rerun setup with install-mongodb"
@@ -3892,8 +4164,9 @@ EOF
         check "devsvc-selenium container: 127.0.0.1:4444, start policy per DEVSVC_AUTOSTART" "docker inspect devsvc-selenium > se.json || exit 1; jq -r -e --arg port 4444/tcp --arg policy $(svc_policy selenium) -f devsvc.jq se.json"
         hint  "no such container: rerun setup with install-selenium"
         if docker container inspect devsvc-selenium > /dev/null 2>&1; then
-            check "the Grid's noVNC is on 127.0.0.1 too; it runs as a heavy engine (one at a time)" 'jq -e "[.[0].HostConfig.PortBindings[\"7900/tcp\"][]?.HostIp] == [\"127.0.0.1\"]" se.json && grep -q "^selenium|.*|heavy|4444|install-selenium$" ~/.local/bin/devsvc'
-            hint  "the devsvc in ~/.local/bin is older than setup v91's: rerun setup with install-selenium"
+            # v99 (Nov 1 2026): the final table row includes its closing shell quote; strip that delimiter.
+            check "the Grid's noVNC is on 127.0.0.1 too; it runs as a heavy engine (one at a time)" 'jq -e "[.[0].HostConfig.PortBindings[\"7900/tcp\"][]?.HostIp] == [\"127.0.0.1\"]" se.json && sed "s/\x27$//" ~/.local/bin/devsvc | grep -q "^selenium|[^|]*|4444|devselenium|[0-9][0-9]*|heavy|4444|install-selenium$"'
+            hint  "check devsvc's Selenium row (heavy, port 4444) and noVNC loopback binding; rerun setup with install-selenium to regenerate them"
             slow  "Selenium Grid starts and reports ready (devsvc up selenium)" 'bash svc_up.sh selenium' 600
             hint  "'devsvc logs selenium'; the Grid wants ~1.6 GB: 'devsvc status' shows what else runs"
             if [ "$LAST" = pass ]; then
@@ -4107,14 +4380,43 @@ if has install-models; then
     section "Local models: DeepSeek-R1 1.5B, Qwen3.5 4B, Qwen3 embeddings (install-models)"
     check "setup recorded the model list (assets/ollama-models.txt)" '[ -s "$ASSETS/ollama-models.txt" ] && tr "\n" " " < "$ASSETS/ollama-models.txt"'
     hint  "rerun setup with install-models. An empty list means every pull was skipped: setup's NOTICE lines say why (disk guard, network)"
+    cat > "$WORK/model-hints.sh" <<'MODEL_HINTS'
+set -o pipefail
+f="$ASSETS/ollama-model-hints.txt"
+test -f "$f" || exit 1
+m=$(awk '/^Try: ollama run / {print $4}' "$f")
+if [ -z "$m" ]; then echo 'No generation example recorded (metadata unavailable or no completion model)'; exit 0; fi
+want=$m; [[ "$want" == *:* ]] || want="$want:latest"
+ollama list | awk 'NR>1 {print $1}' | grep -qxF "$want" || exit 1
+ollama show "$m" | awk '$1=="Capabilities" {caps=1;next} caps && NF==0 {caps=0} caps && $1=="completion" {found=1} END {exit !found}' || exit 1
+while IFS= read -r line; do
+    case "$line" in
+        *'gemma -m '*) [ "$line" = "     gemma -m $m" ] || exit 1 ;;
+        *'aider --model '*) [ "$line" = "     aider --model ollama_chat/$m" ] || exit 1 ;;
+    esac
+done < "$f"
+echo "Generation example references present completion model $m"
+MODEL_HINTS
+    check "model examples reference a present completion model" 'bash model-hints.sh'
+
     mapfile -t TEST_MODELS < <(grep -v '^[[:space:]]*$' "$ASSETS/ollama-models.txt" 2> /dev/null)
-    [ ${#TEST_MODELS[@]} -gt 0 ] || TEST_MODELS=(deepseek-r1:1.5b qwen3.5:4b qwen3-embedding:0.6b)
     for m in "${TEST_MODELS[@]}"; do
         want=$m; [[ "$want" == *:* ]] || want="$want:latest"
         check "model $m is pulled"                         "ollama list | awk 'NR > 1 {print \$1}' | grep -qxF '$want'"
     done
     hint  "ollama pull <model>, or rerun setup with install-models"
-    warn  "at least 10 GB free where Ollama keeps models"  'd=/usr/share/ollama; [ -d "$d" ] || d="$HOME"; df -h "$d" | tail -n 1; [ "$(df -Pk "$d" | awk "NR == 2 {print \$4}")" -ge $((10 * 1024 * 1024)) ]'
+    # v99: report the same configured/default margin as setup; do not change the qwen disk guard.
+    cat > "$WORK/model-margin.sh" <<'MODEL_MARGIN'
+d=/usr/share/ollama; [ -d "$d" ] || d="$HOME"
+total=$(df -Pk / | awk 'NR==2 {print int($2/1024/1024)}')
+margin=$((total*15/100)); [ "$margin" -ge 1 ] || margin=1; [ "$margin" -le 10 ] || margin=10
+margin=${DEV_MODELS_MIN_FREE_GB:-$margin}
+free=$(df -Pk "$d" | awk 'NR==2 {print $4}')
+echo "${free} KB free; configured/default reserve $margin GB"
+[ "$free" -ge $((margin*1024*1024)) ]
+MODEL_MARGIN
+    warn "configured/default free-space margin for Ollama models" 'bash model-margin.sh'
+
     hint  "'ollama rm <model>' for models you no longer use, or give Linux more disk (ChromeOS Settings > About ChromeOS > Linux development environment)"
     # Thinking off and 32 tokens: this proves the model loads and answers, not how well it reasons.
     # Whatever is loaded is stopped first, so the load time is comparable between runs.
@@ -4158,6 +4460,7 @@ if has install-agentic; then
     check "~/agentic/.env.example present"                 '[ -f ~/agentic/.env.example ]'
     warn  "~/agentic/.env has Langfuse keys"               'grep -q "^LANGFUSE_SECRET_KEY=sk-lf-" ~/agentic/.env'
     hint  "cp ~/agentic/.env.example ~/agentic/.env and add your cloud.langfuse.com keys"
+    check "agentic pip dependency consistency" '~/.agentic-env/bin/python -m pip check'
     check "~/.agentic-env import smoke (same set as the installer)" '~/.agentic-env/bin/python -c "import temporalio, temporalio.contrib.pydantic, langgraph, langgraph.checkpoint.sqlite, pydantic, langfuse, langfuse.langchain, langchain_ollama, langchain_anthropic, langchain_google_genai, dotenv, rich, pytest, pytest_asyncio"'
 
     cat > "$WORK/pydantic_smoke.py" << 'EOF'
@@ -4263,7 +4566,7 @@ EOF
         check "MCP Inspector (mcp-inspector, global npm)"      'command -v mcp-inspector && npm ls -g --depth=0 @modelcontextprotocol/inspector | grep -o "inspector@[0-9.]*"'
         hint  "rerun setup with install-agentic (it needs install-node for the Inspector)"
         check "Inspector CLI calls the tool through fastmcp run" 'r=$(mcp-inspector --cli fastmcp run mcp_server.py --method tools/call --tool-name add --tool-arg a=2 --tool-arg b=3 2>&1); echo "$r" | tr -d " \n" | grep -o "\"result\":5" || { echo "$r" | tail -n 5; exit 1; }' 180
-        warn  "npx starts the Inspector offline (the cached copy fastmcp dev uses)" 'r=$(npx --offline @modelcontextprotocol/inspector --cli fastmcp run mcp_server.py --method tools/list 2>&1); echo "$r" | grep -q "\"add\"" && echo "tools/list over npx --offline: add" || { echo "$r" | tail -n 5; exit 1; }' 180
+        warn  "npx Inspector calls the tool offline (the copy fastmcp dev uses)" 'r=$(npx --offline @modelcontextprotocol/inspector --cli fastmcp run mcp_server.py --method tools/call --tool-name add --tool-arg a=2 --tool-arg b=3 2>&1); rc=$?; printf "%s\nnpx offline exit=%s\n" "$r" "$rc"; [ "$rc" = 0 ] && printf "%s" "$r" | tr -d " \n" | grep -q "\"result\":5"' 180
         hint  "a newer Inspector release than the cached one makes npx want the network: rerun setup with install-agentic"
     else
         info  "MCP Inspector" "not installed: it is a Node app (rerun setup with install-agentic install-node)"
@@ -5253,7 +5556,8 @@ if has install-retro; then
     # yours), so the slow checks prove the engines and the helper's own pieces.
     check "QEMU (qemu-system-i386, qemu-img) and its GTK window module" 'qemu-system-i386 --version | head -n 1 && qemu-img --version | head -n 1 && dpkg_has qemu-system-gui'
     hint  "rerun dev-setup with install-retro (v92 adds qemu-system-x86, qemu-system-gui, qemu-utils)"
-    check "mtools and mkfs.fat (the exchange disk)"         'command -v mcopy && command -v mkfs.fat'
+    # v99 (Nov 1 2026): user PATH need not contain Debian's sbin; exercise the installed tool directly.
+    check "mtools and mkfs.fat (the exchange disk)"         'command -v mcopy && [ -x /usr/sbin/mkfs.fat ] && /usr/sbin/mkfs.fat --help'
     check "the retro helper and its commands (win95, winnt40, win2000, delphi1, delphi, retro)" 'h=~/.local/lib/dev-retro/dev-retro; [ -x "$h" ] || { echo "no $h"; exit 1; }; bash -n "$h" || exit 1; for c in win31 win95 winnt40 win2000 delphi1 delphi retro; do grep -q "dev-retro/dev-retro\" $c " ~/.local/bin/$c 2> /dev/null || { echo "~/.local/bin/$c is not the v93 wrapper"; exit 1; }; done; grep -q "^delphi_n_cmd()" "$h" || { echo "the helper is older than v93"; exit 1; }; echo all seven'
     hint  "rerun dev-setup with install-retro: v93 writes the helper and the seven wrappers ('delphi' is new)"
     check "workspaces ~/win95, ~/winnt40, ~/win2000 (install/, and config for the QEMU two)" 'for g in win95 winnt40 win2000; do [ -d ~/$g/install ] || { echo "no ~/$g/install"; exit 1; }; done; for g in winnt40 win2000; do [ -f ~/$g/config ] || { echo "no ~/$g/config"; exit 1; }; bash -n ~/$g/config || exit 1; done; echo ok'
@@ -5681,6 +5985,7 @@ if ! has nodisk; then
     dpaths() { local s=$1 i=$2; shift 2; _disk_report "$s" "$i" "$(_disk_bytes "$@")" "du: $*"; }
     dapt()   { local s=$1 i=$2; shift 2; _disk_report "$s" "$i" "$(_apt_bytes "$@")" "apt: $*"; }
 
+    dpaths base "v99 stage reports and shell-agent ledgers" "$ASSETS/setup-stages.tsv" "$ASSETS"/logs/setup-stages-*.tsv "$ASSETS"/logs/shell-agents-*.tsv
     dpaths base "Google Chrome"                              /opt/google/chrome
     dapt   base "Docker Engine"                              docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
     dpaths base "Homebrew formulae: gcc, ddev, gh, mkcert"   "$CELLAR/gcc" "$CELLAR/ddev" "$CELLAR/gh" "$CELLAR/mkcert"
@@ -5757,6 +6062,7 @@ if ! has nodisk; then
     # OpenClaw's npm package (about 900 MB) sits inside $NVM_DIR, so the node row counts it; this is its state.
     has install-openclaw && dpaths openclaw "OpenClaw state: config, sessions, workspace (~/.openclaw)" "$HOME/.openclaw"
     if has install-ollama; then
+        dpaths ollama "Curated-model records and examples" "$ASSETS/ollama-models.txt" "$ASSETS/ollama-model-hints.txt"
         dpaths ollama "Ollama server bundle"                 /usr/local/lib/ollama /usr/local/bin/ollama
         dpaths ollama "Ollama models, all pulled ($(ollama list 2> /dev/null | tail -n +2 | grep -c .))" /usr/share/ollama/.ollama/models "$HOME/.ollama/models"
     fi
@@ -5812,6 +6118,7 @@ if ! has nodisk; then
             dpaths ldap "OpenLDAP database (/var/lib/ldap)" /var/lib/ldap
         fi
     fi
+    [ -n "$SVC_HAVE" ] && dpaths services "Service startup and Typesense investigation diagnostics" "$ASSETS"/logs/devsvc-*.startup.log "$ASSETS"/logs/typesense-investigation-* "$ASSETS/tools/typesense"
     # v89: the shared services (install-cache, install-search, install-elasticsearch). Image size from
     # 'docker image inspect' (layers images share are counted in each), volume with du.
     for _s in redis memcached solr opensearch elasticsearch meilisearch typesense qdrant milvus mongodb atlas-local; do
@@ -5833,7 +6140,7 @@ if ! has nodisk; then
     fi
     has install-lakehouse && dpaths lakehouse "DuckDB CLI, dbt Fusion, ~/.lakehouse-env (incl. deltalake), ~/lakehouse" "$HOME/.lakehouse-env" "$HOME/.local/bin/duckdb" "$HOME/.local/bin/dbt" "$HOME/.duckdb" "$HOME/lakehouse"
     has install-agentic  && dpaths agentic "Temporal CLI, ~/.agentic-env, ~/agentic" "$CELLAR/temporal" "$HOME/.agentic-env" "$HOME/agentic"
-    has install-agentic  && dpaths agentic "fastmcp (uv tool fastmcp-slim + fastmcp)" "$HOME/.local/share/uv/tools/fastmcp-slim"
+    has install-agentic  && dpaths agentic "fastmcp (uv tool fastmcp-slim + fastmcp), Inspector probe and diagnostics" "$HOME/.local/share/uv/tools/fastmcp-slim" "$ASSETS/tools/mcp-inspector" "$ASSETS"/logs/inspector-cache-*
     has install-cloudflared && dapt cloud "cloudflared"      cloudflared
     has install-aws      && dpaths cloud "AWS CLI (Homebrew)"  "$CELLAR/awscli" "$HOME/.aws"
     has install-azure    && dpaths cloud "Azure CLI (Homebrew) + ~/.azure (Bicep)" "$CELLAR/azure-cli" "$HOME/.azure"
@@ -5853,7 +6160,7 @@ if ! has nodisk; then
     has install-graphql  && dpaths graphql "Rover, Router v2, Apollo MCP Server + Rover's plugins (~/.rover)" "$HOME/.local/bin/rover" "$HOME/.local/bin/router" "$HOME/.local/bin/apollo-mcp-server" "$HOME/.rover"
     [ -d "$HOME/dev-demo/drupal/drupal-graphql/local" ] && dpaths graphql "dev-demo drupal-graphql, local site (code + SQLite)" "$HOME/dev-demo/drupal/drupal-graphql/local"
     # v91: the test tools. The Grid's image is in the services lines above.
-    has install-playwright && dpaths testing "Playwright browsers (~/.cache/ms-playwright)" "$HOME/.cache/ms-playwright"
+    has install-playwright && dpaths testing "Playwright browsers and managed installer" "$HOME/.cache/ms-playwright" "$ASSETS/tools/playwright"
     has install-selenium   && dpaths testing "Selenium Manager's drivers (~/.cache/selenium)" "$HOME/.cache/selenium"
     has install-robot      && dpaths testing "Robot Framework tool venv + the Browser library's Node side" "$HOME/.local/share/uv/tools/robotframework"
     has install-cypress    && dpaths testing "Cypress binaries (~/.cache/Cypress, one per version)" "$HOME/.cache/Cypress"
@@ -5890,11 +6197,15 @@ if ! has nodisk; then
 fi
 
 # =================================================================
+# v99 (Nov 1 2026): all shell-startup probes have ended; verify only their recorded agents.
+check "shell-startup probes left no test-owned ssh-agent" 'python3 "$WORK/shell_start.py" --check'
+info "shell-agent ownership ledger" "$SHELL_AGENT_LEDGER"
+
 # SUMMARY
 # =================================================================
 echo
 echo "================================================================="
-echo "Test Version 98 complete: ${GRN}PASS $PASS${RST}   ${RED}FAIL $FAIL${RST}   ${YEL}WARN $WARN${RST}   SKIP $SKIP"
+echo "Test Version 99 complete: ${GRN}PASS $PASS${RST}   ${RED}FAIL $FAIL${RST}   ${YEL}WARN $WARN${RST}   SKIP $SKIP"
 if [ ${#FAILED[@]} -gt 0 ]; then
     echo
     echo "Failed (must fix to get started):"
