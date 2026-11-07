@@ -63,6 +63,12 @@ bundle's own setup and its investigation-first gate with approval for each real 
 create an Inspector environment under `assets/tools`; a hand-built environment would not reproduce
 the bundle context. Stages 1–7 are built; Chromebook acceptance remains pending.
 
+**Acceptance correction (Nov 7):** default migration is once per config file. A successful review
+writes `# v100: defaults reviewed` in the same atomic update as all that file's default changes.
+New v100 files are born marked. Marked files skip both exact-v99 matching and absent-key additions,
+including after an owner restores old values or deletes keys. This corrects repeated launch-time
+rewrites of win95 `output=opengl` and win2000 `DISPLAY_OPTS=gtk,zoom-to-fit=on`.
+
 ## Scope and baseline
 
 The owner accepted v99 in [PR #13](https://github.com/dhouse109/dev-setup-chromebook/pull/13)
@@ -211,11 +217,12 @@ General constraints for all of them:
   (11777–11801) are outside it. `win95_confs` and `dos_conf` run lazily in the helper; setup does
   not currently create their files.
 - **Migration rule (owner amendment, Nov 6):** add absent keys and preserve owner edits. For
-  items 4–7 only, also upgrade a line byte-identical to the v99 template, including its value,
+  items 4–7 only, on the first review also upgrade a line byte-identical to the v99 template, including its value,
   spacing and trailing comment; allow extra ASCII spaces at the end. This is an owner-authorized
   exception to the earlier absent-only rule. Any other change (value, comment, case, indentation,
   spacing or trailing tab) remains untouched. Duplicate target assignments require manual review
-  and stay unchanged; a duplicate target in win2000/config defers migration of that entire file. Match win95 output only under `[sdl]`. Retain line endings,
+  and stay unchanged. Ambiguous/duplicate configs receive only the review marker, with a manual-review
+  note; no setting is changed. Match win95 output only under `[sdl]`. Retain line endings,
   final-newline presence and modes. Add absent keys in the correct section without duplicates. Ignore
   commented-out assignments when deciding absence; recognize whitespace and case for DOSBox-X INI
   keys. For sourced shell configs recognize assignments with optional `export` and spaces around
@@ -224,6 +231,16 @@ General constraints for all of them:
   affected guest runs and report the deferred update. Config updates use a same-directory temporary
   file and atomic replacement, retaining file permissions. Apply default migration from setup
   for files already present, and from helper config creation/launch for lazy files.
+  **Nov 7 once-only rule:** use the exact comment line `# v100: defaults reviewed` as the record.
+  Review all of a file's settings together (win95 output + hostkey; win2000 ACCEL + DISPLAY_OPTS +
+  SOUND). Prepend the marker using that file's newline style and the same atomic replacement;
+  retain modes and existing final-newline presence except where adding an absent line needs a separator.
+  Record a review even when explicit/custom/ambiguous settings need no changes. Running guests defer
+  without marking; missing files and symlinks are not marked. New win31, win95 setup/boot, DOS and
+  QEMU config templates include the marker. On later setup/launch, return before either replacements
+  or absent-key additions; owner-restored old values, changed comments and deleted keys stay.
+  Keep the marker when editing. Removing it explicitly opts that file into another review. Existing
+  unmarked files, including those from the earlier v100 draft, receive one review after this update.
 - **Validation boundary:** `check`/`slow` means FAIL for bundle-owned behaviour; `warn`/`slowwarn`
   means a user-changeable preference or optional font availability. Use isolated HOME/workspace
   fixtures and fake engine executables to capture argument arrays without starting guests. Never
@@ -332,11 +349,17 @@ General constraints for all of them:
   Add absent `output` under `[sdl]` in existing setup.conf and boot.conf. Also replace exactly
   `output=opengl` (optionally followed by ASCII spaces), the v99 template line, with
   `output=surface`. Keep every edited value/comment/spacing/case and duplicate assignment.
-  Defer the whole guest while running. Preserve CRLF, modes and final-newline presence; repeat
-  runs are stable. win31/DOS are unchanged. Never change the live renderer via the menu.
+  Defer the whole guest while running. **Nov 7 correction:** review each setup.conf/boot.conf only
+  once, atomically recording `# v100: defaults reviewed` alongside output and hostkey changes.
+  New files start marked; reviewed files skip both replacements and absent-key additions. Owner
+  restoration of exactly `output=opengl`, or deletion of output/hostkey, survives all later launches.
+  Preserve CRLF, modes and final-newline presence. win31/DOS renderers stay unchanged; their hostkey
+  additions follow the same one-time review rule. Never change the live renderer via the menu.
 - **Dev-test:** FAIL fresh-config fixtures unless both win95 configs say surface. Verify missing-
   key migration, exact-v99 upgrades in both files, repeat-run stability, running-guest deferral,
-  and preservation of edited values/comments/duplicates. On real
+  preservation of edited values/comments/duplicates, a single marker, actual fake-engine launches
+  after restoring opengl, deleted-key preservation and byte/inode/mtime stability of new marked
+  files. On real
   configs `warn` for an output other than surface, naming the recommendation, not a failed install.
   Owner checks maximized redraw and cold startup with his Windows 95 media; no automated UI claim.
 - **Docs:** shared contract; `docs/crostini-gotchas.md` rendering finding, `docs/dev-demo.md`,
@@ -368,9 +391,16 @@ General constraints for all of them:
   duplicates; defer a running guest. v99 wrote this explicit line on every retro install, so
   absent-only migration missed existing machines. NT configs stay unchanged; no NT KVM performance
   claim. Use the shared conservative parser and atomic replacement, without sourcing the config.
+  **Nov 7 correction:** review all three win2000 settings once per file and atomically prepend
+  `# v100: defaults reviewed`, even if no assignment changes. New configs start marked. Afterwards
+  skip legacy matching and absent additions, so restoring an exact old ACCEL line or deleting it
+  is respected. Ambiguous/duplicate configs are marked without changing assignments; running guests
+  defer without a marker. Never source the file to perform a review.
 - **Dev-test:** FAIL fixture defaults/config templates that disagree; test explicit overrides and
   missing-key and untouched-v99 migration (full v99 config fixture), CRLF/modes, repeat runs, edited
-  values/comments/spacing, duplicates and running deferral. Real win2000 non-tcg selection is a
+  values/comments/spacing, duplicates and running deferral. Require one marker and fake-engine
+  launches preserving restored old values/deleted keys; actual setup-created marked files must
+  retain bytes, inode and mtime across later reviews/setup. Real win2000 non-tcg selection is a
   `warn` explaining the fallback; do not
   FAIL for usable KVM or benchmark it automatically. Owner verifies install, graphical reboot,
   login, idle and installed-system boot under TCG. NT installation remains owner-media verification.
@@ -399,9 +429,13 @@ General constraints for all of them:
   `DISPLAY_OPTS=gtk,zoom-to-fit=on` (optional trailing ASCII spaces) with
   `DISPLAY_OPTS="gtk,zoom-to-fit=off"`, matching the new template. Preserve edited values,
   comments, quoting, spacing and extra GTK options; duplicates stay unchanged, running guests defer.
+  **Nov 7 correction:** the item 5 per-file marker gates this replacement and absent DISPLAY_OPTS
+  addition too. After review, even exact `DISPLAY_OPTS=gtk,zoom-to-fit=on` or an absent key is an
+  owner choice and survives later launches; a new v100 config is born marked.
 - **Dev-test:** FAIL mismatched fresh defaults and QEMU captured `-display` arguments; preserve
   custom options, edited comments and duplicates in fixtures. The shared full-v99 fixture upgrades
-  display alongside items 5/7 and checks running deferral/repeat runs. Real win2000 zoom on is a
+  display alongside items 5/7 and checks running deferral/repeat runs, then restores the old
+  display spelling and verifies launch preserves it; marked v100-created configs stay byte-stable. Real win2000 zoom on is a
   `warn`, NT on is expected. Owner verifies
   tablet alignment at several picture positions and a larger guest resolution after cold launch.
 - **Docs:** shared contract; `docs/crostini-gotchas.md` pointer finding, `docs/dev-demo.md`,
@@ -429,9 +463,13 @@ General constraints for all of them:
   `SOUND=none             # sb16, AC97 or none (drivers on the install CDs)`. Optional trailing
   ASCII spaces are allowed. Preserve edited values/comments/spacing and duplicates; running guests
   defer. A bare owner `SOUND=AC97` remains an override. NT sb16 stays unchanged.
+  **Nov 7 correction:** include SOUND in the same one-time review/atomic marker as items 5/6.
+  New configs are marked at creation. After review, even an exact v99 sound line or an absent
+  SOUND key remains untouched on setup/launch; ambiguous assignments get only the marker.
 - **Dev-test:** FAIL fresh/default fixture mismatch; captured win2000 launch must omit `-audiodev`
   and sound `-device` when none. The full-v99 fixture upgrades all three settings; edited values,
-  comments, duplicates, modes/CRLF and running deferral are tested. Assert explicit AC97 override
+  comments, duplicates, modes/CRLF and running deferral are tested. Restore all three old spellings
+  after review and verify later fake-engine launches preserve them and deleted keys. Assert explicit AC97 override
   still reaches audio_args. A real
   enabled win2000 card is `warn` with the quiet default recommendation, not a bundle failure.
   Owner confirms quiet boot and application use; working guest audio is deferred.
@@ -720,7 +758,8 @@ Breeze Dark values (`HKEY_CURRENT_USER\Control Panel\Colors`, "R G B"):
   strings also contain the hostkey handlers. No DOSBox-X execution or `-printconf` was needed.
 - **Proposed change:** add `hostkey=ctrlshift` to `[dosbox]` in all four generated configs,
   creating `[dosbox]` in dos.conf (which currently has only sdl/ttf). Use the shared missing-key
-  migration rule for existing files. Keep mapper files untouched. If a hostkey assignment exists
+  migration rule for existing files. Nov 7: this is the same once-only per-file review as item 4;
+  new configs start marked and a later owner deletion of hostkey is preserved. Keep mapper files untouched. If a hostkey assignment exists
   in a wrong section, report the placement and leave it for manual review rather than silently
   relocating an owner's line or appending a competing setting. Ensure setup handles existing lazy
   files too, even before a subsequent guest launch.

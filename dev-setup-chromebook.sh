@@ -10027,6 +10027,7 @@ if [[ "$FLAGS" =~ " install-retro " ]]; then
     if [ ! -f "$WIN31/dosbox-x.conf" ]; then
         cat > "$WIN31/dosbox-x.conf" << 'EOF_DBX'
 # ~/win31/dosbox-x.conf - written by dev-setup (install-retro) once; edit it freely, setup leaves it alone.
+# v100: defaults reviewed
 # A Windows 3.1x machine: 16 MB, S3 SVGA (Windows can use the S3 driver for more than 640x480x16),
 # Sound Blaster 16, C: mounted from ~/win31/drive_c. The 'win31' command adds the mounts.
 [sdl]
@@ -10257,54 +10258,68 @@ PY
 # v100 (Nov 5 2026): write-once guest configs gain only absent defaults, never changed owner values.
 # v100 (Nov 6 2026): exact v99 template lines also upgrade; any edit, duplicate or misplaced hostkey stays.
 # The parser preserves other bytes/line endings and modes; ambiguous configs require manual review.
-ini_setting() {   # ensure|read FILE SECTION KEY [DEFAULT [EXACT_V99_LINE]]
+# v100 (Nov 7 2026): review all defaults and record the marker in one atomic file update.
+# Later owner choices, including deleted keys and exact v99 spellings, are never repaired again.
+ini_setting() {   # read FILE SECTION KEY | review FILE win95|hostkey
     python3 - "$@" << 'RETRO_INI_PY'
 import os, re, stat, sys, tempfile
 from pathlib import Path
-op, filename, section, key, *values = sys.argv[1:]
+op, filename, *args = sys.argv[1:]
 p = Path(filename)
-if not p.is_file():
-    sys.exit(0 if op == 'ensure' else 1)
+if not p.is_file(): sys.exit(0 if op == 'review' else 1)
 raw = p.read_bytes()
 lines = raw.decode('latin-1').splitlines(keepends=True)
-section, key = section.casefold(), key.casefold()
-sections, assignments, current = {}, [], ''
-for i, line in enumerate(lines):
-    m = re.match(r'^\s*\[([^]]+)\]\s*(?:[#;].*)?$', line.strip())
-    if m:
-        current = m[1].strip().casefold()
-        sections.setdefault(current, []).append(i)
-    elif not line.lstrip().startswith(('#', ';')) and '=' in line:
-        k, v = line.split('=', 1)
-        assignments.append((current, k.strip().casefold(), v.strip(), i))
-found = [x for x in assignments if x[0] == section and x[1] == key]
-misplaced = key == 'hostkey' and any(x[1] == key and x[0] != section for x in assignments)
-if len(sections.get(section, [])) > 1 or len(found) > 1 or misplaced:
-    print(f'NOTE: {p.name}: duplicate or misplaced {key}; review manually (left unchanged).', file=sys.stderr)
-    sys.exit(1 if op == 'read' else 0)
-if op == 'read':
-    if not found: sys.exit(1)
-    print(found[0][2]); sys.exit(0)
-# v100 (Nov 6 2026): only a byte-identical v99 template line (plus trailing spaces) is untouched.
-if found:
-    old = lines[found[0][3]].rstrip('\r\n')
-    if len(values) < 2 or old.rstrip(' ') != values[1]: sys.exit(0)
-if p.is_symlink():
-    print(f'NOTE: {p.name}: symlink config left unchanged; add {key} manually.', file=sys.stderr)
-    sys.exit(0)
-nl = '\r\n' if b'\r\n' in raw else '\n'
-addition = f'{key}={values[0]}{nl}'
-if found:
-    at = found[0][3]
-    ending = lines[at][len(old):]
-    lines[at] = f'{key}={values[0]}' + ending
-elif section in sections:
-    at = sections[section][0] + 1
-    if at and not lines[at - 1].endswith(("\r", "\n")): lines[at - 1] += nl
-    lines.insert(at, addition)
+marker = '# v100: defaults reviewed'
+if op == 'review':
+    if any(line.rstrip('\r\n') == marker for line in lines): sys.exit(0)
+    if p.is_symlink():
+        print(f'NOTE: {p.name}: symlink config left unchanged; review defaults manually.', file=sys.stderr)
+        sys.exit(0)
+    settings = [('dosbox', 'hostkey', 'ctrlshift', None)]
+    if args[0] == 'win95': settings.insert(0, ('sdl', 'output', 'surface', 'output=opengl'))
 else:
-    if lines and not lines[-1].endswith(('\r', '\n')): lines[-1] += nl
-    lines.extend([f'[{section}]{nl}', addition])
+    settings = [(args[0].casefold(), args[1].casefold(), None, None)]
+def index():
+    sections, assignments, current = {}, [], ''
+    for i, line in enumerate(lines):
+        m = re.match(r'^\s*\[([^]]+)\]\s*(?:[#;].*)?$', line.strip())
+        if m:
+            current = m[1].strip().casefold()
+            sections.setdefault(current, []).append(i)
+        elif not line.lstrip().startswith(('#', ';')) and '=' in line:
+            k, v = line.split('=', 1)
+            assignments.append((current, k.strip().casefold(), v.strip(), i))
+    return sections, assignments
+sections, assignments = index()
+ambiguous = False
+for section, key, _, _ in settings:
+    found = [x for x in assignments if x[0] == section and x[1] == key]
+    misplaced = key == 'hostkey' and any(x[1] == key and x[0] != section for x in assignments)
+    if len(sections.get(section, [])) > 1 or len(found) > 1 or misplaced:
+        print(f'NOTE: {p.name}: duplicate or misplaced {key}; review manually (settings left unchanged).', file=sys.stderr)
+        ambiguous = True
+    if op == 'read':
+        if ambiguous or not found: sys.exit(1)
+        print(found[0][2]); sys.exit(0)
+nl = '\r\n' if b'\r\n' in raw else '\n'
+if not ambiguous:
+    for section, key, value, legacy in settings:
+        sections, assignments = index()
+        found = [x for x in assignments if x[0] == section and x[1] == key]
+        if found:
+            at = found[0][3]; old = lines[at].rstrip('\r\n')
+            # v100 (Nov 6 2026): only a byte-identical v99 template line (plus trailing spaces) is untouched.
+            if legacy is not None and old.rstrip(' ') == legacy:
+                lines[at] = f'{key}={value}' + lines[at][len(old):]
+        elif section in sections:
+            at = sections[section][0] + 1
+            if not lines[at - 1].endswith(('\r', '\n')): lines[at - 1] += nl
+            lines.insert(at, f'{key}={value}{nl}')
+        else:
+            if lines and not lines[-1].endswith(('\r', '\n')): lines[-1] += nl
+            lines.extend([f'[{section}]{nl}', f'{key}={value}{nl}'])
+# Even custom/ambiguous settings are reviewed once: record that decision without changing them.
+lines.insert(0, marker + nl)
 fd, temp = tempfile.mkstemp(prefix='.' + p.name + '.', dir=p.parent)
 try:
     with os.fdopen(fd, 'wb') as f: f.write(''.join(lines).encode('latin-1'))
@@ -10325,13 +10340,12 @@ dosbox_defaults() {   # migrate only existing files; setup and lazy helper paths
             fi ;;
     esac
     case "$g" in
-        win31) f="$HOME/win31/dosbox-x.conf"; ini_setting ensure "$f" dosbox hostkey ctrlshift ;;
+        win31) f="$HOME/win31/dosbox-x.conf"; ini_setting review "$f" hostkey ;;
         win95)
             for f in "$HOME/win95/setup.conf" "$HOME/win95/boot.conf"; do
-                ini_setting ensure "$f" sdl output surface output=opengl || return
-                ini_setting ensure "$f" dosbox hostkey ctrlshift || return
+                ini_setting review "$f" win95 || return
             done ;;
-        dos) ini_setting ensure "$HOME/.config/dev-retro/dos.conf" dosbox hostkey ctrlshift ;;
+        dos) ini_setting review "$HOME/.config/dev-retro/dos.conf" hostkey ;;
     esac
 }
 config_defaults() {
@@ -10660,7 +10674,9 @@ win31_cmd() {
 win95_confs() {   # write setup.conf and boot.conf once (edit them freely; setup leaves them alone)
     # v100 (Nov 5 2026): surface fixes maximized redraw; never rewrite an explicit owner value.
     local base
-    base='[sdl]
+    # v100 (Nov 7 2026): new files start reviewed; setup/launch never restores deleted defaults.
+    base='# v100: defaults reviewed
+[sdl]
 autolock=true
 output=surface
 [dosbox]
@@ -10700,12 +10716,7 @@ cd-rom insertion delay=4000'
         "# Running: the faster dynamic core ('win95 --core normal' for a DOS prompt window inside Windows 95)." \
         "# v100 (Nov 5 2026): Networking defaults off; win95 net on|off manages boot.conf with the guest off." "$base" \
         | sed 's/^cputype=pentium_mmx$/cputype=pentium_mmx\ncore=dynamic_x86/; s/^\[dosbox\]$/[dosbox]\ntitle=Windows 95 (dev-retro)/' > "$WS/boot.conf"
-    if [ "${1:-}" = boot-only ]; then
-        ini_setting ensure "$WS/boot.conf" sdl output surface
-        ini_setting ensure "$WS/boot.conf" dosbox hostkey ctrlshift
-    else
-        dosbox_defaults win95
-    fi
+    if [ "${1:-}" != boot-only ]; then dosbox_defaults win95; fi
 }
 # v100 (Nov 5 2026): support is inspected without starting DOSBox-X, as upstream documents.
 slirp_support() {
@@ -11022,15 +11033,21 @@ import os, re, stat, sys, tempfile
 from pathlib import Path
 p = Path(sys.argv[1])
 if not p.is_file(): sys.exit(0)
+# v100 (Nov 7 2026): one review per file, including absent-key additions; later edits win.
 text = p.read_bytes().decode('latin-1')
 lines = text.splitlines(keepends=True)
+marker = '# v100: defaults reviewed'
+if any(line.rstrip('\r\n') == marker for line in lines): sys.exit(0)
+if p.is_symlink():
+    print('NOTE: win2000/config: symlink config left unchanged; review defaults manually.', file=sys.stderr)
+    sys.exit(0)
 active = [line for line in lines if line.strip() and not line.lstrip().startswith('#')]
 # Config files are normally assignments. Commands, continuations, substitutions or conditionals
-# could supply an unseen value: don't append an overriding assignment in that case.
+# could supply an unseen value: review without changing assignments in that case.
 assignment = re.compile(r'^\s*(?:export\s+)?[A-Za-z_][A-Za-z_0-9]*=')
-if p.is_symlink() or any(not assignment.match(line) or any(c in line for c in ('`', '$(', '\\\n')) for line in active):
-    print('NOTE: win2000/config: complex or symlink config left unchanged; review absent defaults.', file=sys.stderr)
-    sys.exit(0)
+ambiguous = any(not assignment.match(line) or any(c in line for c in ('`', '$(', '\\\n')) for line in active)
+if ambiguous:
+    print('NOTE: win2000/config: complex config; review manually (settings left unchanged).', file=sys.stderr)
 # v100 (Nov 6 2026): v99 wrote these explicit defaults on every retro install. Compare the
 # whole line, including its original comment/spacing; any owner edit wins. Never evaluate it.
 legacy = {
@@ -11043,24 +11060,23 @@ legacy = {
 want = {'ACCEL': 'tcg', 'DISPLAY_OPTS': '"gtk,zoom-to-fit=off"', 'SOUND': 'none'}
 counts = {key: sum(len(re.findall(r'\b' + key + r'\s*=', line)) for line in active) for key in want}
 if any(count > 1 for count in counts.values()):
-    print('NOTE: win2000/config: duplicate assignment; review manually (left unchanged).', file=sys.stderr)
-    sys.exit(0)
-changed = False
-for i, line in enumerate(lines):
-    content = line.rstrip('\r\n')
-    for old, new in legacy.values():
-        if content.rstrip(' ') == old:
-            lines[i] = new + line[len(content):]
-            changed = True
-            break
-missing = {key: val for key, val in want.items() if not counts[key]}
-if not changed and not missing: sys.exit(0)
+    print('NOTE: win2000/config: duplicate assignment; review manually (settings left unchanged).', file=sys.stderr)
+    ambiguous = True
+if not ambiguous:
+    for i, line in enumerate(lines):
+        content = line.rstrip('\r\n')
+        for old, new in legacy.values():
+            if content.rstrip(' ') == old:
+                lines[i] = new + line[len(content):]
+                break
+missing = {} if ambiguous else {key: val for key, val in want.items() if not counts[key]}
 text = ''.join(lines)
 nl = '\r\n' if '\r\n' in text else '\n'
 if missing:
     if text and not text.endswith(('\r', '\n')): text += nl
     text += '# v100 (Nov 5 2026): absent win2000 defaults; explicit owner choices are preserved.' + nl
     text += ''.join(key + '=' + value + nl for key, value in missing.items())
+text = marker + nl + text
 fd, temp = tempfile.mkstemp(prefix='.config.', dir=p.parent)
 try:
     with os.fdopen(fd, 'wb') as f: f.write(text.encode('latin-1'))
@@ -12375,6 +12391,7 @@ dos_conf() {   # ~/.config/dev-retro/dos.conf for DOS programs, written once (ed
         mkdir -p "${c%/*}"
         cat > "$c" << 'EOF'
 # ~/.config/dev-retro/dos.conf - DOSBox-X settings for DOS programs ('retro run', dev-demo's matrix).
+# v100: defaults reviewed
 # Written once by dev-retro (install-retro, v92); edit freely.
 # output=ttf draws DOS text screens with a TrueType font, smoothed by Linux (DOSBox-X's built-in
 # font by default; font= takes a .ttf path). A graphics screen switches to outputswitch's
@@ -12539,6 +12556,7 @@ RETRO_COLOR_DEFAULT
         fi
         cat > ~/"$RETRO_G"/config << EOF_RCFG
 # ~/$RETRO_G/config - written by dev-setup (install-retro) once; edit freely, setup leaves it alone.
+# v100: defaults reviewed
 # Read by '$RETRO_G' each time it starts QEMU.
 MEM=$R_MEM                # MB
 CPU=pentium3            # pentium if setup blue-screens on this model

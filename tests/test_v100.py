@@ -146,6 +146,19 @@ class Qemu(Fixture):
         loop = "    for RETRO_G in winnt40 win2000; do" + source('setup').split("    for RETRO_G in winnt40 win2000; do", 1)[1].split("    # v100 (Nov 5 2026): migrate existing configs", 1)[0]
         self.bash('mkdir -p "$HOME/winnt40" "$HOME/win2000"\n' + loop + '\nfor g in winnt40 win2000; do . "$HOME/$g/config"; printf "%s %s %s %s\\n" "$g" "$ACCEL" "$SOUND" "$DISPLAY_OPTS"; done > "$WORK/defaults"')
         self.assertEqual((self.work / 'defaults').read_text().splitlines(), ['winnt40 auto sb16 gtk,zoom-to-fit=on', 'win2000 tcg none gtk,zoom-to-fit=off'])
+        paths = [self.work / 'home' / g / 'config' for g in ('winnt40', 'win2000')]
+        def snapshots():
+            return {p: (p.read_bytes(), p.stat().st_ino, p.stat().st_mtime_ns) for p in paths}
+        self.assertTrue(all(p.read_bytes().count(b'# v100: defaults reviewed') == 1 for p in paths))
+        before = snapshots()
+        self.bash(loop + '\n' + definitions() + '\nqemu_defaults win2000')
+        self.assertEqual(snapshots(), before)
+        p = paths[1]
+        p.write_bytes(p.read_bytes().replace(b'DISPLAY_OPTS="gtk,zoom-to-fit=off"', b'DISPLAY_OPTS=gtk,zoom-to-fit=on').replace(b'SOUND=none             # sb16, AC97 or none (drivers on the install CDs)\n', b''))
+        before = snapshots()
+        self.bash(loop + '\n' + definitions() + '\nqemu_defaults win2000')
+        self.assertEqual(snapshots(), before)
+
 
     def test_shared_devtest_qemu_fixture(self):
         h = self.work / 'helper'; h.write_text(helper())

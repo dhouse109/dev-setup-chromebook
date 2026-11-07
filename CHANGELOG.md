@@ -36,7 +36,8 @@ The installer: it sets up each stack the flags name. Newest version first.
   - Windows 2000 uses software emulation; its untouched v99 acceleration line upgrades too.
   - Windows 2000 disables zoom-to-fit for tablet alignment, including untouched v99 configs.
   - Windows 2000 starts without sound, including untouched v99 sound defaults.
-  - Edited guest settings and duplicate assignments stay unchanged; running guests defer updates.
+  - Guest defaults are reviewed once per file; new configs start marked and later owner choices stay.
+  - Restored old values and deleted keys survive launches; running guests defer review.
   - NT/2000 exchange disks stay detached until installation finishes and you enable them.
   - Acceleration messages explain what each guest will actually use.
   - Font setup retries once, saves diagnostics and limits each attempt to five minutes.
@@ -130,7 +131,8 @@ The test script: it checks that what setup installed works. Newest version first
 - **v100** (built; Chromebook acceptance pending; Inspector work paused):
   - .NET checks use IPv4; the connectivity probe reports a warning if unreachable.
   - Isolated checks cover Win95 boot arguments and guest-config upgrades without starting guests.
-  - Untouched v99 defaults must upgrade; owner edits, duplicates and running guests stay protected.
+  - Checks cover one-time upgrades, restored old values, deleted keys and unchanged new configs.
+  - Owner edits and duplicate settings stay protected; running guests defer review.
   - Isolated checks verify NT/2000 exchange attachment and acceleration selection.
   - Font checks cover retry, timeout, saved diagnostics and collection from Delphi 3.
   - Missing optional fonts produce warnings; tests never download fonts or repair prefixes.
@@ -195,7 +197,7 @@ The init script: logins, keys and config from secrets.env. Newest version first.
 - **v100** (built; Chromebook acceptance pending; Inspector work paused):
   - Retro messages report selected acceleration instead of promising KVM use.
   - NT/2000 guidance explains when to enable the exchange disk.
-  - The checklist includes guest defaults, font repair, colors, networking and manual checks.
+  - The checklist explains one-time defaults, saved owner choices and the remaining manual checks.
 - **v99:** inherited pip retry/timeout policy and common retry helper; authentication behaviour unchanged. Nov 1 acceptance corrections retain v99 at the owner’s request; no additional code changes in this script. Owner accepted the full v99 bundle on Nov 1 2026 with the two Known issues recorded in the setup/test v99 entries; no further code changes.
 - **v98:** version bump only.
 - **v97:** version bump only (devclean, plan item 1, needs no login or key; item 2 is docs only).
@@ -249,7 +251,7 @@ The optional demo script: hands-on demos in ~/dev-demo, outside the test loop. N
 - **v100** (built; Chromebook acceptance pending; Inspector work paused):
   - .NET and PowerShell demo downloads and runners use IPv4; existing projects are preserved.
   - Guest STEPS explain Win95 boot, rendering and DOSBox-X host keys.
-  - Guest STEPS explain Windows 2000 defaults and upgrades of untouched v99 settings.
+  - Guest STEPS explain one-time default reviews and how later owner choices are preserved.
   - NT/2000 instructions cover exchange enablement, drive letters and recovery.
   - Font instructions explain retries, the five-minute limit, logs and prefix-specific repair.
   - Media instructions show how to build app CDs from your own loose files.

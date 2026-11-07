@@ -655,16 +655,22 @@ RAM reminder for the 8 GB machines: Ollama holds about 3.5 GB while a model is l
 v100 (Nov 5 findings): win95 boots image disks only; the separate IMGMAKE session still mounts X:.
 New win95 setup.conf/boot.conf use `output=surface` to fix maximized redraw. Keep guests off when
 editing output/scaler settings; do not change them from the Video menu during Setup. Untouched v99
-`output=opengl` lines upgrade to surface (trailing spaces allowed). Edited values/comments and
-duplicate assignments stay unchanged. All four DOSBox-X configs default to `[dosbox] hostkey=ctrlshift`
+`output=opengl` lines upgrade to surface once per config (trailing spaces allowed).
+The same atomic update writes `# v100: defaults reviewed`; new v100 configs start marked.
+Keep this marker when editing: later old values or deleted output/hostkey lines stay as you chose.
+Unmarked configs from earlier drafts get one review. Edited values/comments and duplicate
+assignments keep their settings and receive the marker too. All four DOSBox-X configs default to `[dosbox] hostkey=ctrlshift`
 (Ctrl+Shift+F for full screen); existing choices stay, and misplaced hostkey lines require manual review.
 Missing defaults are added only while the guest is stopped; win31 stays opengl and DOS stays ttf.
 Review owner-added folder mounts in win95 `[autoexec]` before booting; they are never removed automatically.
 
 v100 QEMU defaults and installation completion (Nov 5–6 findings): new win2000 configs use
 `ACCEL=tcg`, `DISPLAY_OPTS="gtk,zoom-to-fit=off"` and `SOUND=none`. Untouched v99 ACCEL, DISPLAY_OPTS and SOUND
-lines upgrade too, matching the full original line including its comment (trailing spaces allowed).
-Edited values/comments/spacing and duplicate assignments stay unchanged; running guests defer.
+lines upgrade once per config, matching the full original line including its comment (trailing spaces allowed).
+The same atomic update writes `# v100: defaults reviewed`; new configs start marked. Keep the marker:
+subsequent owner choices, even old spellings or deleted keys, survive setup and launch. Unmarked
+configs from earlier drafts get one review. Edited values/comments/spacing and duplicate assignments
+keep their settings; ambiguous configs receive only the marker. Running guests defer without marking.
 NT 4.0 keeps auto acceleration, scaled GTK, PS/2 and sb16; if it is slow, try TCG with the guest
 off (NT performance remains an owner check). KVM availability does not imply a guest selected KVM.
 `<guest> accel` reports the selection/reason; `<guest> preferences` reports preserved preferences.

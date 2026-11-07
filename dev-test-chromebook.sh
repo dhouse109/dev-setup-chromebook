@@ -5667,6 +5667,8 @@ with tempfile.TemporaryDirectory(prefix='retro-config-', dir=base) as tmp:
     bindir = root / 'bin'; bindir.mkdir()
     pgrep = bindir / 'pgrep'; pgrep.write_text('#!/bin/sh\nexit 1\n'); pgrep.chmod(0o755)
     env = dict(HOME=str(home), PATH=str(bindir) + ':/usr/bin:/bin', LC_ALL='C.UTF-8')
+    def reviewed(data):
+        return b'# v100: defaults reviewed' + (b'\r\n' if b'\r\n' in data else b'\n') + data
     def call(*args):
         r = subprocess.run(['bash', str(h), *args], env=env, text=True, capture_output=True)
         assert r.returncode == 0, r.stdout + r.stderr
@@ -5681,6 +5683,7 @@ with tempfile.TemporaryDirectory(prefix='retro-config-', dir=base) as tmp:
     for p in files:
         assert b'[dosbox]\r\nhostkey=ctrlshift\r\n' in p.read_bytes()
         assert p.stat().st_mode & 0o777 == 0o640
+        assert p.read_bytes().count(b'# v100: defaults reviewed') == 1
         if p.parent.name == 'win95': assert b'output=surface\r\n' in p.read_bytes()
     call('retro', 'config-defaults')
     assert snapshots == {p: p.read_bytes() for p in files}
@@ -5691,14 +5694,26 @@ with tempfile.TemporaryDirectory(prefix='retro-config-', dir=base) as tmp:
             old = ('[sdl]\r\noutput=opengl' + suffix + '\r\n[dosbox]\r\nhostkey=ctrlshift\r\n').encode()
             target.write_bytes(old)
             call('retro', 'config-defaults')
-            assert target.read_bytes() == old.replace(('output=opengl' + suffix).encode(), b'output=surface')
+            assert target.read_bytes() == reviewed(old.replace(('output=opengl' + suffix).encode(), b'output=surface'))
             assert target.stat().st_mode & 0o777 == 0o640
             upgraded = target.read_bytes(); call('retro', 'config-defaults')
             assert target.read_bytes() == upgraded
+            # v100 (Nov 7 2026): choosing the old spelling after review must stick.
+            chosen = upgraded.replace(b'output=surface', b'output=opengl')
+            target.write_bytes(chosen); before = target.stat()
+            for _ in range(2): call('retro', 'config-defaults')
+            assert target.read_bytes() == chosen
+            assert (target.stat().st_ino, target.stat().st_mtime_ns) == (before.st_ino, before.st_mtime_ns)
         for setting in ('output=texture', 'output=opengl # owner', ' output=opengl',
                         'output=opengl\t', 'Output=opengl', 'output=opengl\noutput=opengl'):
             old = ('[sdl]\n' + setting + '\n[dosbox]\nhostkey=ctrlshift\n').encode()
-            target.write_bytes(old); call('retro', 'config-defaults'); assert target.read_bytes() == old
+            target.write_bytes(old); call('retro', 'config-defaults'); assert target.read_bytes() == reviewed(old)
+    # Deleting keys after review must not cause absent-key additions on any config.
+    for target in files:
+        chosen = b'# v100: defaults reviewed\n[sdl]\n[dosbox]\n'
+        target.write_bytes(chosen); before = target.stat(); call('retro', 'config-defaults')
+        assert target.read_bytes() == chosen
+        assert (target.stat().st_ino, target.stat().st_mtime_ns) == (before.st_ino, before.st_mtime_ns)
     (home / 'win95/.pid').write_text(str(os.getpid()))
     for name in ('setup.conf', 'boot.conf'):
         target = home / 'win95' / name
@@ -5707,16 +5722,18 @@ with tempfile.TemporaryDirectory(prefix='retro-config-', dir=base) as tmp:
     (home / 'win95/.pid').unlink()
     custom = home / 'win95/boot.conf'
     original = b'[sdl]\r\n output = opengl\r\n[dosbox]\r\n HostKey = mapper\r\n'
-    custom.write_bytes(original); call('retro', 'config-defaults'); assert custom.read_bytes() == original
+    custom.write_bytes(original); call('retro', 'config-defaults'); assert custom.read_bytes() == reviewed(original)
     for data in (b'[sdl]\nhostkey=ctrlalt\noutput=surface\n', b'[dosbox]\nhostkey=mapper\nhostkey=ctrlalt\n[sdl]\noutput=surface\n'):
         custom.write_bytes(data); r = call('retro', 'config-defaults')
-        assert custom.read_bytes() == data and 'review manually' in r.stderr
+        assert custom.read_bytes() == reviewed(data) and 'review manually' in r.stderr
+    fixed = custom.read_bytes().replace(b'hostkey=mapper\nhostkey=ctrlalt', b'hostkey=ctrlalt')
+    custom.write_bytes(fixed); call('retro', 'config-defaults'); assert custom.read_bytes() == fixed
     custom.write_text('[sdl]\n[dosbox]')
     call('retro', 'config-defaults'); assert '[dosbox]\nhostkey=ctrlshift' in custom.read_text()
     custom.write_text('[sdl]\n[dosbox]\n')
     (home / 'win95/.pid').write_text(str(os.getpid()))
     call('retro', 'config-defaults'); assert custom.read_text() == '[sdl]\n[dosbox]\n'
-print('config fixtures: untouched v99 upgrade, edited values/comments/duplicates, absent defaults, CRLF/mode, custom/misplaced/duplicate keys, repeat and running guards PASS')
+print('config fixtures: once-only v99 upgrade/marker, restored values/deleted keys, edited values/comments/duplicates, absent defaults, CRLF/mode, custom/misplaced/duplicate keys, repeat and running guards PASS')
 RETRO_CONFIG_CHECK_PY
     check "retro default migration preserves owner edits (isolated)" 'RETRO_HELPER="$HOME/.local/lib/dev-retro/dev-retro" python3 "$WORK/retro-config-check.py"'
     # v100 (Nov 5 2026): fake engine captures each invocation, without Windows media or a guest start.
@@ -5760,7 +5777,33 @@ install_iso() { echo "$WORK/windows.iso"; }; app_cd() { echo "$WORK/app.iso"; }
             import configparser
             ini = configparser.ConfigParser(); ini.read(ws / conf)
             assert ini['sdl']['output'] == 'surface' and ini['dosbox']['hostkey'] == 'ctrlshift'
-print('win95 arguments: boot, run, fresh/resumed setup; separate IMGMAKE and preserved image/CD mounts PASS')
+    # v100 (Nov 7 2026): born-marked files are never rewritten, including after owner edits.
+    configs = [ws / name for name in ('setup.conf', 'boot.conf')]
+    assert all(p.read_bytes().count(b'# v100: defaults reviewed') == 1 for p in configs)
+    def snapshots(): return {p: (p.read_bytes(), p.stat().st_ino, p.stat().st_mtime_ns) for p in configs}
+    before = snapshots()
+    launch = h + stub + '\nSIM_INSTALLED=1\nwin95_cmd boot\n'
+    for _ in range(2):
+        r = subprocess.run(['bash', '-s'], input=launch, env=env, capture_output=True, text=True)
+        assert r.returncode == 0, r.stdout + r.stderr
+    assert snapshots() == before
+    for p in configs:
+        p.write_bytes(p.read_bytes().replace(b'output=surface', b'output=opengl').replace(b'hostkey=ctrlshift\n', b''))
+    before = snapshots()
+    for _ in range(2):
+        r = subprocess.run(['bash', '-s'], input=launch, env=env, capture_output=True, text=True)
+        assert r.returncode == 0, r.stdout + r.stderr
+    assert snapshots() == before
+    # An old unmarked file is reviewed on launch, then the owner can choose opengl again.
+    for p in configs: p.write_bytes(p.read_bytes().replace(b'# v100: defaults reviewed\n', b''))
+    r = subprocess.run(['bash', '-s'], input=launch, env=env, capture_output=True, text=True)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert all(b'output=surface' in p.read_bytes() and b'hostkey=ctrlshift' in p.read_bytes() for p in configs)
+    for p in configs: p.write_bytes(p.read_bytes().replace(b'output=surface', b'output=opengl'))
+    before = snapshots()
+    r = subprocess.run(['bash', '-s'], input=launch, env=env, capture_output=True, text=True)
+    assert r.returncode == 0 and snapshots() == before, r.stdout + r.stderr
+print('win95 arguments: boot, run, fresh/resumed setup; separate IMGMAKE, preserved image/CD mounts and once-only defaults on real launch paths PASS')
 RETRO_ARGS_CHECK_PY
     check "win95 boot argument regression (isolated fake engine)" 'RETRO_HELPER="$HOME/.local/lib/dev-retro/dev-retro" python3 "$WORK/retro-args-check.py"'
     check "retro sizes: RETRO_EXCHANGE_MB and RETRO_WIN95_DISK_MB are valid" '~/.local/lib/dev-retro/dev-retro retro sizes'
@@ -5803,6 +5846,8 @@ with tempfile.TemporaryDirectory(prefix='qemu-fixture-', dir=os.environ['WORK'])
         r = subprocess.run(['bash', str(h), g, *args], env=env, text=True, capture_output=True)
         assert (r.returncode == 0) == ok, r.stdout + r.stderr
         return r
+    def reviewed(data):
+        return b'# v100: defaults reviewed' + (b'\r\n' if b'\r\n' in data else b'\n') + data
     def args(): return json.loads((root / 'args.json').read_text())
     def attached(): return any('index=1,media=disk' in x for x in args())
     for g in ('winnt40', 'win2000'):
@@ -5852,7 +5897,7 @@ with tempfile.TemporaryDirectory(prefix='qemu-fixture-', dir=os.environ['WORK'])
     assert config.stat().st_mode & 0o777 == 0o640
     call('retro', 'config-defaults'); assert config.read_bytes() == data
     for text in ('export ACCEL=auto\nSOUND=AC97\nDISPLAY_OPTS="gtk,zoom-to-fit=on"\n', 'if true; then ACCEL=auto; fi\n'):
-        config.write_text(text); call('retro', 'config-defaults'); assert config.read_text() == text
+        config.write_text(text); call('retro', 'config-defaults'); assert config.read_bytes() == reviewed(text.encode())
     # Full v99 write-once template, verified against 60c891f; no real guest config is read.
     legacy = '''# ~/win2000/config - written by dev-setup (install-retro) once; edit freely, setup leaves it alone.
 # Read by 'win2000' each time it starts QEMU.
@@ -5880,17 +5925,31 @@ EXTRA_ARGS=""           # more QEMU options, e.g. "-smp 2"
         expected = modern.replace('\n', '\r\n') if ending == '\r\n' else modern
         if not ending: data, expected = data.rstrip('\n'), expected.rstrip('\n')
         config.write_bytes(data.encode()); config.chmod(0o640)
-        call('retro', 'config-defaults'); assert config.read_bytes() == expected.encode()
+        call('retro', 'config-defaults'); assert config.read_bytes() == reviewed(expected.encode())
         assert config.stat().st_mode & 0o777 == 0o640
-        call('retro', 'config-defaults'); assert config.read_bytes() == expected.encode()
+        call('retro', 'config-defaults'); assert config.read_bytes() == reviewed(expected.encode())
     for old, new in replacements:
         key, value = old.split('=', 1)
         for edited in (key + '=owner', old + ' # owner', ' ' + old, old + '\t',
                        'export ' + old, old.replace('=', ' = ', 1)):
             data = modern.replace(new, edited).encode()
-            config.write_bytes(data); call('retro', 'config-defaults'); assert config.read_bytes() == data
+            config.write_bytes(data); call('retro', 'config-defaults'); assert config.read_bytes() == reviewed(data)
         data = (legacy + old + '\n').encode()
-        config.write_bytes(data); call('retro', 'config-defaults'); assert config.read_bytes() == data
+        config.write_bytes(data); call('retro', 'config-defaults'); assert config.read_bytes() == reviewed(data)
+    # v100 (Nov 7 2026): after review, exact old lines are deliberate owner choices.
+    config.write_bytes(legacy.encode()); call('retro', 'config-defaults')
+    chosen = config.read_bytes()
+    for old, new in replacements: chosen = chosen.replace(new.encode(), old.encode())
+    config.write_bytes(chosen); before = config.stat()
+    for _ in range(2): call('win2000')
+    assert args()[args().index('-display') + 1] == 'gtk,zoom-to-fit=on'
+    assert config.read_bytes() == chosen
+    assert (config.stat().st_ino, config.stat().st_mtime_ns) == (before.st_ino, before.st_mtime_ns)
+    config.write_bytes(b'# v100: defaults reviewed\nMEM=320\n')
+    chosen = config.read_bytes(); before = config.stat()
+    for _ in range(2): call('win2000')
+    assert config.read_bytes() == chosen
+    assert (config.stat().st_ino, config.stat().st_mtime_ns) == (before.st_ino, before.st_mtime_ns)
     config.write_bytes(legacy.encode())
     (ws / '.pid').write_text(str(os.getpid()))
     call('retro', 'config-defaults'); assert config.read_bytes() == legacy.encode()
@@ -5909,7 +5968,7 @@ EXTRA_ARGS=""           # more QEMU options, e.g. "-smp 2"
             expected = 'selected by ACCEL=tcg' if want == 'tcg' else ('selected by ACCEL=' + want if state == 'usable' else ('present but not usable' if state == 'present' else 'unavailable'))
             assert expected in r.stdout, r.stdout
             assert ('group' in r.stdout) == (want != 'tcg' and state == 'present')
-print('QEMU fixtures: untouched v99 upgrade, edited values/comments/duplicates/running preservation, defaults, overrides, gate/identity, fresh/resumed/CD/floppy/raw setup, run/put guards and 9 acceleration cases PASS')
+print('QEMU fixtures: once-only v99 upgrade/marker, restored values/deleted keys on launch, edited values/comments/duplicates/running preservation, defaults, overrides, gate/identity, fresh/resumed/CD/floppy/raw setup, run/put guards and 9 acceleration cases PASS')
 RETRO_QEMU_CHECK_PY
     check "QEMU defaults, exchange completion and acceleration (isolated)" 'RETRO_HELPER="$HOME/.local/lib/dev-retro/dev-retro" python3 "$WORK/retro-qemu-check.py"' 180
     # v100 (Nov 5–6 2026): read-only preferences warn; a disk does not prove Windows installation.
