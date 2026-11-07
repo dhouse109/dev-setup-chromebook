@@ -27,7 +27,7 @@ the whole lab, as it is.
 
 All four take the same flags, so `install-web install-node` means the same thing to each of them.
 
-> **Current version: v100.** Retro setup reviews guest defaults once per config and records `# v100: defaults reviewed`; new configs start marked and later owner choices are preserved. Built in stages; owner acceptance is pending. [CHANGELOG.md](CHANGELOG.md) has the full history.
+> **Current version: v100.** Retro setup reviews guest defaults once per config and records `# v100: defaults reviewed`; new configs start marked and later owner choices are preserved. Owner accepted Nov 7, 2026 with the recorded known issues. [CHANGELOG.md](CHANGELOG.md) has the full history.
 
 v99 implements the [final plan](docs/plans/v99-plan.md): bounded bulk-install retries, stage/EXIT
 reports and focused Playwright, password, model-hint and package-permission fixes. The owner accepted

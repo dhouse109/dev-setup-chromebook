@@ -1,17 +1,17 @@
 # dev-setup-chromebook v100 plan
 
-Nov 1, 2026 (item 1) · Nov 6, 2026 (items 2–16 added; owner choices recorded) · **final: approved for the build on `release/v100`**
+Nov 1, 2026 (item 1) · Nov 6, 2026 (items 2–16 added; owner choices recorded) · **owner accepted Nov 7, 2026 on `release/v100`, with the known issues below**
 
 ## Items at a glance
 
 Item 1 was drafted Nov 1. Items 2–16 are the owner-confirmed scope from hands-on install-retro testing
 on a long-term Chromebook with `/dev/kvm` (Nov 5–6, 2026); each records the finding, the owner's
 decision and the requested change. The detailed proposals below verify v99 code locations, describe migration and validation, and
-list owner choices. They are recommendations for review, not build approval.
+list the approved owner choices. The Nov 7 acceptance record below settles the v100 scope.
 
 | # | Item | Kind |
 |---|---|---|
-| 1 | Inspector offline cache coherence | fix (investigate first) |
+| 1 | Inspector offline cache coherence | deferred to v101; accepted v99 known issue |
 | 2 | NuGet steps hang where IPv6 to api.nuget.org fails | fix |
 | 3 | win95 hangs on its first boot after Setup (`mount x` becomes an IDE disk) | fix |
 | 4 | Stale-frame flicker in a maximized win95 window: `output=surface` | default change |
@@ -28,8 +28,8 @@ list owner choices. They are recommendations for review, not build approval.
 | 15 | Delphi under Wine: documentation findings | docs |
 | 16 | DOSBox-X and QEMU guests: documentation findings | docs |
 
-Deferred to v101 (recorded at the end): the Delphi DCOM/multi-tier database demo and the guest
-network test plan.
+Deferred to v101 (recorded at the end): Inspector, diagnostics for the intermittent QEMU blank-disk
+check timeout, Windows 2000 sound, the Delphi DCOM/multi-tier demo and the guest network test plan.
 
 ## Owner decisions (Nov 6, 2026)
 
@@ -37,6 +37,7 @@ The owner approved this plan for the build with these choices:
 
 | Item | Choice |
 |---|---|
+| 1 | **Nov 7:** deferred to v101; v99's accepted offline npx Inspector ENOTCACHED known issue remains. |
 | 2 | **2A:** command-scoped IPv4 (`DOTNET_SYSTEM_NET_DISABLEIPV6=1`) for the bundle's NuGet/Gallery acquisition and restore-capable build/runner paths; no IPv6 probe. |
 | 3 | **3A:** remove the win95 guest-boot folder mount; keep the standalone IMGMAKE and win31 mounts. |
 | 4 | **4A (Nov 6 follow-up):** win95 `output=surface`; add absent settings and upgrade exact v99 `output=opengl` lines; preserve edited lines and duplicates. |
@@ -58,16 +59,38 @@ behaviour (Setup installs to C:, resumed boots stay detached, then `exchange ena
 the owner's first winnt40 install, which is a fresh install anyway. The existing win2000 guest is
 checked as an existing install: one-time `win2000 exchange enable`, then the exchange drive works.
 
-Item 1 is **paused by the owner (Nov 6)**. Resume on a machine with `install-agentic`, using the
-bundle's own setup and its investigation-first gate with approval for each real command. Do not
-create an Inspector environment under `assets/tools`; a hand-built environment would not reproduce
-the bundle context. Stages 1–7 are built; Chromebook acceptance remains pending.
+Item 1 is **deferred to v101 by the owner (Nov 7)**. Its investigation is not unfinished v100 work.
+The accepted v99 known issue remains: offline npx Inspector can report ENOTCACHED despite setup's
+successful warm-up. Resume in v101 on a machine with `install-agentic` from the bundle's own setup,
+with approval for each real command. Do not hand-build an Inspector environment under `assets/tools`.
+Stages 1–7 and the once-only defaults fix are accepted for v100.
 
 **Acceptance correction (Nov 7):** default migration is once per config file. A successful review
 writes `# v100: defaults reviewed` in the same atomic update as all that file's default changes.
 New v100 files are born marked. Marked files skip both exact-v99 matching and absent-key additions,
 including after an owner restores old values or deletes keys. This corrects repeated launch-time
 rewrites of win95 `output=opengl` and win2000 `DISPLAY_OPTS=gtk,zoom-to-fit=on`.
+
+## Owner acceptance (Nov 7, 2026)
+
+- The owner completed **init → setup → init → test** with
+  `install-retro install-dotnet install-pwsh install-bdd install-godot`.
+- Setup had **0 failed stages and 0 selected stages not reached**; the final targeted test had
+  **FAIL 0**. All guest hand checks passed.
+- The owner verified the once-only defaults fix `c19411f` with setup and dev-test reruns using
+  `install-retro`. The saved rerun reports PASS 121 / FAIL 0 / WARN 1; its WARN is the deliberately
+  preserved win95 opengl renderer, demonstrating the owner choice survives.
+- Local evidence: `assets/logs/dev-setup-20261107-094012.output`,
+  `assets/logs/dev-test-20261107-095838.output`, `assets/logs/dev-setup-20261107-113943.output`
+  and `assets/logs/dev-test-20261107-125557.output`. Guest UI results are owner-reported.
+- Accepted known issues: inherited offline Inspector ENOTCACHED; the unchanged-since-v99 QEMU
+  blank-disk test timed out once in three runs under nested KVM and passed after Linux restarted.
+  Inspector and better QEMU diagnostics move to v101; the timeout's cause is not established.
+- Working win2000 sound also moves to v101: PipeWire plus sb16 works with Windows 2000's own
+  driver but stutters under TCG. KVM stalls even on the installed system. v100 keeps `SOUND=none`
+  as its default.
+- The owner authorized marking PR #15 ready for review, **not merging**. v100 is accepted with
+  these known issues; the deferred work is not a remaining v100 acceptance gate.
 
 ## Scope and baseline
 
@@ -76,12 +99,18 @@ with two known non-credential WARNs: offline Inspector cache availability and en
 headroom below the model reserve. The final test returned to the prompt without Ctrl+C.
 Inspector ENOTCACHED pre-existed v99 and is not classified as a v99 regression.
 
-This plan starts on `plan/v100`; implementation belongs on `release/v100` after the owner approves
-the plan (v99 was merged into `main` on Nov 1). The draft PR targets `main` and contains only this plan. It does not
-implement a fix, bump script versions, authorize running setup/init/test/demo, or authorize merging
-either PR. Disk reserve changes, cache purges and unrelated stack changes are outside item 1.
+This plan was approved through `plan/v100` and built on `release/v100` after v99 merged into
+`main`. The owner accepted the targeted workflow and guest checks on Nov 7; PR #15 targets `main`
+and is ready for review after the acceptance-record update. No merge is authorized. Item 1's retained
+investigation below belongs to v101; disk reserve changes, cache purges and unrelated changes remain
+outside that investigation.
 
-## 1. Inspector offline cache coherence
+## 1. Inspector offline cache coherence — deferred to v101
+
+**Status (owner decision, Nov 7):** not implemented in v100. The offline npx Inspector ENOTCACHED
+warning remains the accepted v99 known issue. The evidence and investigation design below are
+retained for v101; they do not authorize any real command, cache clearing or creation of a hand-built
+Inspector environment. Resume only with the bundle's own `install-agentic` setup and per-command approval.
 
 ### Evidence
 
@@ -174,7 +203,7 @@ test with the passing global executable and call cache coherence fixed.
 - A new terminal/Linux session and the full intervening workflow retain the offline result. Verify
   the documented FastMCP invocation separately; UI/global CLI success alone is insufficient.
 - Keep all flags/expansion logic identical across the four scripts. At implementation time bump all
-  four to v100 and update CHANGELOG, README, init checklist and disk-report/docs as appropriate.
+  four to v101 and update CHANGELOG, README, init checklist and disk-report/docs as appropriate.
 - Before each push run all-four Bash syntax and error-level ShellCheck plus secret checks. Use
   focused regressions for spec/context/status propagation and owner-approved targeted real runs,
   followed by the owner-approved full acceptance route.
@@ -451,6 +480,9 @@ General constraints for all of them:
   off did not fix item 5, so the errors were not its cause, but they serve no purpose for the
   development use of the guest.
 - **Decision:** default `SOUND=none` for win2000; investigating working guest audio is a later item.
+  **Nov 7 acceptance:** working sound is deferred to v101. PipeWire plus sb16 works with the
+  Windows 2000 driver but stutters under TCG; KVM stalls even after installation. Keep the v100
+  no-sound default; do not turn this finding into a backend/card change in v100.
 - **Verified locations:** helper win2000 `SOUND=AC97` at 10693; `audio_args`
   10718–10726; QEMU audio array append at 10784–10785. Setup R_SOUND at 11782 and config SOUND
   at 11795 are outside the helper. NT remains sb16 at 10692/11780.
@@ -922,7 +954,7 @@ Breeze Dark values (`HKEY_CURRENT_USER\Control Panel\Colors`, "R G B"):
 - **Owner choice:** **16A (recommended):** record these as qualified manual procedures and verify
   shortcuts during acceptance. **16B:** omit the blind shutdown shortcut until rechecked per guest.
 
-## Proposed build stages (after owner approval; one commit per stage)
+## Build stages (1–7 completed and accepted; stage 8 deferred to v101)
 
 1. **NuGet scope (2):** command/runner changes and relevant dev-test/docs. Bump all four scripts
    together to v100 in this first implementation commit, update every version string/README, and
@@ -947,20 +979,18 @@ Breeze Dark values (`HKEY_CURRENT_USER\Control Panel\Colors`, "R G B"):
    gotcha/STEP cross-reference against the final helpers, and correct stale KVM/black-desktop/F:
    assumptions. Earlier stages already carry docs for behaviour they change; this is not deferred
    documentation for those changes.
-8. **Inspector (1):** retain its investigation-first design and approval boundaries exactly as
-   above. It is independent of retro; follow its recorded decision gate. Keep its managed npm cache
-   separate from item 2's .NET workaround, add both new storage categories without double-counting,
-   and combine final all-four validation/acceptance. It can move earlier after its investigation;
-   no retro fix is evidence about npm cache coherence.
+8. **Inspector (1), deferred to v101 (Nov 7):** retain the investigation and per-command approval
+   gates above. No Inspector change ships in v100. The inherited ENOTCACHED issue is accepted;
+   completion of stages 1–7 and retro acceptance is not evidence about npm cache coherence.
 
 Every commit carries the Codex co-author trailer; use `release/v100` only after this plan is
 approved. Every push needs all-four syntax, error-level ShellCheck and secret checks. Build tests
 exercise the generated helper extracted from the heredoc, including its own `bash -n`/ShellCheck;
 checking only the outer setup shell does not parse quoted heredoc code. Never run the targeted
-refresh script merely as a read-only test: it writes the installed helper. No implementation,
-version bump, release branch, merge or real script execution is part of this planning update.
+refresh script merely as a read-only test: it writes the installed helper. This acceptance-record
+update changes documentation only; further real script runs and merging still require owner authorization.
 
-## Proposed owner acceptance route (commands for later approval, not executed)
+## Owner acceptance route (targeted workflow and hand checks completed Nov 7)
 
 1. Review choices **2A/2B through 16A/16B** under each item, especially 8's extra enable step,
    12's license gate, 13's corrected section and 14's IRQ/COM2 handling. Approve the plan/build separately. Start with
@@ -996,9 +1026,9 @@ version bump, release branch, merge or real script execution is part of this pla
    `exchange recreate`, restoring snapshots, and `convert C:` are optional recovery/maintenance
    actions requiring separate owner intent, not routine acceptance commands. To inspect repaired
    existing exchange media, start with `exchange info`/`get`; never format it in Windows.
-4. Item 1 is paused until a machine has `install-agentic` from the bundle's setup. Then resume its
-   cold/online/offline/new-session/full-workflow gate with individual command approvals. Do not
-   hand-build an environment under `assets/tools` or clear the owner's npm cache.
+4. Item 1 is deferred to v101. Its later investigation requires `install-agentic` from the bundle's
+   setup and individual command approvals. It is not a v100 acceptance gate; do not hand-build an
+   environment under `assets/tools` or clear the owner's npm cache.
 5. After focused checks, proposed full acceptance repeats **init → setup → init → test** with the
    established six flags on each script:
 
@@ -1011,12 +1041,33 @@ version bump, release branch, merge or real script execution is part of this pla
    non-credential WARNs, all selected stages complete, prompt returns normally, and guest hand checks
    recorded. Explicit owner preferences (old outputs/acceleration/theme) may yield documented WARNs;
    the owner must choose the recommendation or explicitly accept those exceptions before release.
-   Until these runs exist, no claim of a confirmed Chromebook build; this PR remains a draft plan.
+   **Nov 7 outcome:** the owner accepted the targeted workflow and all guest hand checks above,
+   including the once-only defaults rerun, with the recorded known issues. The broader six-flag
+   route is optional future validation; v100 targeted acceptance is complete. PR #15 may be marked
+   ready for review; no merge is authorized.
 
 ## Deferred to v101
 
-These depend on `install-lan-share` and `install-db-server` and are recorded here so the overall
-assessment is in one place. They are not part of v100.
+The owner deferred the following work; none is a remaining v100 acceptance gate.
+
+### Inspector offline cache coherence (item 1)
+
+Carry forward the accepted v99 offline npx Inspector ENOTCACHED known issue. Use the retained
+investigation above on a bundle-configured `install-agentic` machine, with per-command approval.
+
+### QEMU blank-disk test diagnostics
+
+The dev-test check "QEMU starts a blank disk headless" is unchanged since v99. It timed out once
+in three acceptance runs under nested KVM and passed after Linux restarted. Keep this as an accepted
+known issue, without claiming a root cause. Improve diagnostic capture and bounded cleanup in v101;
+do not hide the failure or change this test in the v100 acceptance-record update.
+
+### Windows 2000 sound
+
+PipeWire plus sb16 works with Windows 2000's own driver, but audio stutters under TCG. KVM stalls
+even on the installed system. Investigate working sound in v101; v100 keeps the no-sound default.
+
+The remaining demo/network work depends on `install-lan-share` and `install-db-server`:
 
 ### Delphi DCOM / multi-tier database demo
 
