@@ -1,5 +1,5 @@
 #!/bin/bash
-# dev-demo-chromebook - Version 99
+# dev-demo-chromebook - Version 100
 # Version history: CHANGELOG.md, next to this script in the bundle
 # (one section per script, newest version first).
 #
@@ -82,7 +82,7 @@ net_retry() {   # net_retry SAFE_LABEL COMMAND [ARG...]; no expanded command/sec
 
 # Deliberately NO 'set -e': one demo failing to download must not stop the others.
 
-VERSION=99
+VERSION=100
 
 # =================================================================
 # FLAG EXPANSION (STACK SWITCHES)  -- copied verbatim from the installer
@@ -755,7 +755,8 @@ demo_need dotnet install-dotnet
 export DOTNET_ROLL_FORWARD=Major
 EX=(); for d in examples/Console/*/; do d=${d%/}; d=${d##*/}; [ "$d" = Showcase ] || EX+=("$d"); done
 while demo_menu "Which Spectre.Console example? (the first build restores packages)" Showcase "${EX[@]}"; do
-    dotnet run --project "examples/Console/$DEMO_CHOICE"
+    # v100 (Nov 2 2026): implicit NuGet restore needs IPv4 too, including regenerated runners.
+    DOTNET_SYSTEM_NET_DISABLEIPV6=1 dotnet run --project "examples/Console/$DEMO_CHOICE"
     [ -n "${1:-}" ] && break
 done
 EOF
@@ -769,8 +770,9 @@ EOF
     if [ ! -f "$DIR/VbSpectre.vbproj" ] || [ "$REFRESH" = 1 ]; then
         [ -e "$DIR" ] && stash_old
         echo "  creating a VB.NET console project and adding Spectre.Console..."
-        dotnet new console -lang VB -n VbSpectre -o "$DIR" > /dev/null \
-            && dotnet add "$DIR/VbSpectre.vbproj" package Spectre.Console > /dev/null \
+        # v100 (Nov 2 2026): no global network change; only these .NET/Gallery children use IPv4.
+        DOTNET_SYSTEM_NET_DISABLEIPV6=1 dotnet new console -lang VB -n VbSpectre -o "$DIR" > /dev/null \
+            && DOTNET_SYSTEM_NET_DISABLEIPV6=1 dotnet add "$DIR/VbSpectre.vbproj" package Spectre.Console > /dev/null \
             || { rm -rf "$DIR"; fail "dotnet new / add package failed"; return 0; }
         cat > "$DIR/Program.vb" << 'EOF'
 Imports System
@@ -826,7 +828,8 @@ EOF
     fi
     write_run << 'EOF'
 demo_need dotnet install-dotnet
-dotnet run
+# v100 (Nov 2 2026): dotnet run may restore NuGet packages.
+DOTNET_SYSTEM_NET_DISABLEIPV6=1 dotnet run
 EOF
     done_demo
 }
@@ -838,7 +841,8 @@ demo_pwsh() {
     if [ ! -d "$DIR/modules/PwshSpectreConsole" ] || [ "$REFRESH" = 1 ]; then
         rm -rf "$DIR/modules"; mkdir -p "$DIR/modules"
         echo "  saving the module into ~/dev-demo/pwsh/spectre-demo/modules (not your profile's module path)..."
-        DEST="$DIR/modules" pwsh -NoLogo -NoProfile -Command '
+        # v100 (Nov 2 2026): Gallery and its fallback run inside the same IPv4-only process.
+        DOTNET_SYSTEM_NET_DISABLEIPV6=1 DEST="$DIR/modules" pwsh -NoLogo -NoProfile -Command '
             try { Save-PSResource -Name PwshSpectreConsole -Path $env:DEST -TrustRepository -ErrorAction Stop }
             catch { Save-Module -Name PwshSpectreConsole -Path $env:DEST -Force -ErrorAction Stop }' \
             || { fail "could not save PwshSpectreConsole from the PowerShell Gallery"; return 0; }
@@ -4303,17 +4307,117 @@ echo "built: dos16.exe dos32.exe (DOSBox-X)  win16.exe win32.exe win64.exe (Wine
 BUILD_EOF
     # v92: the two STEPS files are documentation the bundle owns, so they are rewritten on every run
     # (gen_file keeps a file that exists; a retro/matrix folder made by v85-v91 has the old Delphi notes).
+    # v100 (Nov 5–6 2026): qualified owner observations and manual recovery; generated docs refresh on rerun.
     cat > "$DIR/STEPS-delphi1.md" << 'EOF'
 # Delphi 1.0 on this Chromebook (dev-demo v93)
-(Delphi 3, 4, 5, 6 and 7: STEPS-delphi.md.)
+
+DOSBox-X v100: [dosbox] hostkey=ctrlshift for new/absent settings; Ctrl+Shift+F toggles full screen. Existing choices remain. QEMU shortcuts differ; see STEPS-winnt.md.
+(Delphi 3, 4, 5, 6 and 7: STEPS-delphi.md; win95 net on/off and manual NE2000/TCP-IP steps there too.)
 
 Delphi 1 is a 16-bit Windows 3.1 application. Two routes, both set up by install-retro. Put the Delphi 1
 install files (the disks' contents or the CD's, SETUP.EXE with them) in ~/win31/install/apps first.
 
+v100 font diagnostics (Nov 5 finding): explicit `delphi1 setup` / `delphi N setup` checks Arial,
+Courier New, Tahoma and bold Tahoma files and retries acquisition once if the command fails or files
+are incomplete. Each attempt has a five-minute timeout plus a ten-second kill grace; timeout
+statuses are saved and retry still happens only once. The final FONT RESULT is prominent and
+nonfatal to the IDE. Both attempt statuses and output stay in `assets/logs/retro-fonts-<prefix>-<timestamp>.log`; setup records the bundle assets
+location, so logs do not depend on the launch directory. `<prefix command> status` only reads font
+files. `win31 fonts` (or another guest's fonts command) collects existing fonts from all Delphi/COM
+prefixes or the existing winetricks download cache; it never downloads or repairs. If none are found:
+`WINEPREFIX="$HOME/.local/share/wine/delphi1" winetricks corefonts tahoma`, then `win31 fonts`.
+Use the relevant Delphi N prefix to repair that prefix. Plain winetricks targets a different default
+prefix. An incomplete optional font download is a dev-test WARN; missing optional prefixes are skips.
+
+v100 loose app media: install-retro supplies genisoimage. An app CD can be built from your own CD's
+loose files; it does not make a bootable Windows installer. For example, first ensure the destination
+ISO does not exist (or choose a new name), keep it outside the source tree, then:
+
+    test ! -e "$HOME/win95/install/apps/delphi3.iso" && genisoimage -o "$HOME/win95/install/apps/delphi3.iso" -J -r -V DELPHI3 "$HOME/delphi/install/3"
+    bsdtar -tf "$HOME/win95/install/apps/delphi3.iso"
+    win95 cd delphi3
+
+Check the filenames in Windows before installing. Change the destination workspace for another
+guest. `<guest> cd` still takes ISO files, not folders. Original files stay unchanged; the ISO uses
+roughly another source-folder-sized allocation inside the guest workspace, already counted by its
+disk report. The generated retro demo itself remains under 1 MB; guest/media/log storage is separate.
+
+v100 colors (owner choice 12B): `delphi1 colors` and `delphi N colors` list `default` plus your
+own schemes in `~/.config/dev-retro/colors/NAME.reg`. No Breeze Dark data is bundled or downloaded:
+no license grant was observed. You can place your own local file there and select its name. Only
+REG_SZ RGB triplets (0–255) for the known HKCU Control Panel Colors values are accepted; other
+registry sections/types/deletions, duplicate values and invalid names are rejected before writing.
+
+    delphi1 colors list
+    delphi1 colors save before-change
+    delphi1 colors use default
+    delphi 3 colors use NAME
+
+Names use letters/digits, dot, dash or underscore and must start with a letter/digit; pass a name,
+not a path or filename extension. Save refuses an existing name and `default`. Schemes can be shared
+between prefixes, but switching/selection is per prefix. Close **all** apps in that prefix, including
+Wine apps started outside the helper; a wineserver wait check and per-prefix lock refuse busy or
+uncertain state. The helper never kills apps to obtain access. List needs no installed prefix/Wine.
+
+Explicit use sets ThemeManager ThemeActive to REG_SZ 0 (winecfg Theme: No Theme), removes inactive
+style settings, applies only validated colors and verifies registry readback. Default removes only
+known color overrides to let Wine choose colors; custom unrelated values remain. Targeted Colors
+and ThemeManager backups are in `~/.config/dev-retro/colors/backups`; failure restores them and leaves
+the selection label unchanged, or reports rollback incomplete with the retained backup path. Restart
+apps after switching; Delphi's own editor colors are separate. New prefixes get No Theme; existing
+ThemeActive/colors are preserved (only an absent ThemeActive is initialized). Setup no longer resets
+the desktop to black or reapplies a saved scheme over manual changes. The selection is a label:
+dev-test warns on manual drift or an active theme and never repairs it. Existing COM prefixes are
+not changed. The disposable real-Wine integration check uses only a test-owned scratch prefix.
+
+v100 owner observations (Nov 5–6 2026), not a claim that every Delphi version/component works:
+Delphi 3 Client/Server installed under Wine from loose CD files and its IDE ran. Once installed,
+plain `delphi 3 setup` reapplies settings; to revisit the CD menu for Local InterBase or InstallShield
+Express use `delphi 3 setup "$HOME/delphi/install/3/INSTALL.EXE"`. Setup now preserves manual colors.
+The four Internet Solutions Pack controls HTTPCT.OCX, POPCT.OCX, SMTPCT.OCX and WINSCK.OCX reported
+registration errors in that install. Clicking OK let Delphi install/run; those optional controls
+may still be unavailable. This is not advice to ignore unrelated installer errors or a claim that
+all add-ons work. Delphi 4–7 remain unverified on the owner's media.
+
+Delphi 1 and Delphi 3 IDEs predate normal wheel support and ignored the wheel under Wine, while
+Notepad in the same prefix scrolled. Use Ctrl+Up/Down and Page Up/Down in the IDE. Delphi 1 files
+belong in a folder such as `~/win31/install/apps/Delphi1` (a name containing delphi helps discovery);
+Delphi 3–7 use `~/delphi/install/N`, as loose CD files or an ISO. The Delphi 3–7 IDE launchers appear
+after their `delphi N setup`, not merely install-retro. The bare DOSBox-X launcher is Debian's own
+entry; use win31/win95/retro commands for bundle guest settings.
+
+v100 guest hand procedures (Nov 5–6 owner findings): DOSBox-X full screen can lose keyboard
+focus after switching windows on ChromeOS. Click the picture; try the current mapper's Ctrl+F10
+mouse-release shortcut and Alt+Enter if mapped. New/absent host-key settings use Ctrl+Shift, so
+Ctrl+Shift+F toggles full screen; explicit owner mappings remain. Verify these on each guest during
+acceptance: the host key alone is not asserted to release the mouse. No maximize=true default is
+added. F11/F12 mappings are under ChromeOS Settings > Device > Keyboard and inputs > Customize
+keyboard keys; QEMU instead uses Ctrl+Alt+G for a captured PS/2 mouse and `<guest> keys ctrl-alt-del`
+for NT/2000 login.
+
+Change output/scaler in the config with the guest off, not through the Video menu while running,
+especially during Setup. One owner Windows 95 Setup run became unbootable after a live menu change.
+If the picture is lost in Windows 95, the owner's blind Start-menu shutdown sequence was Ctrl+Esc,
+U, Enter; it is not a universal DOS/win31/NT shutdown shortcut. Do not force a renderer change to
+recover it. Windows 3.1 floppy setup queues all .IMG/.IMA files on A: in filename order; DOS > Swap
+floppy advances the queue. At the end choose Return to MS-DOS, then restart with win31.
+
+For NT/2000, reach the installed desktop, shut down, exchange enable, then put/get with the guest
+off. A reported D: is a convention; check the exchange volume's actual letter in older installs.
+In Disk Management assign an unused letter to an existing FAT volume with no letter, without
+formatting. If it says unallocated, stop: recreating it on Linux makes an empty disk and does not
+recover a deleted partition. Never format exchange in Windows; mtools expects the Linux-created
+FAT layout. Avoid writing C: directly from Linux: qcow2/NTFS are not exchange FAT disks and writes
+must never race a guest. Windows 2000 Setup's FAT choice above 2 GB means FAT32; after a backup,
+an optional in-guest `convert C: /fs:ntfs` changes it later (use the actual Windows system letter,
+which may differ on old installs). Conversion is never part of dev-test or automatic acceptance.
+Windows 2000 has no built-in Explorer ZIP support: unzip your archive on Linux into the guest
+workspace, then put the resulting folder. No extra ZIP software/media is downloaded by the bundle.
+
 ## Wine: the `delphi1` command (forms, code, non-database programs)
 
     delphi1 setup      # a 32-bit Wine prefix (~/.local/share/wine/delphi1), Delphi's SETUP.EXE in a
-                       # virtual desktop (install into C:\DELPHI), then: black desktop, TEMP=C:\TEMP,
+                       # virtual desktop (install into C:\DELPHI), then: preserved colors, TEMP=C:\TEMP,
                        # MS Sans Serif -> Tahoma, smoothed fonts, launcher icons pointed at delphi1
     delphi1            # the IDE, in a virtual desktop the size of the screen
     delphi1 run X.EXE  # another program (Image Editor, a compiled project) in the same desktop
@@ -4351,12 +4455,13 @@ Needs your own Windows 3.1/3.11 media.
 1. Copy the Windows 3.1x setup disks (loose files, or .img/.ima images) into ~/win31/install/windows
 2. Delphi's files stay in ~/win31/install/apps   (D:\ inside win31)
 3. win31 setup      # installs Windows 3.11 into C:\WINDOWS (leave 32-bit disk access OFF)
-4. win31            # boots Windows; File > Run  D:\SETUP.EXE  installs Delphi onto C:
+4. win31            # boots Windows; File > Run  D:\Delphi1\SETUP.EXE (adjust to your media subfolder) installs Delphi onto C:
 5. win31            # from then on, Delphi is in Program Manager
 
 Both routes run the same 16-bit code, which this demo's win16 item exercises directly.
 EOF
     # v93: STEPS-delphi.md, Delphi 3, 4, 5, 6 and 7 (real Windows guests and 'delphi N' under Wine).
+    # v100 (Nov 5–6 2026): D3 observations are specific to this media, not proof of every optional component.
     cat > "$DIR/STEPS-delphi.md" << 'EOF'
 # Delphi 3, 4, 5, 6 and 7 on this Chromebook (dev-demo v93)
 
@@ -4367,15 +4472,39 @@ The media and serial numbers are yours; nothing is downloaded.
 | Delphi | Real Windows guest (engine)          | Wine (`delphi N`, Windows version reported) | Wine status                 |
 |--------|--------------------------------------|---------------------------------------------|-----------------------------|
 | 1      | win31 (DOSBox-X)                     | `delphi1` (its own command)                 | works; no debugger, no BDE  |
-| 3      | win95 (DOSBox-X) or winnt40 (QEMU)   | `delphi 3` (win95)                          | untested on real discs      |
+| 3      | win95 (DOSBox-X) or winnt40 (QEMU)   | `delphi 3` (win95)                          | owner-tested D3 Client/Server install/IDE; optional controls unverified |
 | 4      | win95 (DOSBox-X) or winnt40 (QEMU)   | `delphi 4` (win98)                          | untested on real discs      |
 | 5      | win2000 (QEMU); NT 4.0 also works    | `delphi 5` (win2k)                          | untested on real discs      |
 | 6      | win2000 (QEMU); NT 4.0 SP6a likely   | `delphi 6` (win2k)                          | untested; old debugger reports |
 | 7      | win2000 (QEMU)                       | `delphi 7` (winxp)                          | untested; the best-known case |
 
 Delphi 6 and 7 do not support Windows 95, and Windows 3.1 runs only Delphi 1. Delphi 3 and 4 can share one
-guest; 5, 6 and 7 share win2000 (Delphi 5 also runs on 95, 98 and NT 4.0, but 2000 is its era, as under Wine). The QEMU guests run close to native speed only with KVM (`retro` says whether
-this Chromebook has it); without it they emulate the CPU and are slow.
+guest; 5, 6 and 7 share win2000 (Delphi 5 also runs on 95, 98 and NT 4.0, but 2000 is its era, as under Wine). QEMU acceleration is selected per guest: win2000 defaults to TCG; NT 4.0 keeps auto with KVM when usable. `<guest> accel` reports the actual selection and reason; availability is not a speed guarantee.
+
+v100 font diagnostics (Nov 5 finding): explicit `delphi1 setup` / `delphi N setup` checks Arial,
+Courier New, Tahoma and bold Tahoma files and retries acquisition once if the command fails or files
+are incomplete. Each attempt has a five-minute timeout plus a ten-second kill grace; timeout
+statuses are saved and retry still happens only once. The final FONT RESULT is prominent and
+nonfatal to the IDE. Both attempt statuses and output stay in `assets/logs/retro-fonts-<prefix>-<timestamp>.log`; setup records the bundle assets
+location, so logs do not depend on the launch directory. `<prefix command> status` only reads font
+files. `win31 fonts` (or another guest's fonts command) collects existing fonts from all Delphi/COM
+prefixes or the existing winetricks download cache; it never downloads or repairs. If none are found:
+`WINEPREFIX="$HOME/.local/share/wine/delphi1" winetricks corefonts tahoma`, then `win31 fonts`.
+Use the relevant Delphi N prefix to repair that prefix. Plain winetricks targets a different default
+prefix. An incomplete optional font download is a dev-test WARN; missing optional prefixes are skips.
+
+v100 loose app media: install-retro supplies genisoimage. An app CD can be built from your own CD's
+loose files; it does not make a bootable Windows installer. For example, first ensure the destination
+ISO does not exist (or choose a new name), keep it outside the source tree, then:
+
+    test ! -e "$HOME/win95/install/apps/delphi3.iso" && genisoimage -o "$HOME/win95/install/apps/delphi3.iso" -J -r -V DELPHI3 "$HOME/delphi/install/3"
+    bsdtar -tf "$HOME/win95/install/apps/delphi3.iso"
+    win95 cd delphi3
+
+Check the filenames in Windows before installing. Change the destination workspace for another
+guest. `<guest> cd` still takes ISO files, not folders. Original files stay unchanged; the ISO uses
+roughly another source-folder-sized allocation inside the guest workspace, already counted by its
+disk report. The generated retro demo itself remains under 1 MB; guest/media/log storage is separate.
 
 ## Media: where each CD goes
 
@@ -4384,12 +4513,56 @@ this Chromebook has it); without it they emulate the CPU and are slow.
 
 One .iso can serve both: copy it to both places, or link it (`ln ~/delphi/install/7/d7.iso ~/win2000/install/apps/`).
 
+v100 colors (owner choice 12B): `delphi1 colors` and `delphi N colors` list `default` plus your
+own schemes in `~/.config/dev-retro/colors/NAME.reg`. No Breeze Dark data is bundled or downloaded:
+no license grant was observed. You can place your own local file there and select its name. Only
+REG_SZ RGB triplets (0–255) for the known HKCU Control Panel Colors values are accepted; other
+registry sections/types/deletions, duplicate values and invalid names are rejected before writing.
+
+    delphi1 colors list
+    delphi1 colors save before-change
+    delphi1 colors use default
+    delphi 3 colors use NAME
+
+Names use letters/digits, dot, dash or underscore and must start with a letter/digit; pass a name,
+not a path or filename extension. Save refuses an existing name and `default`. Schemes can be shared
+between prefixes, but switching/selection is per prefix. Close **all** apps in that prefix, including
+Wine apps started outside the helper; a wineserver wait check and per-prefix lock refuse busy or
+uncertain state. The helper never kills apps to obtain access. List needs no installed prefix/Wine.
+
+Explicit use sets ThemeManager ThemeActive to REG_SZ 0 (winecfg Theme: No Theme), removes inactive
+style settings, applies only validated colors and verifies registry readback. Default removes only
+known color overrides to let Wine choose colors; custom unrelated values remain. Targeted Colors
+and ThemeManager backups are in `~/.config/dev-retro/colors/backups`; failure restores them and leaves
+the selection label unchanged, or reports rollback incomplete with the retained backup path. Restart
+apps after switching; Delphi's own editor colors are separate. New prefixes get No Theme; existing
+ThemeActive/colors are preserved (only an absent ThemeActive is initialized). Setup no longer resets
+the desktop to black or reapplies a saved scheme over manual changes. The selection is a label:
+dev-test warns on manual drift or an active theme and never repairs it. Existing COM prefixes are
+not changed. The disposable real-Wine integration check uses only a test-owned scratch prefix.
+
+v100 owner observations (Nov 5–6 2026), not a claim that every Delphi version/component works:
+Delphi 3 Client/Server installed under Wine from loose CD files and its IDE ran. Once installed,
+plain `delphi 3 setup` reapplies settings; to revisit the CD menu for Local InterBase or InstallShield
+Express use `delphi 3 setup "$HOME/delphi/install/3/INSTALL.EXE"`. Setup now preserves manual colors.
+The four Internet Solutions Pack controls HTTPCT.OCX, POPCT.OCX, SMTPCT.OCX and WINSCK.OCX reported
+registration errors in that install. Clicking OK let Delphi install/run; those optional controls
+may still be unavailable. This is not advice to ignore unrelated installer errors or a claim that
+all add-ons work. Delphi 4–7 remain unverified on the owner's media.
+
+Delphi 1 and Delphi 3 IDEs predate normal wheel support and ignored the wheel under Wine, while
+Notepad in the same prefix scrolled. Use Ctrl+Up/Down and Page Up/Down in the IDE. Delphi 1 files
+belong in a folder such as `~/win31/install/apps/Delphi1` (a name containing delphi helps discovery);
+Delphi 3–7 use `~/delphi/install/N`, as loose CD files or an ISO. The Delphi 3–7 IDE launchers appear
+after their `delphi N setup`, not merely install-retro. The bare DOSBox-X launcher is Debian's own
+entry; use win31/win95/retro commands for bundle guest settings.
+
 ## Wine: the `delphi` command
 
     delphi                 which versions are set up, and where each one's media goes
     delphi 7 setup         a 32-bit prefix (~/.local/share/wine/delphi7), the CD as drive D: (an .iso is
                            unpacked once into ~/delphi/.cd/7), its installer in a virtual desktop (keep
-                           the default folders), then: Windows XP reported, black desktop, TEMP=C:\TEMP,
+                           the default folders), then: Windows XP reported, preserved colors, TEMP=C:\TEMP,
                            MS Sans Serif -> Tahoma, smoothed core fonts, launcher icons pointed at 'delphi 7'
     delphi 7               the IDE, in a virtual desktop the size of the screen
     delphi 7 run X.EXE     another program in the same desktop (a compiled project, a tool from Bin\)
@@ -4405,12 +4578,40 @@ fixes get worked out on your discs, as Delphi 1's were: the order is 7, then 6, 
 
 Delphi 7, 6 or 5 in Windows 2000 (Delphi 3 or 4 in NT 4.0 the same way):
 
-1. Install the guest first: STEPS-winnt.md ('win2000 setup').
+1. Install the guest first: STEPS-winnt.md ('win2000 setup'). Reach its desktop, shut down, then `win2000 exchange enable` before using exchange. Existing NT/2000 installs need this one-time step too.
 2. Put the Delphi CD's .iso in ~/win2000/install/apps. Several CDs: `win2000 cd list`, and `win2000 cd NAME`
    picks one (it swaps the CD while the guest runs).
 3. `win2000`, then inside Windows run F:\INSTALL.EXE (or the CD's autorun). The serial is on your sleeve.
 4. Before trying risky options: `win2000 snapshot save delphi7` with the guest shut down; `snapshot restore`
    goes back.
+
+v100 (Nov 5 findings): win95 boots image disks only; the separate IMGMAKE session still mounts X:.
+New win95 setup.conf/boot.conf use `output=surface` to fix maximized redraw. Keep guests off when
+editing output/scaler settings; do not change them from the Video menu during Setup. Untouched v99
+`output=opengl` lines upgrade to surface once per config (trailing spaces allowed).
+The same atomic update writes `# v100: defaults reviewed`; new v100 configs start marked.
+Keep this marker when editing: later old values or deleted output/hostkey lines stay as you chose.
+Unmarked configs from earlier drafts get one review. Edited values/comments and duplicate
+assignments keep their settings and receive the marker too. All four DOSBox-X configs default to `[dosbox] hostkey=ctrlshift`
+(Ctrl+Shift+F for full screen); existing choices stay, and misplaced hostkey lines require manual review.
+Missing defaults are added only while the guest is stopped; win31 stays opengl and DOS stays ttf.
+Review owner-added folder mounts in win95 `[autoexec]` before booting; they are never removed automatically.
+
+v100 win95 networking (Nov 5 finding): `win95 net` / `win95 net status` shows next-boot config,
+not connectivity. With Windows shut down, `win95 net on` adds the managed NE2000 block in boot.conf:
+ne2000=true, backend=slirp, nicbase=300, nicirq=3. It adds serial2=disabled only if absent to avoid
+COM2's IRQ3 conflict. Explicit serial2 values are kept; an enabled/custom COM2 must be resolved
+manually before on. `win95 net off` removes only unchanged helper-owned additions. Unmanaged or
+hand-edited network blocks are reported for manual review; no custom settings are overwritten.
+Setup.conf is untouched. Networking starts off; no drivers are installed automatically. The backend
+is checked from binary linkage/strings without starting DOSBox-X; an unsupported build refuses on.
+
+Windows 95 steps after on: add NE2000 Compatible manually (not Plug and Play), I/O 0300 / IRQ3;
+ensure no COM2 conflict; add TCP/IP, obtain an address by DHCP, reboot, inspect `winipcfg`. The Linux
+host is normally 10.0.2.2. Try a known host service and another laptop by its explicit Tailscale IPv4
+address first. Plain HTTP may work; period browser HTTPS/TLS support is limited. MagicDNS, inbound
+access, ping responses and DCOM are not promised. No host forwarding or win31 networking is added;
+the broad guest network test matrix remains deferred to v101. Shut Windows down before off/on.
 
 Delphi 3 or 4 in Windows 95 (DOSBox-X):
 
@@ -4425,7 +4626,7 @@ Delphi 3 or 4 in Windows 95 (DOSBox-X):
 
 ## Moving files and sizes
 
-D: in win95, winnt40 and win2000 is the exchange disk: `<guest> put FILE` and `<guest> get` while the guest
+After NT/2000 installation completion and `exchange enable` (see STEPS-winnt.md), D: is normally the exchange disk in win95, winnt40 and win2000; old installations may differ: `<guest> put FILE` and `<guest> get` while the guest
 is off. Its size is RETRO_EXCHANGE_MB (default 1 GB; 512 for less disk), Windows 95's disk RETRO_WIN95_DISK_MB
 (default 2 GB), both in ~/.config/dev-init/secrets.env and read when the disk is made. A disk that exists
 keeps its size: `<guest> exchange recreate` rebuilds the exchange disk (it offers to save its files first),
@@ -4438,8 +4639,11 @@ your discs: whether an old BDE reports "insufficient disk space" on these larger
 large free space). If it does, a smaller disk is the first thing to try (RETRO_WIN95_DISK_MB for a new
 win95 disk); note what happened, and the next bundle version can build the fix in.
 EOF
+    # v100 (Nov 5–6 2026): distinguish exchange/drive-letter conventions and guest-specific key procedures.
     cat > "$DIR/STEPS-winnt.md" << 'EOF'
 # Windows NT 4.0 and Windows 2000 in QEMU (dev-demo v93)
+
+QEMU uses Ctrl+Alt+G to release a captured mouse; DOSBox-X uses its mapper/host-key shortcuts, not this combination.
 
 Your media, in each guest's install folder: the install CD as an .iso (both CDs boot). For NT 4.0 a set of
 boot floppies (.img) works too when the CD does not boot. Program CDs (Delphi, Office, compilers) go in
@@ -4451,9 +4655,69 @@ is there. Product keys are yours too. Delphi in these guests: STEPS-delphi.md.
     win2000 setup      # the same with an 8 GB disk
     winnt40            # boots the installed guest; 'winnt40 setup' again resumes a half-done install
 
-Drives inside the guest: C: the disk, D: the exchange disk (FAT16, 1 GB by default: RETRO_EXCHANGE_MB in
+Typical completed-install letters (after exchange enable; verify in Windows): C: the disk, D: the exchange disk (FAT16, 1 GB by default: RETRO_EXCHANGE_MB in
 ~/.config/dev-init/secrets.env, read when it is made; `winnt40 put FILE` and `winnt40 get` while the guest is
 off; `winnt40 exchange info`), E: the install CD (`winnt40 cd --windows FILE` swaps it), F: the program CD.
+
+v100 QEMU defaults and installation completion (Nov 5–6 findings): new win2000 configs use
+`ACCEL=tcg`, `DISPLAY_OPTS="gtk,zoom-to-fit=off"` and `SOUND=none`. Untouched v99 ACCEL, DISPLAY_OPTS and SOUND
+lines upgrade once per config, matching the full original line including its comment (trailing spaces allowed).
+The same atomic update writes `# v100: defaults reviewed`; new configs start marked. Keep the marker:
+subsequent owner choices, even old spellings or deleted keys, survive setup and launch. Unmarked
+configs from earlier drafts get one review. Edited values/comments/spacing and duplicate assignments
+keep their settings; ambiguous configs receive only the marker. Running guests defer without marking.
+NT 4.0 keeps auto acceleration, scaled GTK, PS/2 and sb16; if it is slow, try TCG with the guest
+off (NT performance remains an owner check). KVM availability does not imply a guest selected KVM.
+`<guest> accel` reports the selection/reason; `<guest> preferences` reports preserved preferences.
+Raise the Windows screen area in Display Properties if the unscaled picture is too small. To try
+Windows 2000 audio later, set SOUND=AC97 with the guest off and install its CD driver; PulseAudio
+errors may return. Sound was not the cause of the boot stall.
+
+Every NT/2000 `setup` (including resumed setup and --from-cd/--raw) withholds the exchange disk and
+clears attachment acknowledgement. Finish Windows installation, reach the desktop, shut down, then
+run `<guest> exchange enable`; boot normally. Existing installations also need this one-time enable.
+Normal boots stay detached until enabled for that system disk; replacement disks require enable
+again. `exchange disable` clears the acknowledgement without changing disk contents. `exchange info`
+and status show enabled/deferred/stale. `run` refuses while withheld, before copying or launching;
+`put`/`fonts` can prepare it but warn that it is withheld. Restoring a pre-install snapshot: disable
+exchange before resuming Setup. Never use disk existence as evidence Windows finished installing.
+
+CD drive letters during Setup are provisional. After enabling exchange, assign it D: in Disk
+Management if D: is free; existing installations may have different letters. Do not rename a Windows
+system already installed on F: automatically. On an old-version install before Windows is installed,
+the historical F3/boot-CD-again workaround can make the system partition enumerate first; v100
+withholds exchange instead. Format/recreate exchange only from Linux: put/get require its FAT layout.
+Start with `exchange info` and `get` to back up accessible files before considering `exchange recreate`.
+A deleted partition is not recovered by recreate; it makes an empty disk. Never format exchange in
+Windows, and never write the guest's qcow2/NTFS C: with host mtools.
+
+v100 guest hand procedures (Nov 5–6 owner findings): DOSBox-X full screen can lose keyboard
+focus after switching windows on ChromeOS. Click the picture; try the current mapper's Ctrl+F10
+mouse-release shortcut and Alt+Enter if mapped. New/absent host-key settings use Ctrl+Shift, so
+Ctrl+Shift+F toggles full screen; explicit owner mappings remain. Verify these on each guest during
+acceptance: the host key alone is not asserted to release the mouse. No maximize=true default is
+added. F11/F12 mappings are under ChromeOS Settings > Device > Keyboard and inputs > Customize
+keyboard keys; QEMU instead uses Ctrl+Alt+G for a captured PS/2 mouse and `<guest> keys ctrl-alt-del`
+for NT/2000 login.
+
+Change output/scaler in the config with the guest off, not through the Video menu while running,
+especially during Setup. One owner Windows 95 Setup run became unbootable after a live menu change.
+If the picture is lost in Windows 95, the owner's blind Start-menu shutdown sequence was Ctrl+Esc,
+U, Enter; it is not a universal DOS/win31/NT shutdown shortcut. Do not force a renderer change to
+recover it. Windows 3.1 floppy setup queues all .IMG/.IMA files on A: in filename order; DOS > Swap
+floppy advances the queue. At the end choose Return to MS-DOS, then restart with win31.
+
+For NT/2000, reach the installed desktop, shut down, exchange enable, then put/get with the guest
+off. A reported D: is a convention; check the exchange volume's actual letter in older installs.
+In Disk Management assign an unused letter to an existing FAT volume with no letter, without
+formatting. If it says unallocated, stop: recreating it on Linux makes an empty disk and does not
+recover a deleted partition. Never format exchange in Windows; mtools expects the Linux-created
+FAT layout. Avoid writing C: directly from Linux: qcow2/NTFS are not exchange FAT disks and writes
+must never race a guest. Windows 2000 Setup's FAT choice above 2 GB means FAT32; after a backup,
+an optional in-guest `convert C: /fs:ntfs` changes it later (use the actual Windows system letter,
+which may differ on old installs). Conversion is never part of dev-test or automatic acceptance.
+Windows 2000 has no built-in Explorer ZIP support: unzip your archive on Linux into the guest
+workspace, then put the resulting folder. No extra ZIP software/media is downloaded by the bundle.
 
 ## First boot, NT 4.0
 1. Text-mode setup: create the system partition on the 4 GB disk (NT 4.0 cannot format more), FAT or NTFS.
@@ -4466,9 +4730,34 @@ off; `winnt40 exchange info`), E: the install CD (`winnt40 cd --windows FILE` sw
    in F: (`winnt40 cd eject` first), or `winnt40 cd --windows SP6A.ISO` while it runs to put it in E:.
 
 ## First boot, Windows 2000
-1. Setup runs straight through; the PCnet network and AC97 sound drivers are on the CD.
+1. New configs use TCG, an unscaled USB tablet and no sound. PCnet networking is on the CD. Setup withholds exchange throughout; after desktop + shutdown, `win2000 exchange enable`.
 2. Log on with `win2000 keys ctrl-alt-del` when it asks. The mouse is a USB tablet: no capture.
 3. Service Pack 4: its .iso in ~/win2000/install, then run it from F:.
+
+v100 font diagnostics (Nov 5 finding): explicit `delphi1 setup` / `delphi N setup` checks Arial,
+Courier New, Tahoma and bold Tahoma files and retries acquisition once if the command fails or files
+are incomplete. Each attempt has a five-minute timeout plus a ten-second kill grace; timeout
+statuses are saved and retry still happens only once. The final FONT RESULT is prominent and
+nonfatal to the IDE. Both attempt statuses and output stay in `assets/logs/retro-fonts-<prefix>-<timestamp>.log`; setup records the bundle assets
+location, so logs do not depend on the launch directory. `<prefix command> status` only reads font
+files. `win31 fonts` (or another guest's fonts command) collects existing fonts from all Delphi/COM
+prefixes or the existing winetricks download cache; it never downloads or repairs. If none are found:
+`WINEPREFIX="$HOME/.local/share/wine/delphi1" winetricks corefonts tahoma`, then `win31 fonts`.
+Use the relevant Delphi N prefix to repair that prefix. Plain winetricks targets a different default
+prefix. An incomplete optional font download is a dev-test WARN; missing optional prefixes are skips.
+
+v100 loose app media: install-retro supplies genisoimage. An app CD can be built from your own CD's
+loose files; it does not make a bootable Windows installer. For example, first ensure the destination
+ISO does not exist (or choose a new name), keep it outside the source tree, then:
+
+    test ! -e "$HOME/win95/install/apps/delphi3.iso" && genisoimage -o "$HOME/win95/install/apps/delphi3.iso" -J -r -V DELPHI3 "$HOME/delphi/install/3"
+    bsdtar -tf "$HOME/win95/install/apps/delphi3.iso"
+    win95 cd delphi3
+
+Check the filenames in Windows before installing. Change the destination workspace for another
+guest. `<guest> cd` still takes ISO files, not folders. Original files stay unchanged; the ISO uses
+roughly another source-folder-sized allocation inside the guest workspace, already counted by its
+disk report. The generated retro demo itself remains under 1 MB; guest/media/log storage is separate.
 
 ## Fonts and font smoothing (both guests, and win31 / win95)
 `winnt40 fonts` (with the guest off) puts the TrueType core fonts and Tahoma from the Wine prefixes in
@@ -4480,8 +4769,7 @@ fonts", in 16-bit colour or more. For sharp pixels, untick View > Zoom To Fit in
 - Setup blue-screens early: CPU=pentium instead of pentium3 in ~/<guest>/config.
 - NT 4.0 installs but will not boot a second time (QEMU's old qcow2 bug): `rm ~/winnt40/disk.qcow2`,
   then `winnt40 setup --raw` (a raw disk; no snapshots).
-- Slow: without /dev/kvm QEMU emulates the CPU in software. `retro` says which this Chromebook has; the
-  NT guests belong on one with KVM.
+- Slow: `<guest> accel` reports selected acceleration and why. Win2000 defaults to intentional TCG; NT stays auto, with an owner-selected TCG fallback if needed.
 - Undo points: `winnt40 snapshot save clean` with the guest shut down, `winnt40 snapshot restore clean` later.
 EOF
     FRESH=1
@@ -9089,7 +9377,9 @@ run_behat() {
     ( cd behat && timed behat gherkin "Behat 4 + Mink BrowserKit (HTTP, no browser)" "features/bootstrap/FeatureContext.php" \
         vendor/bin/behat --format progress )
 }
-run_reqnroll() {
+run_reqnroll() (
+    # v100 (Nov 2 2026): scoped subshell covers implicit restores without affecting other runners.
+    export DOTNET_SYSTEM_NET_DISABLEIPV6=1
     demo_need dotnet install-dotnet
     if [ ! -f reqnroll/LinksBakeoff.csproj ]; then
         dotnet new list reqnroll-project > /dev/null 2>&1 || { echo "No Reqnroll templates: dev-setup with install-bdd."; return 1; }
@@ -9104,7 +9394,7 @@ run_reqnroll() {
     sync_feature reqnroll/Features
     ( cd reqnroll && { dotnet build --nologo -v q > "$DEMO_LOGS/reqnroll-build.log" 2>&1 || { tail -n 20 "$DEMO_LOGS/reqnroll-build.log"; exit 1; }; } && timed reqnroll gherkin "Reqnroll (NUnit) + Playwright for .NET (system Chrome)" "StepDefinitions/LinksSteps.cs" \
         dotnet test --no-build --nologo -v q )
-}
+)
 run_selenium() {
     ( cd selenium && timed selenium code "Selenium 4 + pytest (system Chrome, Selenium Manager)" "test_links.py" \
         env SE_AVOID_STATS=true uv run --no-project --quiet --with pytest --with selenium pytest -q -p no:cacheprovider test_links.py )

@@ -1,5 +1,5 @@
 #!/bin/bash
-# dev-init-chromebook - Version 99
+# dev-init-chromebook - Version 100
 # Version history: CHANGELOG.md, next to this script in the bundle
 # (one section per script, newest version first).
 #
@@ -2266,13 +2266,14 @@ if has install-retro; then
         [ -x /opt/watcom/binl64/wcl ] \
             && already "Open Watcom in /opt/watcom (wcl, wcl386) and DOSBox-X ready; a new terminal has them on PATH" \
             || todo "Open Watcom missing from /opt/watcom: rerun dev-setup with install-retro"
+        # v100 (Nov 5 2026): capability does not imply the guest selects KVM; win2000 defaults to TCG.
         # v92: every guest is optional (you may want only some), so its media and install state are skips,
         # never todos. 'retro' prints the same table at any time.
         RETRO_H="$HOME/.local/lib/dev-retro/dev-retro"
         [ -x "$RETRO_H" ] || todo "the retro helper is missing (~/.local/lib/dev-retro): rerun dev-setup with install-retro (v92)"
         command -v qemu-system-i386 > /dev/null 2>&1 || todo "QEMU not found: rerun dev-setup with install-retro (v92 adds it for winnt40 and win2000)"
         if [ -c /dev/kvm ] && [ -r /dev/kvm ] && [ -w /dev/kvm ]; then
-            already "KVM is usable: winnt40 and win2000 run at close to native speed"
+            already "KVM is available; selection is per guest (new defaults: winnt40 auto, win2000 tcg)"
         elif [ -c /dev/kvm ]; then
             KVM_GROUP=$(stat -c %G /dev/kvm 2> /dev/null || echo kvm)
             if getent group "$KVM_GROUP" | cut -d: -f4 | tr ',' '\n' | grep -qx "$USER"; then
@@ -2281,7 +2282,7 @@ if has install-retro; then
                 todo "/dev/kvm belongs to group '$KVM_GROUP', which you are not in: rerun dev-setup with install-retro (or sudo usermod -aG $KVM_GROUP \$USER), then shut Linux down and reopen it"
             fi
         else
-            skip "no /dev/kvm on this Chromebook: winnt40 and win2000 run in software emulation (slow; the 95, NT and 2000 guests belong on a machine with KVM)"
+            skip "KVM unavailable: auto/kvm falls back to TCG; win2000 defaults to intentional TCG; DOSBox-X guests do not use KVM"
         fi
         retro_guest() {   # retro_guest CMD TITLE MEDIA_DIR PATTERN...
             local cmd=$1 title=$2 dir=$3 media state; shift 3
@@ -2308,6 +2309,7 @@ if has install-retro; then
         retro_guest win95 "Windows 95 (DOSBox-X)" "$HOME/win95/install" '*.iso'
         retro_guest winnt40 "Windows NT 4.0 (QEMU)" "$HOME/winnt40/install" '*.iso' '*.img'
         retro_guest win2000 "Windows 2000 (QEMU)" "$HOME/win2000/install" '*.iso'
+        already "NT/2000 exchange is withheld throughout setup: after installed desktop + shutdown, use <guest> exchange enable; preferences/accel show state"
         # Delphi 1: its media sits with the Windows 3.1 installers (both routes use it).
         if [ -n "$(find "$HOME/.local/share/wine/delphi1/drive_c" -maxdepth 3 -ipath '*/delphi/bin/delphi.exe' 2> /dev/null | head -n 1)" ]; then
             already "Delphi 1 under Wine: set up ('delphi1' or its launcher icon; no integrated debugger, Database Desktop or BDE tables there: those run in win31)"
@@ -2553,9 +2555,9 @@ fi
 echo
 echo "================================================================="
 if [ ${#TODO[@]} -eq 0 ]; then
-    echo "Init Version 99 complete: nothing left to do. 🎉"
+    echo "Init Version 100 complete: nothing left to do. 🎉"
 else
-    echo "Init Version 99 complete. Still manual (${#TODO[@]}):"
+    echo "Init Version 100 complete. Still manual (${#TODO[@]}):"
     printf '  - %s\n' "${TODO[@]}"
 fi
 echo

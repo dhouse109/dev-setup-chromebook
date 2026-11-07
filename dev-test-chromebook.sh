@@ -1,5 +1,5 @@
 #!/bin/bash
-# dev-test-chromebook - Version 99
+# dev-test-chromebook - Version 100
 # Version history: CHANGELOG.md, next to this script in the bundle
 # (one section per script, newest version first).
 #
@@ -523,7 +523,7 @@ info()  { printf '  %-62s %s\n' "$1" "${DIM}INFO${RST} $2"; echo "--- $1: INFO $
 # v92: a check that cannot run because an earlier one already failed for the same cause (counted as SKIP).
 skipped() { printf '  %-62s %s\n' "$1" "${DIM}SKIP${RST} $2"; SKIP=$((SKIP + 1)); LAST=skip; echo "--- $1: SKIP $2" >> "$LOG"; }
 
-echo "Testing Chromebook Linux provisioning (Version 99)... log: $LOG"
+echo "Testing Chromebook Linux provisioning (Version 100)... log: $LOG"
 [ "$QUICK" = 1 ] && echo "(quick mode: slow functional tests will be skipped)"
 
 # v68: say so when dev-init has not applied the secrets file yet. Filling in secrets.env logs
@@ -1691,10 +1691,27 @@ if has install-dotnet; then
     check "packages-microsoft-prod repo configured"        'dpkg_has packages-microsoft-prod && ls /etc/apt/sources.list.d/ | grep -qi microsoft-prod'
     check "telemetry opt-out + tools PATH in ~/.bashrc"    'grep -q DOTNET_CLI_TELEMETRY_OPTOUT ~/.bashrc && grep -q ".dotnet/tools" ~/.bashrc'
     check "console template offers both C# and VB"         'dotnet new list console 2> /dev/null | grep -i "console" | grep -q "VB"'
-    slow  "C#: dotnet new console + build + run"           'dotnet new console -o hello_cs > /dev/null && cd hello_cs && dotnet run | grep -q "Hello, World!"' 600
+    # v100 (Nov 2 2026): each test child scopes IPv4 for explicit and implicit NuGet restores.
+    slow  "C#: dotnet new console + build + run"           'export DOTNET_SYSTEM_NET_DISABLEIPV6=1; dotnet new console -o hello_cs > /dev/null && cd hello_cs && dotnet run | grep -q "Hello, World!"' 600
+    # v100 (Nov 2 2026): bounded real .NET request; reachability is a network warning, never a repair.
+    cat > "$WORK/nuget-probe.cs" << 'NUGET_CS'
+using System;
+using System.Net.Http;
+using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
+try {
+    using var response = await client.GetAsync("https://api.nuget.org/v3/index.json");
+    response.EnsureSuccessStatusCode();
+    Console.WriteLine("NuGet IPv4 service index reachable");
+} catch (Exception error) {
+    Console.Error.WriteLine(error.GetType().Name + ": NuGet network/DNS request failed");
+    Environment.ExitCode = 1;
+}
+NUGET_CS
+    slowwarn "NuGet service index reachable via .NET IPv4" 'export DOTNET_SYSTEM_NET_DISABLEIPV6=1; dotnet new console -o nuget_probe --no-restore > /dev/null && cp nuget-probe.cs nuget_probe/Program.cs && dotnet build nuget_probe --nologo -v q && timeout -k 2 20 dotnet run --project nuget_probe --no-build --no-restore' 180
+    hint "NuGet network/DNS access failed; bundle restore commands already request IPv4. Check connectivity, then rerun; no global network setting was changed."
     # The VB template prints "Hello World!" (no comma), the C# one "Hello, World!"; accept either.
-    slow  "VB.NET: dotnet new console -lang VB + build + run" 'dotnet new console -lang VB -o hello_vb > /dev/null && cd hello_vb && dotnet run | grep -qE "Hello,? World!"' 600
-    slow  "VB app calling a C# class library (mixed-language build)" 'dotnet new classlib -o mixlib > /dev/null && printf "namespace MixLib;\npublic static class Greeter { public static string Hi() => \"hello from c# lib\"; }\n" > mixlib/Class1.cs && dotnet new console -lang VB -o mixapp > /dev/null && dotnet add mixapp reference mixlib > /dev/null && printf "Module Program\n    Sub Main()\n        Console.WriteLine(MixLib.Greeter.Hi())\n    End Sub\nEnd Module\n" > mixapp/Program.vb && dotnet run --project mixapp | grep -q "hello from c# lib"' 600
+    slow  "VB.NET: dotnet new console -lang VB + build + run" 'export DOTNET_SYSTEM_NET_DISABLEIPV6=1; dotnet new console -lang VB -o hello_vb > /dev/null && cd hello_vb && dotnet run | grep -qE "Hello,? World!"' 600
+    slow  "VB app calling a C# class library (mixed-language build)" 'export DOTNET_SYSTEM_NET_DISABLEIPV6=1; dotnet new classlib -o mixlib > /dev/null && printf "namespace MixLib;\npublic static class Greeter { public static string Hi() => \"hello from c# lib\"; }\n" > mixlib/Class1.cs && dotnet new console -lang VB -o mixapp > /dev/null && dotnet add mixapp reference mixlib > /dev/null && printf "Module Program\n    Sub Main()\n        Console.WriteLine(MixLib.Greeter.Hi())\n    End Sub\nEnd Module\n" > mixapp/Program.vb && dotnet run --project mixapp | grep -q "hello from c# lib"' 600
 fi
 
 # Java: JDK, Maven, Gradle
@@ -2257,7 +2274,7 @@ EOF
     # C#: the editor normally generates the .csproj/.sln from its menu; written by hand here. The
     # target framework follows the installed SDK, and Godot's bundled packages are added as a local
     # NuGet source next to nuget.org.
-    slow  "C# project builds with godot-mono and runs headless" 'cd gd-cs && ver=$(godot-mono --version | cut -d. -f1-3) && tf="net$(dotnet --version | cut -d. -f1).0" && printf "<Project Sdk=\"Godot.NET.Sdk/%s\">\n  <PropertyGroup>\n    <TargetFramework>%s</TargetFramework>\n    <EnableDynamicLoading>true</EnableDynamicLoading>\n  </PropertyGroup>\n</Project>\n" "$ver" "$tf" > devtestcs.csproj && printf "<?xml version=\"1.0\"?>\n<configuration><packageSources><add key=\"godot-bundled\" value=\"%s\" /></packageSources></configuration>\n" "$HOME/.local/opt/godot/current/mono/GodotSharp/Tools/nupkgs" > NuGet.config && dotnet new sln -n devtestcs > /dev/null && dotnet sln add devtestcs.csproj > /dev/null && echo "Godot.NET.Sdk $ver, $tf" && { godot-mono --headless --path . --build-solutions --quit > build.log 2>&1 || true; }; ls .godot/mono/temp/bin/Debug/devtestcs.dll > /dev/null 2>&1 || { echo "godot-mono --build-solutions produced no assembly; dotnet build says:"; dotnet build devtestcs.csproj 2>&1 | grep -E "error|Build succeeded" | sort -u | head -n 8; exit 1; }; godot-mono --headless --path . 2>&1 | tee run.log | grep -q "hello from c#" || { tail -n 15 run.log; exit 1; }' 900
+    slow  "C# project builds with godot-mono and runs headless" 'export DOTNET_SYSTEM_NET_DISABLEIPV6=1; cd gd-cs && ver=$(godot-mono --version | cut -d. -f1-3) && tf="net$(dotnet --version | cut -d. -f1).0" && printf "<Project Sdk=\"Godot.NET.Sdk/%s\">\n  <PropertyGroup>\n    <TargetFramework>%s</TargetFramework>\n    <EnableDynamicLoading>true</EnableDynamicLoading>\n  </PropertyGroup>\n</Project>\n" "$ver" "$tf" > devtestcs.csproj && printf "<?xml version=\"1.0\"?>\n<configuration><packageSources><add key=\"godot-bundled\" value=\"%s\" /></packageSources></configuration>\n" "$HOME/.local/opt/godot/current/mono/GodotSharp/Tools/nupkgs" > NuGet.config && dotnet new sln -n devtestcs > /dev/null && dotnet sln add devtestcs.csproj > /dev/null && echo "Godot.NET.Sdk $ver, $tf" && { godot-mono --headless --path . --build-solutions --quit > build.log 2>&1 || true; }; ls .godot/mono/temp/bin/Debug/devtestcs.dll > /dev/null 2>&1 || { echo "godot-mono --build-solutions produced no assembly; dotnet build says:"; dotnet build devtestcs.csproj 2>&1 | grep -E "error|Build succeeded" | sort -u | head -n 8; exit 1; }; godot-mono --headless --path . 2>&1 | tee run.log | grep -q "hello from c#" || { tail -n 15 run.log; exit 1; }' 900
     hint  "needs the .NET SDK (install-dotnet, pulled in by install-godot). If the build log rejects the target framework, Godot.NET.Sdk does not support this SDK major yet: install the SDK it names"
 fi
 
@@ -3078,7 +3095,7 @@ if has install-bdd; then
         hint  "rerun setup with install-bdd (dotnet new install Reqnroll.Templates.DotNet)"
         if [ "$LAST" = pass ]; then
             # v99 (Nov 1 2026): the template defaults to net8.0; this machine has runtime 10 only.
-            slow  "Reqnroll (C#, NUnit): dotnet new reqnroll-project, links.feature passes" 'cd testing && rm -rf reqnroll && sdk=$(dotnet --version) && tfm="net$(printf "%s" "$sdk" | cut -d. -f1,2)" && dotnet --list-runtimes | grep -Fq "Microsoft.NETCore.App ${tfm#net}." && echo "Reqnroll: SDK $sdk, target $tfm (installed runtime)" && dotnet new reqnroll-project --framework "$tfm" -t nunit -n LinksSpecs -o reqnroll > new.log 2>&1 || { echo "Reqnroll project generation/runtime selection failed"; tail -n 10 new.log; exit 1; }; cd reqnroll && rm -f Features/*.feature StepDefinitions/*.cs && mkdir -p Features StepDefinitions && cp ../links.feature Features/Links.feature && cat > StepDefinitions/LinksSteps.cs << "CS"
+            slow  "Reqnroll (C#, NUnit): dotnet new reqnroll-project, links.feature passes" 'export DOTNET_SYSTEM_NET_DISABLEIPV6=1; cd testing && rm -rf reqnroll && sdk=$(dotnet --version) && tfm="net$(printf "%s" "$sdk" | cut -d. -f1,2)" && dotnet --list-runtimes | grep -Fq "Microsoft.NETCore.App ${tfm#net}." && echo "Reqnroll: SDK $sdk, target $tfm (installed runtime)" && dotnet new reqnroll-project --framework "$tfm" -t nunit -n LinksSpecs -o reqnroll > new.log 2>&1 || { echo "Reqnroll project generation/runtime selection failed"; tail -n 10 new.log; exit 1; }; cd reqnroll && rm -f Features/*.feature StepDefinitions/*.cs && mkdir -p Features StepDefinitions && cp ../links.feature Features/Links.feature && cat > StepDefinitions/LinksSteps.cs << "CS"
 using System;
 using System.Collections.Generic;
 using System.Net.Http;
@@ -5564,8 +5581,231 @@ if has install-retro; then
     # v93: program CDs per guest, the Delphi 3-7 media folders, bsdtar for a Delphi CD's .iso
     check "app-CD folders ~/<guest>/install/apps and ~/delphi/install/{3,4,5,6,7}" 'm=""; for g in win31 win95 winnt40 win2000; do [ -d ~/$g/install/apps ] || m="$m ~/$g/install/apps"; done; for n in 3 4 5 6 7; do [ -d ~/delphi/install/$n ] || m="$m ~/delphi/install/$n"; done; [ -z "$m" ] || { echo "missing:$m"; exit 1; }; echo ok'
     hint  "rerun dev-setup with install-retro (v93 creates them)"
+    # v100 (Nov 5 2026): ISO authoring is a required retro tool; validate tiny synthetic media.
+    check "genisoimage installed (loose-file app media)" 'dpkg_has genisoimage && command -v genisoimage'
+    check "genisoimage Joliet/Rock Ridge filename round-trip" 'mkdir -p "$WORK/iso-source" && printf fixture > "$WORK/iso-source/Long app filename.txt" && genisoimage -quiet -J -r -V FIXTURE -o "$WORK/retro-fixture.iso" "$WORK/iso-source" && bsdtar -tf "$WORK/retro-fixture.iso" | grep -F "Long app filename.txt" && [ "$(bsdtar -xOf "$WORK/retro-fixture.iso" "Long app filename.txt")" = fixture ]'
     warn  "bsdtar (libarchive-tools): 'delphi N setup' unpacks a CD's .iso" 'command -v bsdtar && bsdtar --version | head -n 1'
     hint  "rerun dev-setup with install-retro; without it, copy the Delphi CD's files (not the .iso) into ~/delphi/install/N"
+    # v100 (Nov 5 2026): executable metadata/emulator stubs ensure this fixture never starts DOSBox-X.
+    cat > "$WORK/retro-net-check.py" << 'RETRO_NET_CHECK_PY'
+import os, subprocess, tempfile
+from pathlib import Path
+original = Path(os.environ['RETRO_HELPER']).read_text()
+with tempfile.TemporaryDirectory(prefix='net-fixture-', dir=os.environ['WORK']) as tmp:
+    root = Path(tmp); home = root / 'home'; home.mkdir(); bindir = root / 'bin'; bindir.mkdir()
+    def exe(name, body):
+        p = bindir / name; p.write_text('#!/bin/sh\n' + body + '\n'); p.chmod(0o755)
+    exe('dosbox-x', 'echo "Unexpected emulator invocation" >&2; exit 97')
+    exe('readelf', '[ "${SUPPORT:-1}" = 1 ] || exit 1; echo "NEEDED libslirp.so.0"')
+    exe('strings', '[ "${SUPPORT:-1}" = 1 ] || exit 1; echo "SlirpEthernetConnection"')
+    exe('pgrep', 'exit 1')
+    h = root / 'helper'; h.write_text(original)
+    env = dict(HOME=str(home), WORK=str(root), PATH=str(bindir) + ':/usr/bin:/bin', LC_ALL='C.UTF-8')
+    ws = home / 'win95'; ws.mkdir(); config = ws / 'boot.conf'
+    def run(*args, ok=True):
+        r = subprocess.run(['bash', str(h), *args], env=env, text=True, capture_output=True)
+        assert (r.returncode == 0) == ok, r.stdout + r.stderr
+        return r
+    def call(*args, ok=True): return run('win95', 'net', *args, ok=ok)
+    call(); assert not config.exists()
+    run('retro', 'slirp-support')
+    env['SUPPORT'] = '0'; call('on', ok=False); assert not config.exists(); env['SUPPORT'] = '1'
+    call('on'); assert config.exists() and not (ws / 'setup.conf').exists()
+    call('off')
+    originals = [b'[sdl]\noutput=surface\n[dosbox]\nhostkey=ctrlshift\n', b'; owner\r\n[sdl]\r\noutput=opengl\r\n', b'[serial]\nserial1=dummy\n', b'[serial]', b'[serial]\n serial2 = disabled\n', b'']
+    for data in originals:
+        config.write_bytes(data); config.chmod(0o640)
+        call('on'); changed = config.read_bytes()
+        assert b'ne2000=true' in changed and b'backend=slirp' in changed and b'nicbase=300' in changed and b'nicirq=3' in changed
+        assert 'Network on' in call().stdout
+        call('on'); assert config.read_bytes() == changed
+        call('check'); call('off'); assert config.read_bytes() == data, (data, config.read_bytes())
+        assert config.stat().st_mode & 0o777 == 0o640
+        call('off'); assert config.read_bytes() == data
+    for data in (b'[ne2000]\nne2000=true\nbackend=pcap\nnicirq=10\n', b'[ne2000]\nne2000=false\n', b'[ne2000]\nne2000=true\nne2000=false\n', b'[serial]\nserial2=dummy\n', b'[sdl]\n[sdl]\n'):
+        config.write_bytes(data)
+        call('on', ok=False); assert config.read_bytes() == data
+        if b'ne2000=false\n' == data.split(b'[ne2000]\n')[-1]: call('off')
+    config.write_text('[ne2000]\nne2000=true\nbackend=pcap\nnicirq=10\n')
+    call('off', ok=False); call('check')
+    config.write_text('[ne2000]\nne2000=true\nbackend=slirp\nnicirq=3\n[serial]\nserial2=dummy\n')
+    call('check', ok=False)
+    for change in ('nicirq=10', 'serial2=dummy', 'extra'):
+        config.write_text('[sdl]\n'); call('on'); data = config.read_text()
+        if change == 'extra': data += 'macaddr=AC:DE:48:00:00:01\n'
+        elif change.startswith('nicirq'): data = data.replace('nicirq=3', change)
+        else: data = data.replace('serial2=disabled', change)
+        config.write_text(data); call('off', ok=False); assert config.read_text() == data
+    config.write_text('[sdl]\n')
+    (ws / '.pid').write_text(str(os.getpid()))
+    call('on', ok=False); call('off', ok=False); call('status'); assert config.read_text() == '[sdl]\n'
+    (ws / '.pid').unlink()
+    # Owner serial settings added while on keep their section when the managed line is removed.
+    config.write_text('[sdl]\n'); call('on')
+    config.write_text(config.read_text().replace('# <<< dev-retro v100 serial2 <<<\n', '# <<< dev-retro v100 serial2 <<<\nserial1=dummy\n'))
+    call('off'); assert '[serial]\nserial1=dummy\n' in config.read_text()
+    # The unsupported-build guard performs no edit even with a writable config.
+    before = config.read_bytes(); env['SUPPORT'] = '0'; call('on', ok=False); assert config.read_bytes() == before
+    run('win31', 'net', 'on', ok=False)
+print('network fixtures: atomic on/off, repeat/CRLF/mode/EOF, support/running guards, custom/duplicate/edited blocks and COM2 preservation PASS')
+RETRO_NET_CHECK_PY
+    check "win95 network transaction and owner-config preservation (isolated)" 'RETRO_HELPER="$HOME/.local/lib/dev-retro/dev-retro" python3 "$WORK/retro-net-check.py"' 180
+    # v100 (Nov 5 2026): binary support is separate from guest connectivity; off is a normal choice.
+    check "DOSBox-X build includes NE2000 slirp support" '~/.local/lib/dev-retro/dev-retro retro slirp-support'
+    info "win95 network configuration" "$(~/.local/lib/dev-retro/dev-retro win95 net status)"
+    warn "win95 networking: no edited blocks or resource conflicts" '~/.local/lib/dev-retro/dev-retro win95 net check'
+    # v100 (Nov 5 2026): config preferences warn; fixture failures are bundle regressions.
+    warn "DOSBox-X host key, win95 renderer and custom boot mounts" '~/.local/lib/dev-retro/dev-retro retro config-status'
+    hint "With guests stopped, choose [dosbox] hostkey=ctrlshift and win95 [sdl] output=surface; explicit choices are preserved. Review folder mounts in win95 autoexec."
+    cat > "$WORK/retro-config-check.py" << 'RETRO_CONFIG_CHECK_PY'
+import os, subprocess, tempfile
+from pathlib import Path
+h = Path(os.environ['RETRO_HELPER']).resolve()
+base = Path(os.environ['WORK'])
+with tempfile.TemporaryDirectory(prefix='retro-config-', dir=base) as tmp:
+    root = Path(tmp); home = root / 'home'; home.mkdir()
+    bindir = root / 'bin'; bindir.mkdir()
+    pgrep = bindir / 'pgrep'; pgrep.write_text('#!/bin/sh\nexit 1\n'); pgrep.chmod(0o755)
+    env = dict(HOME=str(home), PATH=str(bindir) + ':/usr/bin:/bin', LC_ALL='C.UTF-8')
+    def reviewed(data):
+        return b'# v100: defaults reviewed' + (b'\r\n' if b'\r\n' in data else b'\n') + data
+    def call(*args):
+        r = subprocess.run(['bash', str(h), *args], env=env, text=True, capture_output=True)
+        assert r.returncode == 0, r.stdout + r.stderr
+        return r
+    for rel in ('win31/dosbox-x.conf', 'win95/setup.conf', 'win95/boot.conf', '.config/dev-retro/dos.conf'):
+        p = home / rel; p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_bytes(b'; owner comment\r\n[sdl]\r\n[dosbox]\r\n')
+        p.chmod(0o640)
+    call('retro', 'config-defaults')
+    files = list(home.rglob('*.conf'))
+    snapshots = {p: p.read_bytes() for p in files}
+    for p in files:
+        assert b'[dosbox]\r\nhostkey=ctrlshift\r\n' in p.read_bytes()
+        assert p.stat().st_mode & 0o777 == 0o640
+        assert p.read_bytes().count(b'# v100: defaults reviewed') == 1
+        if p.parent.name == 'win95': assert b'output=surface\r\n' in p.read_bytes()
+    call('retro', 'config-defaults')
+    assert snapshots == {p: p.read_bytes() for p in files}
+    # v100 (Nov 6 2026): upgrade only the exact v99 renderer line; owner edits and duplicates win.
+    for name in ('setup.conf', 'boot.conf'):
+        target = home / 'win95' / name
+        for suffix in ('', '   '):
+            old = ('[sdl]\r\noutput=opengl' + suffix + '\r\n[dosbox]\r\nhostkey=ctrlshift\r\n').encode()
+            target.write_bytes(old)
+            call('retro', 'config-defaults')
+            assert target.read_bytes() == reviewed(old.replace(('output=opengl' + suffix).encode(), b'output=surface'))
+            assert target.stat().st_mode & 0o777 == 0o640
+            upgraded = target.read_bytes(); call('retro', 'config-defaults')
+            assert target.read_bytes() == upgraded
+            # v100 (Nov 7 2026): choosing the old spelling after review must stick.
+            chosen = upgraded.replace(b'output=surface', b'output=opengl')
+            target.write_bytes(chosen); before = target.stat()
+            for _ in range(2): call('retro', 'config-defaults')
+            assert target.read_bytes() == chosen
+            assert (target.stat().st_ino, target.stat().st_mtime_ns) == (before.st_ino, before.st_mtime_ns)
+        for setting in ('output=texture', 'output=opengl # owner', ' output=opengl',
+                        'output=opengl\t', 'Output=opengl', 'output=opengl\noutput=opengl'):
+            old = ('[sdl]\n' + setting + '\n[dosbox]\nhostkey=ctrlshift\n').encode()
+            target.write_bytes(old); call('retro', 'config-defaults'); assert target.read_bytes() == reviewed(old)
+    # Deleting keys after review must not cause absent-key additions on any config.
+    for target in files:
+        chosen = b'# v100: defaults reviewed\n[sdl]\n[dosbox]\n'
+        target.write_bytes(chosen); before = target.stat(); call('retro', 'config-defaults')
+        assert target.read_bytes() == chosen
+        assert (target.stat().st_ino, target.stat().st_mtime_ns) == (before.st_ino, before.st_mtime_ns)
+    (home / 'win95/.pid').write_text(str(os.getpid()))
+    for name in ('setup.conf', 'boot.conf'):
+        target = home / 'win95' / name
+        old = b'[sdl]\noutput=opengl\n[dosbox]\nhostkey=ctrlshift\n'
+        target.write_bytes(old); call('retro', 'config-defaults'); assert target.read_bytes() == old
+    (home / 'win95/.pid').unlink()
+    custom = home / 'win95/boot.conf'
+    original = b'[sdl]\r\n output = opengl\r\n[dosbox]\r\n HostKey = mapper\r\n'
+    custom.write_bytes(original); call('retro', 'config-defaults'); assert custom.read_bytes() == reviewed(original)
+    for data in (b'[sdl]\nhostkey=ctrlalt\noutput=surface\n', b'[dosbox]\nhostkey=mapper\nhostkey=ctrlalt\n[sdl]\noutput=surface\n'):
+        custom.write_bytes(data); r = call('retro', 'config-defaults')
+        assert custom.read_bytes() == reviewed(data) and 'review manually' in r.stderr
+    fixed = custom.read_bytes().replace(b'hostkey=mapper\nhostkey=ctrlalt', b'hostkey=ctrlalt')
+    custom.write_bytes(fixed); call('retro', 'config-defaults'); assert custom.read_bytes() == fixed
+    custom.write_text('[sdl]\n[dosbox]')
+    call('retro', 'config-defaults'); assert '[dosbox]\nhostkey=ctrlshift' in custom.read_text()
+    custom.write_text('[sdl]\n[dosbox]\n')
+    (home / 'win95/.pid').write_text(str(os.getpid()))
+    call('retro', 'config-defaults'); assert custom.read_text() == '[sdl]\n[dosbox]\n'
+print('config fixtures: once-only v99 upgrade/marker, restored values/deleted keys, edited values/comments/duplicates, absent defaults, CRLF/mode, custom/misplaced/duplicate keys, repeat and running guards PASS')
+RETRO_CONFIG_CHECK_PY
+    check "retro default migration preserves owner edits (isolated)" 'RETRO_HELPER="$HOME/.local/lib/dev-retro/dev-retro" python3 "$WORK/retro-config-check.py"'
+    # v100 (Nov 5 2026): fake engine captures each invocation, without Windows media or a guest start.
+    cat > "$WORK/retro-args-check.py" << 'RETRO_ARGS_CHECK_PY'
+import os, subprocess, tempfile
+from pathlib import Path
+h = Path(os.environ['RETRO_HELPER']).read_text().rsplit('main "$@"; exit $?', 1)[0]
+with tempfile.TemporaryDirectory(prefix='retro-args-', dir=os.environ['WORK']) as tmp:
+    root = Path(tmp); home = root / 'home'; home.mkdir(); bindir = root / 'bin'; bindir.mkdir()
+    p = bindir / 'pgrep'; p.write_text('#!/bin/sh\nexit 1\n'); p.chmod(0o755)
+    env = dict(HOME=str(home), WORK=str(root), PATH=str(bindir) + ':/usr/bin:/bin', LC_ALL='C.UTF-8')
+    ws = home / 'win95'; ws.mkdir()
+    engine = bindir / 'dosbox-x'
+    engine.write_text("#!/bin/sh\nprintf '%s\\0' \"$@\" >> \"$WORK/args\"; printf '\\0' >> \"$WORK/args\"\ncase \"$*\" in *imgmake*) touch \"$HOME/win95/hdd.img\" ;; esac\n")
+    engine.chmod(0o755)
+    stub = """
+GUEST=win95; guest_info win95; mkdir -p "$WS/install/apps"
+installed() { [ "$SIM_INSTALLED" = 1 ]; }
+exch_create() { :; }; exch_mount_size() { echo 512,63,16,100; }; exch_put() { :; }
+disk_guard() { :; }; win95_setting() { SET_VAL=512; SET_SRC=fixture; }
+install_iso() { echo "$WORK/windows.iso"; }; app_cd() { echo "$WORK/app.iso"; }
+
+"""
+    for mode, installed, disk in [('boot', 1, True), ('run', 1, True), ('setup', 1, True), ('setup', 0, False)]:
+        image = ws / 'hdd.img'
+        if disk: image.touch()
+        elif image.exists(): image.unlink()
+        capture = root / 'args'; capture.write_bytes(b'')
+        code = h + stub + f'\nSIM_INSTALLED={installed}\nwin95_cmd {mode} "$WORK/file.exe"\n'
+        r = subprocess.run(['bash', '-s'], input=code, env=env, capture_output=True, text=True)
+        assert r.returncode == 0, r.stdout + r.stderr
+        calls = [[x.decode() for x in call.split(b'\0')] for call in capture.read_bytes().split(b'\0\0') if call]
+        assert len(calls) == (1 if disk else 2), calls
+        boot = calls[-1]
+        assert not any(x.lower().startswith('mount ') for x in boot), boot
+        assert ('boot c:' in boot) == bool(installed)
+        assert any('imgmount d ' in x for x in boot) and any('imgmount f ' in x for x in boot)
+        if not disk:
+            assert any(x.startswith('mount x ') for x in calls[0]) and 'boot c:' not in calls[0]
+        for conf in ('setup.conf', 'boot.conf'):
+            import configparser
+            ini = configparser.ConfigParser(); ini.read(ws / conf)
+            assert ini['sdl']['output'] == 'surface' and ini['dosbox']['hostkey'] == 'ctrlshift'
+    # v100 (Nov 7 2026): born-marked files are never rewritten, including after owner edits.
+    configs = [ws / name for name in ('setup.conf', 'boot.conf')]
+    assert all(p.read_bytes().count(b'# v100: defaults reviewed') == 1 for p in configs)
+    def snapshots(): return {p: (p.read_bytes(), p.stat().st_ino, p.stat().st_mtime_ns) for p in configs}
+    before = snapshots()
+    launch = h + stub + '\nSIM_INSTALLED=1\nwin95_cmd boot\n'
+    for _ in range(2):
+        r = subprocess.run(['bash', '-s'], input=launch, env=env, capture_output=True, text=True)
+        assert r.returncode == 0, r.stdout + r.stderr
+    assert snapshots() == before
+    for p in configs:
+        p.write_bytes(p.read_bytes().replace(b'output=surface', b'output=opengl').replace(b'hostkey=ctrlshift\n', b''))
+    before = snapshots()
+    for _ in range(2):
+        r = subprocess.run(['bash', '-s'], input=launch, env=env, capture_output=True, text=True)
+        assert r.returncode == 0, r.stdout + r.stderr
+    assert snapshots() == before
+    # An old unmarked file is reviewed on launch, then the owner can choose opengl again.
+    for p in configs: p.write_bytes(p.read_bytes().replace(b'# v100: defaults reviewed\n', b''))
+    r = subprocess.run(['bash', '-s'], input=launch, env=env, capture_output=True, text=True)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert all(b'output=surface' in p.read_bytes() and b'hostkey=ctrlshift' in p.read_bytes() for p in configs)
+    for p in configs: p.write_bytes(p.read_bytes().replace(b'output=surface', b'output=opengl'))
+    before = snapshots()
+    r = subprocess.run(['bash', '-s'], input=launch, env=env, capture_output=True, text=True)
+    assert r.returncode == 0 and snapshots() == before, r.stdout + r.stderr
+print('win95 arguments: boot, run, fresh/resumed setup; separate IMGMAKE, preserved image/CD mounts and once-only defaults on real launch paths PASS')
+RETRO_ARGS_CHECK_PY
+    check "win95 boot argument regression (isolated fake engine)" 'RETRO_HELPER="$HOME/.local/lib/dev-retro/dev-retro" python3 "$WORK/retro-args-check.py"'
     check "retro sizes: RETRO_EXCHANGE_MB and RETRO_WIN95_DISK_MB are valid" '~/.local/lib/dev-retro/dev-retro retro sizes'
     hint  "a size in ~/.config/dev-init/secrets.env is out of range: RETRO_EXCHANGE_MB 64-2047, RETRO_WIN95_DISK_MB 512-8192"
     info  "retro disk sizes" "$(~/.local/lib/dev-retro/dev-retro retro sizes 2> /dev/null | grep -E '^(Exchange|Windows 95)' | sed 's/ (D: in win95, winnt40, win2000)//; s/, for a disk created from now on//' | paste -sd ';' | sed 's/;/; /')"
@@ -5576,12 +5816,166 @@ if has install-retro; then
     warn  "launcher icons for the five guests"            'm=""; for g in win31 win95 winnt40 win2000; do [ -f ~/.local/share/applications/dev-retro-$g.desktop ] || m="$m $g"; done; [ -f ~/.local/share/applications/dev-retro-delphi1.desktop ] || grep -rqs "/.local/bin/delphi1" ~/.local/share/applications/wine || m="$m delphi1"; [ -z "$m" ] || { echo "missing:$m"; exit 1; }; echo all five'
     hint  "'<cmd> launcher' writes one again (delphi1's also points Delphi's own Wine entries at delphi1)"
     if [ -c /dev/kvm ] && [ -r /dev/kvm ] && [ -w /dev/kvm ]; then
-        info  "QEMU acceleration" "KVM: NT 4.0 and 2000 run at close to native speed here"
+        info  "QEMU acceleration" "KVM available; selection is per guest (new defaults: NT auto, 2000 tcg)"
     elif [ -c /dev/kvm ]; then
         info  "QEMU acceleration" "/dev/kvm is here but not usable yet (kvm group: shut Linux down and reopen it); software emulation until then"
     else
-        info  "QEMU acceleration" "no /dev/kvm on this Chromebook: NT 4.0 and 2000 run in software emulation (slow)"
+        info  "QEMU acceleration" "KVM unavailable; auto/kvm falls back to TCG, win2000 defaults to intentional TCG"
     fi
+    # v100 (Nov 5–6 2026): all attachment/default regressions run on scratch files and executable fake engines.
+    cat > "$WORK/retro-qemu-check.py" << 'RETRO_QEMU_CHECK_PY'
+import json, os, subprocess, tempfile
+from pathlib import Path
+original = Path(os.environ['RETRO_HELPER']).read_text()
+with tempfile.TemporaryDirectory(prefix='qemu-fixture-', dir=os.environ['WORK']) as tmp:
+    root = Path(tmp); home = root / 'home'; home.mkdir(); bindir = root / 'bin'; bindir.mkdir()
+    def executable(name, body):
+        p = bindir / name; p.write_text(body); p.chmod(0o755)
+    for engine in ('dosbox-x', 'wine', 'wineboot', 'wineserver'):
+        executable(engine, '#!/bin/sh\nexit 97\n')
+    executable('qemu-system-i386', '#!/usr/bin/python3\nimport json,os,sys\nfrom pathlib import Path\nPath(os.environ["WORK"]+"/args.json").write_text(json.dumps(sys.argv[1:]))\n')
+    executable('qemu-img', '#!/bin/sh\n[ "$1" = create ] || exit 97\ntouch "$5"\n')
+    executable('pactl', '#!/bin/sh\nexit 1\n')
+    executable('mcopy', '#!/bin/sh\ntouch "$WORK/copied"\n')
+    executable('mdir', '#!/bin/sh\nexit 0\n')
+    executable('pgrep', '#!/bin/sh\nexit 1\n')
+    h = root / 'helper'
+    h.write_text(original.rsplit('main "$@"; exit $?', 1)[0] + '\nexch_create() { mkdir -p "$1"; touch "$1/exchange.img"; }\ndisk_guard() { :; }\nmain "$@"; exit $?\n')
+    env = dict(HOME=str(home), WORK=str(root), PATH=str(bindir) + ':/usr/bin:/bin', LC_ALL='C.UTF-8')
+    def call(g, *args, ok=True):
+        r = subprocess.run(['bash', str(h), g, *args], env=env, text=True, capture_output=True)
+        assert (r.returncode == 0) == ok, r.stdout + r.stderr
+        return r
+    def reviewed(data):
+        return b'# v100: defaults reviewed' + (b'\r\n' if b'\r\n' in data else b'\n') + data
+    def args(): return json.loads((root / 'args.json').read_text())
+    def attached(): return any('index=1,media=disk' in x for x in args())
+    for g in ('winnt40', 'win2000'):
+        ws = home / g; (ws / 'install').mkdir(parents=True); (ws / 'install/windows.iso').touch()
+        call(g, 'exchange', 'enable', ok=False)
+        call(g, 'setup'); assert not attached() and not (ws / 'exchange-enabled').exists()
+        assert args()[args().index('-display') + 1] == ('gtk,zoom-to-fit=off' if g == 'win2000' else 'gtk,zoom-to-fit=on')
+        if g == 'win2000':
+            assert args()[args().index('-accel') + 1] == 'tcg,thread=multi'
+            assert '-audiodev' not in args() and not any('AC97' in x for x in args())
+        call(g); assert not attached()
+        copied = root / 'copied'; copied.unlink(missing_ok=True)
+        capture = root / 'args.json'; capture.unlink()
+        call(g, 'run', str(root / 'sample.exe'), ok=False)
+        assert not copied.exists() and not capture.exists()
+        call(g, 'exchange', 'enable'); call(g); assert attached()
+        sample = root / 'sample.exe'; sample.touch()
+        call(g, 'run', str(sample)); assert attached() and copied.exists()
+        call(g, 'put', str(sample)); assert (ws / 'exchange-enabled').exists()
+        call(g, 'exchange', 'disable')
+        assert 'withheld' in call(g, 'put', str(sample)).stderr
+        call(g, 'exchange', 'enable')
+        # Replacing the system disk invalidates a previously acknowledged identity.
+        disk = ws / 'disk.qcow2'; replacement = ws / 'replacement'; replacement.touch(); replacement.replace(disk)
+        assert 'stale' in call(g, 'exchange', 'info').stdout
+        call(g); assert not attached()
+        for setup_args in (('setup',), ('setup', '--from-cd')):
+            call(g, 'exchange', 'enable'); call(g, *setup_args)
+            assert not attached() and not (ws / 'exchange-enabled').exists()
+        (ws / 'install/boot.img').touch()
+        call(g, 'setup', '--from-cd'); assert not attached() and 'once=a' in args()
+        (ws / 'install/boot.img').unlink()
+        disk.unlink(); call(g, 'setup', '--raw'); assert not attached() and (ws / 'disk.img').exists()
+        call(g, 'exchange', 'enable'); call(g); assert attached()
+        (ws / '.pid').write_text(str(os.getpid()))
+        call(g, 'exchange', 'enable', ok=False); call(g, 'exchange', 'disable', ok=False)
+        (ws / '.pid').unlink()
+    # v100 (Nov 6 2026): absent/default migration; edited lines survive and status never repairs.
+    ws = home / 'win2000'; config = ws / 'config'
+    config.write_bytes(b'# owner\r\nMEM=320\r\n'); config.chmod(0o640)
+    before = config.read_bytes(); call('win2000', 'preferences'); assert config.read_bytes() == before
+    (ws / '.pid').write_text(str(os.getpid()))
+    call('retro', 'config-defaults'); assert config.read_bytes() == before
+    (ws / '.pid').unlink()
+    call('retro', 'config-defaults'); data = config.read_bytes()
+    assert b'ACCEL=tcg\r\n' in data and b'SOUND=none\r\n' in data and b'zoom-to-fit=off' in data
+    assert config.stat().st_mode & 0o777 == 0o640
+    call('retro', 'config-defaults'); assert config.read_bytes() == data
+    for text in ('export ACCEL=auto\nSOUND=AC97\nDISPLAY_OPTS="gtk,zoom-to-fit=on"\n', 'if true; then ACCEL=auto; fi\n'):
+        config.write_text(text); call('retro', 'config-defaults'); assert config.read_bytes() == reviewed(text.encode())
+    # Full v99 write-once template, verified against 60c891f; no real guest config is read.
+    legacy = '''# ~/win2000/config - written by dev-setup (install-retro) once; edit freely, setup leaves it alone.
+# Read by 'win2000' each time it starts QEMU.
+MEM=256                # MB
+CPU=pentium3            # pentium if setup blue-screens on this model
+MACHINE=pc
+HPET=on               # on cuts Windows 2000's idle CPU use
+DISK_GB=8              # the size 'win2000 setup' creates (NT 4.0 setup cannot format over 4 GB)
+DISK_FORMAT=qcow2       # qcow2 (snapshots), or raw: 'win2000 setup --raw' (NT 4.0's old qcow2 boot bug)
+VIDEO=cirrus            # both ship a Cirrus driver; skip NT 4.0's display "Test" button, which can hang
+NIC=pcnet               # AMD PCnet, user-mode networking; none turns it off
+SOUND=AC97             # sb16, AC97 or none (drivers on the install CDs)
+MOUSE=tablet             # ps2 (captured; Ctrl+Alt+G releases it) or tablet (USB: Windows 2000)
+ACCEL=auto              # auto (KVM when /dev/kvm is usable), kvm or tcg
+DISPLAY_OPTS=gtk,zoom-to-fit=on
+EXTRA_ARGS=""           # more QEMU options, e.g. "-smp 2"
+'''
+    replacements = [('ACCEL=auto              # auto (KVM when /dev/kvm is usable), kvm or tcg', 'ACCEL=tcg              # auto (KVM when usable), kvm or tcg; explicit owner values stay'), ('DISPLAY_OPTS=gtk,zoom-to-fit=on', 'DISPLAY_OPTS="gtk,zoom-to-fit=off"'), ('SOUND=AC97             # sb16, AC97 or none (drivers on the install CDs)', 'SOUND=none             # sb16, AC97 or none (drivers on the install CDs)')]
+    modern = legacy
+    for old, new in replacements: modern = modern.replace(old, new)
+    for ending, suffix in (('\n', ''), ('\r\n', '   '), ('', '')):
+        data = legacy
+        for old, _ in replacements: data = data.replace(old, old + suffix)
+        data = data.replace('\n', '\r\n') if ending == '\r\n' else data
+        expected = modern.replace('\n', '\r\n') if ending == '\r\n' else modern
+        if not ending: data, expected = data.rstrip('\n'), expected.rstrip('\n')
+        config.write_bytes(data.encode()); config.chmod(0o640)
+        call('retro', 'config-defaults'); assert config.read_bytes() == reviewed(expected.encode())
+        assert config.stat().st_mode & 0o777 == 0o640
+        call('retro', 'config-defaults'); assert config.read_bytes() == reviewed(expected.encode())
+    for old, new in replacements:
+        key, value = old.split('=', 1)
+        for edited in (key + '=owner', old + ' # owner', ' ' + old, old + '\t',
+                       'export ' + old, old.replace('=', ' = ', 1)):
+            data = modern.replace(new, edited).encode()
+            config.write_bytes(data); call('retro', 'config-defaults'); assert config.read_bytes() == reviewed(data)
+        data = (legacy + old + '\n').encode()
+        config.write_bytes(data); call('retro', 'config-defaults'); assert config.read_bytes() == reviewed(data)
+    # v100 (Nov 7 2026): after review, exact old lines are deliberate owner choices.
+    config.write_bytes(legacy.encode()); call('retro', 'config-defaults')
+    chosen = config.read_bytes()
+    for old, new in replacements: chosen = chosen.replace(new.encode(), old.encode())
+    config.write_bytes(chosen); before = config.stat()
+    for _ in range(2): call('win2000')
+    assert args()[args().index('-display') + 1] == 'gtk,zoom-to-fit=on'
+    assert config.read_bytes() == chosen
+    assert (config.stat().st_ino, config.stat().st_mtime_ns) == (before.st_ino, before.st_mtime_ns)
+    config.write_bytes(b'# v100: defaults reviewed\nMEM=320\n')
+    chosen = config.read_bytes(); before = config.stat()
+    for _ in range(2): call('win2000')
+    assert config.read_bytes() == chosen
+    assert (config.stat().st_ino, config.stat().st_mtime_ns) == (before.st_ino, before.st_mtime_ns)
+    config.write_bytes(legacy.encode())
+    (ws / '.pid').write_text(str(os.getpid()))
+    call('retro', 'config-defaults'); assert config.read_bytes() == legacy.encode()
+    (ws / '.pid').unlink()
+    # Override propagation (audio backend may be silent, but the explicit card must remain).
+    config.write_text('ACCEL=tcg\nSOUND=AC97\nDISPLAY_OPTS="gtk,zoom-to-fit=on"\n')
+    call('win2000'); assert any('AC97,audiodev=snd0' == x for x in args())
+    assert args()[args().index('-display') + 1] == 'gtk,zoom-to-fit=on'
+    # Deterministic selection matrix; no permission changes or accesses to a real KVM device.
+    defs = original.rsplit('main "$@"; exit $?', 1)[0]
+    for want in ('auto', 'kvm', 'tcg'):
+        for state in ('usable', 'present', 'missing'):
+            code = defs + f'\nkvm_state() {{ KVM_STATE={state}; }}\nACCEL={want}; pick_accel; printf "%s\\n" "$ACCEL_NOTE" "${{ACCEL_ARGS[@]}}"\n'
+            r = subprocess.run(['bash', '-s'], input=code, env=env, text=True, capture_output=True)
+            assert r.returncode == 0
+            expected = 'selected by ACCEL=tcg' if want == 'tcg' else ('selected by ACCEL=' + want if state == 'usable' else ('present but not usable' if state == 'present' else 'unavailable'))
+            assert expected in r.stdout, r.stdout
+            assert ('group' in r.stdout) == (want != 'tcg' and state == 'present')
+print('QEMU fixtures: once-only v99 upgrade/marker, restored values/deleted keys on launch, edited values/comments/duplicates/running preservation, defaults, overrides, gate/identity, fresh/resumed/CD/floppy/raw setup, run/put guards and 9 acceleration cases PASS')
+RETRO_QEMU_CHECK_PY
+    check "QEMU defaults, exchange completion and acceleration (isolated)" 'RETRO_HELPER="$HOME/.local/lib/dev-retro/dev-retro" python3 "$WORK/retro-qemu-check.py"' 180
+    # v100 (Nov 5–6 2026): read-only preferences warn; a disk does not prove Windows installation.
+    for G in winnt40 win2000; do
+        info "QEMU selection $G" "$(~/.local/lib/dev-retro/dev-retro "$G" accel)"
+        warn "$G: preferences and completed-install exchange attachment" "~/.local/lib/dev-retro/dev-retro $G preferences"
+    done
     for G in win31 win95 winnt40 win2000 delphi1; do
         info  "retro guest $G" "$(~/.local/lib/dev-retro/dev-retro "$G" status 2> /dev/null | head -n 1 | sed 's/^[^ ]* *//; s/ *$//; s/   */, /g')"
     done
@@ -5613,9 +6007,8 @@ f.write(json.dumps({\"execute\": \"quit\"}) + \"\n\"); f.flush()" 2>&1); wait $q
     # disk changed with mtools, and the snapshot restored.
     cat > "$WORK/w95_check.sh" << 'W95_EOF'
 rh="$WORK/w95-home"; H=$HOME/.local/lib/dev-retro/dev-retro; mk=""
-if command -v genisoimage > /dev/null; then mk="genisoimage -quiet -J -o"
-elif command -v xorriso > /dev/null; then mk="xorriso -as mkisofs -quiet -J -o"
-else echo "SKIPPED: no genisoimage or xorriso here to make the stand-in CDs"; exit 0; fi
+command -v genisoimage > /dev/null || { echo "genisoimage missing: rerun setup install-retro"; exit 1; }
+mk="genisoimage -quiet -J -o"
 export MTOOLS_SKIP_CHECK=1
 mkdir -p "$rh/win95/install/apps" "$WORK/w95cd/WIN95" "$WORK/w95app"
 printf '%s\r\n' 'dir d:\ > c:\report.txt' 'type f:\APPFILE.TXT >> c:\report.txt' 'exit' > "$WORK/w95cd/WIN95/SETUP.BAT"
@@ -5697,7 +6090,7 @@ EOF
     if [ -n "$(find "$D1P/drive_c" -maxdepth 3 -ipath '*/delphi/bin/delphi.exe' 2> /dev/null | head -n 1)" ]; then
         check "delphi1: Delphi's native 16-bit OLE2 in C:\\WINDOWS\\SYSTEM (what the IDE starts on)" 'cd "$HOME/.local/share/wine/delphi1/drive_c/windows" || exit 1; sys=$(find . -maxdepth 1 -iname system -type d | head -n 1); m=""; for d in compobj ole2 ole2disp ole2nls storage typelib; do [ -n "$(find "$sys" -maxdepth 1 -iname "$d.dll")" ] || m="$m $d.dll"; done; [ -z "$m" ] || { echo "missing:$m"; exit 1; }; echo all six'
         hint  "Delphi's setup copies them; without them the IDE dies in compobj.dll16 (CoGetMalloc16). 'delphi1 setup' again"
-        warn  "delphi1: the 32-bit prefix and its settings (black desktop, TEMP=C:\\TEMP, DELPHI.INI)" 'grep -q "#arch=win32" "$HOME/.local/share/wine/delphi1/system.reg" && grep -q "\"Background\"=\"0 0 0\"" "$HOME/.local/share/wine/delphi1/user.reg" && grep -qi "\"TEMP\"=.*C:\\\\\\\\TEMP" "$HOME/.local/share/wine/delphi1/user.reg" || exit 1; ini=$(find "$HOME/.local/share/wine/delphi1/drive_c/windows" -maxdepth 1 -iname delphi.ini | head -n 1); [ -n "$ini" ] && tr -d "\r" < "$ini" | grep -qix "integrateddebugging=0" || { echo "DELPHI.INI does not have IntegratedDebugging=0 (Run fails under Wine with it on)"; exit 1; }; echo ok'
+        warn  "delphi1: the 32-bit prefix and its settings (preserved colors, TEMP=C:\\TEMP, DELPHI.INI)" 'grep -q "#arch=win32" "$HOME/.local/share/wine/delphi1/system.reg" && grep -qi "\"TEMP\"=.*C:\\\\\\\\TEMP" "$HOME/.local/share/wine/delphi1/user.reg" || exit 1; ini=$(find "$HOME/.local/share/wine/delphi1/drive_c/windows" -maxdepth 1 -iname delphi.ini | head -n 1); [ -n "$ini" ] && tr -d "\r" < "$ini" | grep -qix "integrateddebugging=0" || { echo "DELPHI.INI does not have IntegratedDebugging=0 (Run fails under Wine with it on)"; exit 1; }; echo ok'
         hint  "'delphi1 setup' applies them again"
     else
         info  "delphi1" "not set up yet: Delphi 1's SETUP.EXE in ~/win31/install/apps, then 'delphi1 setup' (the media is yours)"
@@ -5714,7 +6107,6 @@ case "$2" in
         [ -n "$f" ] || { echo "no delphi32.exe: 'delphi $1 setup' did not finish"; exit 1; }
         echo "$f" ;;
     settings)
-        grep -q '"Background"="0 0 0"' "$P/user.reg" || { echo "no black desktop"; exit 1; }
         grep -qi '"TEMP"=.*C:\\\\TEMP' "$P/user.reg" || { echo "TEMP is not C:\\TEMP"; exit 1; }
         [ -f "$HOME/.local/share/applications/dev-retro-delphi$1.desktop" ] \
             || grep -rqs "/.local/bin/delphi $1" "$HOME/.local/share/applications/wine" || { echo "no launcher entry"; exit 1; }
@@ -5725,11 +6117,258 @@ DN_EOF
         if [ -d "$HOME/.local/share/wine/delphi$DN" ]; then
             check "delphi $DN: 32-bit prefix, Windows version, the IDE (delphi32.exe)" "bash delphi_check.sh $DN ide"
             hint  "'delphi $DN setup' again (its CD in ~/delphi/install/$DN)"
-            warn  "delphi $DN: settings (black desktop, TEMP) and a launcher entry" "bash delphi_check.sh $DN settings"
+            warn  "delphi $DN: settings (preserved colors, TEMP) and a launcher entry" "bash delphi_check.sh $DN settings"
             hint  "'delphi $DN setup' applies them again; 'delphi $DN launcher' rewrites the entries"
         elif [ -n "$(find ~/delphi/install/$DN -mindepth 1 -maxdepth 1 ! -name '.*' 2> /dev/null | head -n 1)" ]; then
             info  "delphi $DN" "media in ~/delphi/install/$DN, not set up yet: 'delphi $DN setup'"
         fi
+    done
+    # v100 (Nov 5 2026): fake acquisition and scratch prefixes; no font downloads or real Wine.
+    cat > "$WORK/retro-font-check.py" << 'RETRO_FONT_CHECK_PY'
+import os, subprocess, tempfile
+from pathlib import Path
+original = Path(os.environ['RETRO_HELPER']).read_text()
+with tempfile.TemporaryDirectory(prefix='font-fixture-', dir=os.environ['WORK']) as tmp:
+    root = Path(tmp); home = root / 'home'; home.mkdir(); bindir = root / 'bin'; bindir.mkdir()
+    for name in ('wine', 'wineboot', 'wineserver', 'dosbox-x', 'qemu-system-i386', 'cabextract'):
+        p = bindir / name; p.write_text('#!/bin/sh\nexit 97\n'); p.chmod(0o755)
+    p = bindir / 'winetricks'
+    p.write_text('''#!/bin/bash
+n=0; [ ! -f "$WORK/count" ] || n=$(cat "$WORK/count"); n=$((n+1)); echo "$n" > "$WORK/count"
+echo "fixture diagnostic attempt $n"
+case "$MODE" in never) exit 42 ;; empty) exit 0 ;; recover) [ "$n" != 1 ] || exit 42 ;; esac
+mkdir -p "$WINEPREFIX/drive_c/windows/fOnTs"
+for n in ARIAL CoUr Tahoma TAHOMABD; do printf font > "$WINEPREFIX/drive_c/windows/fOnTs/$n.TtF"; done
+exit 0
+'''); p.chmod(0o755)
+    # v100 (Nov 6 2026): fake timeout validates the bound and simulates a stall without waiting.
+    p = bindir / 'timeout'
+    p.write_text('''#!/bin/bash
+[ "$1 $2 $3" = '-k 10 300' ] || exit 98
+shift 3
+if [ "$MODE" = timeout ] || [ "$MODE" = killed ]; then
+    n=0; [ ! -f "$WORK/count" ] || n=$(cat "$WORK/count"); echo "$((n+1))" > "$WORK/count"
+    echo 'fixture diagnostic attempt timed out'
+    [ "$MODE" != killed ] || exit 137
+    exit 124
+fi
+exec "$@"
+'''); p.chmod(0o755)
+    env = dict(HOME=str(home), WORK=str(root), PATH=str(bindir) + ':/usr/bin:/bin', LC_ALL='C.UTF-8', XDG_CACHE_HOME=str(root / 'cache'))
+    assets = root / 'assets'; assets.mkdir()
+    (root / 'assets-path').write_text(str(assets) + '\n')
+    h = root / 'helper'
+    dispatch = '''
+command() { if [ "${NO_TOOL:-0}" = 1 ] && [ "$1 $2" = '-v winetricks' ]; then return 1; fi; builtin command "$@"; }
+case "$1" in
+    acquire) install_fonts "$2"; rc=$?; fonts_summary; exit "$rc" ;;
+    collect) fonts_collect "$2"; exit $? ;;
+    *) main "$@"; exit $? ;;
+esac
+'''
+    h.write_text(original.rsplit('main "$@"; exit $?', 1)[0] + dispatch)
+    for mode, attempts, success in [('first', 1, True), ('recover', 2, True), ('never', 2, False), ('empty', 2, False), ('timeout', 2, False), ('killed', 2, False), ('missing', 0, False)]:
+        prefix = home / '.local/share/wine' / mode
+        (root / 'count').unlink(missing_ok=True)
+        env['MODE'] = mode; env['NO_TOOL'] = '1' if mode == 'missing' else '0'
+        r = subprocess.run(['bash', str(h), 'acquire', str(prefix)], env=env, text=True, capture_output=True)
+        assert (r.returncode == 0) == success, r.stdout + r.stderr
+        count = int((root / 'count').read_text()) if (root / 'count').exists() else 0
+        assert count == attempts, (mode, count)
+        assert 'FONT RESULT:' in r.stdout and 'log:' in r.stdout
+        if not success: assert 'INCOMPLETE:' in r.stdout and 'WINEPREFIX=' in r.stdout and str(prefix) in r.stdout
+        logs = list((assets / 'logs').glob('retro-fonts-' + mode + '-*.log')); assert len(logs) == 1
+        text = logs[0].read_text()
+        if attempts:
+            assert text.count('winetricks exit=') == attempts
+            assert text.count('fixture diagnostic attempt') == attempts
+        if mode in ('timeout', 'killed'):
+            assert text.count('Font acquisition timed out') == 2
+            assert text.count('winetricks exit=' + ('124' if mode == 'timeout' else '137')) == 2
+        if success:
+            subprocess.run(['bash', str(h), 'acquire', str(prefix)], env=env, check=True, capture_output=True)
+            assert int((root / 'count').read_text()) == attempts
+    env['NO_TOOL'] = '0'; env['MODE'] = 'first'
+    # A Delphi 3-only source is discoverable; repeated collection deduplicates names.
+    prefix = home / '.local/share/wine/delphi3'
+    subprocess.run(['bash', str(h), 'acquire', str(prefix)], env=env, check=True, capture_output=True)
+    out = root / 'collected'
+    for _ in range(2): subprocess.run(['bash', str(h), 'collect', str(out)], env=env, check=True, capture_output=True)
+    assert sorted(p.name for p in out.iterdir()) == ['ARIAL.TTF', 'COUR.TTF', 'TAHOMA.TTF', 'TAHOMABD.TTF']
+    # Status observes files and must not invoke Wine or winetricks.
+    count = (root / 'count').read_text()
+    r = subprocess.run(['bash', str(h), 'delphi', '3', 'status'], env=env, text=True, capture_output=True)
+    assert r.returncode == 0 and 'required core fonts and Tahoma ready' in r.stdout
+    assert (root / 'count').read_text() == count
+    # The empty-collection error is prefix-qualified; no downloads repair it.
+    import shutil
+    shutil.rmtree(prefix)
+    r = subprocess.run(['bash', str(h), 'win31', 'fonts'], env=env, text=True, capture_output=True)
+    assert r.returncode != 0 and 'WINEPREFIX=' in r.stderr and "win31 fonts" in r.stderr
+    assert (root / 'count').read_text() == count
+print('font fixtures: bounded timeout/kill, success/retry/exhaustion/missing tool/empty success, logs, prefix repair, Delphi 3 collection and read-only status PASS')
+RETRO_FONT_CHECK_PY
+    check "Retro font retry, diagnostics and collection (isolated)" 'RETRO_HELPER="$HOME/.local/lib/dev-retro/dev-retro" python3 "$WORK/retro-font-check.py"' 180
+    # v100 (Nov 5 2026): synthetic registry and executable Wine stubs; no real prefix mutation.
+    cat > "$WORK/retro-color-check.py" << 'RETRO_COLOR_CHECK_PY'
+import fcntl, json, os, subprocess, tempfile
+from pathlib import Path
+original = Path(os.environ['RETRO_HELPER']).read_text()
+reset = Path(os.environ['RETRO_DEFAULT']).read_text()
+C = r'HKEY_CURRENT_USER\Control Panel\Colors'
+T = r'HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\ThemeManager'
+with tempfile.TemporaryDirectory(prefix='color-fixture-', dir=os.environ['WORK']) as tmp:
+    root = Path(tmp); home = root / 'home'; home.mkdir(); bindir = root / 'bin'; bindir.mkdir()
+    def exe(name, text):
+        p = bindir / name; p.write_text(text); p.chmod(0o755)
+    for engine in ('dosbox-x', 'qemu-system-i386', 'wineboot', 'winetricks'):
+        exe(engine, '#!/bin/sh\nexit 97\n')
+    exe('wineserver', '#!/bin/sh\nexit "${BUSY:-0}"\n')
+    exe('winepath', '#!/bin/sh\nprintf "%s\\n" "$2"\n')
+    exe('wine', r'''#!/usr/bin/python3
+import json, os, re, sys
+from pathlib import Path
+p = Path(os.environ['WINEPREFIX']); db = json.loads((p / 'fixture.json').read_text())
+args = sys.argv[1:]
+with Path(os.environ['WORK'] + '/wine-calls').open('a') as f: f.write(args[0] + '\n')
+def flush():
+    (p / 'fixture.json').write_text(json.dumps(db))
+    text = 'WINE REGISTRY Version' + ' 2\n\n'
+    for key, vals in db.items():
+        if not key.startswith('HKEY_CURRENT_USER\\'): continue
+        text += '[' + key.removeprefix('HKEY_CURRENT_USER\\').replace('\\', '\\\\') + '] 1\n'
+        text += ''.join(json.dumps(k) + '=' + json.dumps(v) + '\n' for k, v in vals.items())
+    (p / 'user.reg').write_text(text)
+if args[0] != 'reg': sys.exit(97)
+op = args[1]
+if op == 'export':
+    if args[2] not in db: sys.exit(1)
+    Path(args[3]).write_text('Windows Registry Editor Version' + ' 5.00\n\n[' + args[2] + ']\n' + ''.join(json.dumps(k) + '=' + json.dumps(v) + '\n' for k, v in db[args[2]].items()))
+elif op == 'delete':
+    if args[2] not in db: sys.exit(1)
+    del db[args[2]]; flush()
+elif op == 'add':
+    db.setdefault(args[2], {})[args[args.index('/v')+1]] = args[args.index('/d')+1]; flush()
+elif op == 'import':
+    current = None
+    for line in Path(args[2]).read_text().splitlines():
+        if line.startswith('['): current = line[1:-1]; db.setdefault(current, {})
+        elif current and line.startswith('"'):
+            k, v = line.split('=',1); k = json.loads(k)
+            if v == '-': db[current].pop(k, None)
+            else: db[current][k] = json.loads(v)
+    flush()
+    if Path(args[2]).name == 'apply.reg' and os.environ.get('FAIL_APPLY') == '1': sys.exit(42)
+else: sys.exit(97)
+''')
+    env = dict(HOME=str(home), WORK=str(root), PATH=str(bindir) + ':/usr/bin:/bin', LC_ALL='C.UTF-8')
+    helper = root / 'helper'
+    helper.write_text(original.rsplit('main "$@"; exit $?', 1)[0] + '\nif [ "$1" = fixture-settings ]; then dn_info 3; GUEST=delphi3; WS="$DN_PREFIX"; dn_settings; exit $?; fi\nmain "$@"; exit $?\n')
+    data = root / 'colors'; data.mkdir(); (data / 'default.reg').write_text(reset)
+    def prefix(n): return home / ('.local/share/wine/delphi' + str(n))
+    def db(n): return json.loads((prefix(n) / 'fixture.json').read_text())
+    def seed(n):
+        p = prefix(n); p.mkdir(parents=True); (p / 'system.reg').touch()
+        initial = {C: {'Background': '10 20 30', 'Window': '40 50 60', 'OwnerCustom': 'keep'}, T: {'ThemeActive': '1', 'DllName': 'owner.msstyles', 'ColorName': 'NormalColor'}, 'HKEY_CURRENT_USER\\Other': {'Retain': 'yes'}}
+        (p / 'fixture.json').write_text(json.dumps(initial))
+        text = 'WINE REGISTRY Version' + ' 2\n\n'
+        for key, values in initial.items():
+            text += '[' + key.removeprefix('HKEY_CURRENT_USER\\').replace('\\', '\\\\') + '] 1\n'
+            text += ''.join(json.dumps(k) + '=' + json.dumps(v) + '\n' for k, v in values.items())
+        (p / 'user.reg').write_text(text)
+        return initial
+    first, third = seed(1), seed(3)
+    def call(n, *args, ok=True):
+        cmd = ['delphi1'] if n == 1 else ['delphi', str(n)]
+        r = subprocess.run(['bash', str(helper), *cmd, 'colors', *args], env=env, text=True, capture_output=True)
+        assert (r.returncode == 0) == ok, r.stdout + r.stderr
+        return r
+    # List works without a prefix and never invokes Wine.
+    call(4, 'list'); assert not prefix(4).exists() and not (root / 'wine-calls').exists()
+    call(1, 'save', 'saved'); assert db(1) == first
+    folder = home / '.config/dev-retro/colors'
+    saved = folder / 'saved.reg'; assert 'OwnerCustom' not in saved.read_text() and str(saved.stat().st_mode & 0o777) == str(0o600)
+    before = (root / 'wine-calls').read_bytes()
+    for name in ('default', 'saved', '../escape', '-bad'):
+        call(1, 'save', name, ok=False)
+    assert (root / 'wine-calls').read_bytes() == before
+    # Strict user data validation happens before any Wine command.
+    header = 'Windows Registry Editor Version' + ' 5.00\n\n[' + C + ']\n'
+    bad = folder / 'invalid.reg'
+    for text in (header + '"Window"="256 2 3"\n', header + '"Window"=-\n', header + '"Unknown"="1 2 3"\n', header + '"Window"=dword:00000000\n', header + '"Window"="1 2 3"\n"Window"="4 5 6"\n', header + '[' + T + ']\n"ThemeActive"="0"\n'):
+        bad.write_text(text); call(1, 'use', 'invalid', ok=False)
+    assert (root / 'wine-calls').read_bytes() == before
+    call(1, 'use', 'default')
+    assert db(1)[C] == {'OwnerCustom': 'keep'} and db(1)[T] == {'ThemeActive': '0'}
+    assert db(1)['HKEY_CURRENT_USER\\Other'] == first['HKEY_CURRENT_USER\\Other']
+    call(1, 'use', 'saved'); assert db(1)[C] == first[C] and db(3) == third
+    assert (folder / 'delphi1.selected.json').is_file() and not (folder / 'delphi3.selected.json').exists()
+    # Outside-helper Wine apps and helper markers both block writes.
+    before = db(1); env['BUSY'] = '1'; call(1, 'use', 'default', ok=False); env.pop('BUSY')
+    (prefix(1) / '.pid').write_text(str(os.getpid())); call(1, 'use', 'default', ok=False); (prefix(1) / '.pid').unlink()
+    with (folder / '.delphi1.lock').open('a') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB); call(1, 'use', 'default', ok=False)
+    assert db(1) == before
+    # Deliberate partial apply failure restores both targeted keys and preserves the selection.
+    record = (folder / 'delphi1.selected.json').read_bytes()
+    env['FAIL_APPLY'] = '1'; r = call(1, 'use', 'default', ok=False); env.pop('FAIL_APPLY')
+    assert 'restored' in r.stderr and db(1) == before and (folder / 'delphi1.selected.json').read_bytes() == record
+    # Existing setup choices are never overwritten or replayed, even after manual color edits.
+    call(3, 'init-existing'); assert db(3) == third
+    r = subprocess.run(['bash', str(helper), 'fixture-settings'], env=env, text=True, capture_output=True)
+    assert r.returncode == 0 and db(3)[C] == third[C] and db(3)[T] == third[T], r.stdout + r.stderr
+    call(3, 'init-new'); assert db(3)[T]['ThemeActive'] == '0' and db(3)[C] == third[C]
+    # Missing values are initialized; an explicit non-string/case-variant value is preserved.
+    seed(5)
+    (prefix(5) / 'user.reg').write_text((prefix(5) / 'user.reg').read_text().replace('"ThemeActive"="1"\n', ''))
+    state = db(5); del state[T]['ThemeActive']; (prefix(5) / 'fixture.json').write_text(json.dumps(state))
+    call(5, 'init-existing'); assert db(5)[T]['ThemeActive'] == '0' and db(5)[T]['DllName'] == 'owner.msstyles'
+    seed(6)
+    (prefix(6) / 'user.reg').write_text((prefix(6) / 'user.reg').read_text().replace('"ThemeActive"="1"', '"themeactive"=dword:00000001'))
+    before_calls = (root / 'wine-calls').read_bytes()
+    call(6, 'init-existing'); assert (root / 'wine-calls').read_bytes() == before_calls
+
+    call(1, 'check')
+    (prefix(1) / 'user.reg').write_text((prefix(1) / 'user.reg').read_text().replace('"Window"="40 50 60"', '"Window"="11 22 33"'))
+    call(1, 'check', ok=False)
+print('color fixtures: strict validation, save/use/default, custom-value scope, prefix separation, idle/lock guards, rollback and setup preservation PASS')
+RETRO_COLOR_CHECK_PY
+    check "Retro color switching and rollback (isolated fake Wine)" 'RETRO_HELPER="$HOME/.local/lib/dev-retro/dev-retro" RETRO_DEFAULT="$HOME/.local/lib/dev-retro/colors/default.reg" python3 "$WORK/retro-color-check.py"' 180
+    # v100 (Nov 5 2026): owner-approved dev-test may verify Wine itself, only in a disposable test prefix.
+    cat > "$WORK/retro-color-real.sh" << 'RETRO_COLOR_REAL_SH'
+h="$HOME/.local/lib/dev-retro/dev-retro"
+rh="$WORK/color-real-home"
+mkdir -p "$rh/.local/share/wine/delphi3"
+export HOME="$rh" WINEPREFIX="$rh/.local/share/wine/delphi3" WINEARCH=win32 WINEDEBUG=-all
+export WINEDLLOVERRIDES="winemenubuilder.exe=d;mscoree,mshtml="
+wineboot -i > "$WORK/color-real.log" 2>&1 || exit 1
+timeout 120 wineserver -w || exit 1
+wine reg add 'HKCU\Control Panel\Colors' /v Window /t REG_SZ /d '11 22 33' /f >> "$WORK/color-real.log" 2>&1 || exit 1
+timeout 120 wineserver -w || exit 1
+"$h" delphi 3 colors save fixture || exit 1
+"$h" delphi 3 colors use default || exit 1
+"$h" delphi 3 colors use fixture || exit 1
+wine reg query 'HKCU\Control Panel\Colors' /v Window | grep -Eq 'REG_SZ[[:space:]]+11 22 33' || exit 1
+wine reg query 'HKCU\Software\Microsoft\Windows\CurrentVersion\ThemeManager' /v ThemeActive | grep -Eq 'REG_SZ[[:space:]]+0' || exit 1
+timeout 120 wineserver -w || exit 1
+"$h" delphi 3 colors check
+RETRO_COLOR_REAL_SH
+    slow "Color save/default/use with real Wine (disposable prefix only)" 'bash "$WORK/retro-color-real.sh"' 600
+    hint "Only the test-owned scratch prefix is used; color-real.log contains Wine initialization diagnostics. Real Delphi IDE appearance remains a hand check."
+    # v100 (Nov 5 2026): only default is bundled; actual choices/drift warn and are never repaired.
+    check "Retro built-in default color data (no bundled palette)" '[ -r "$HOME/.local/lib/dev-retro/colors/default.reg" ] && [ "$(find "$HOME/.local/lib/dev-retro/colors" -maxdepth 1 -name "*.reg" | wc -l)" = 1 ]'
+    for DN in 1 3 4 5 6 7; do
+        [ -d "$HOME/.local/share/wine/delphi$DN" ] || continue
+        if [ "$DN" = 1 ]; then C="delphi1"; else C="delphi $DN"; fi
+        warn "$C: theme and selected color label (read-only)" "~/.local/lib/dev-retro/dev-retro $C colors check"
+        hint "Manual choices are retained; close prefix apps then use $C colors use NAME to explicitly select No Theme and colors."
+    done
+    # v100 (Nov 5 2026): missing optional font downloads warn; never install/repair in test.
+    for DN in 1 3 4 5 6 7; do
+        P="$HOME/.local/share/wine/delphi$DN"
+        [ -d "$P" ] || continue
+        warn "delphi $DN: required core fonts and Tahoma present" "p=\"$P/drive_c/windows\"; d=\$(find \"\$p\" -maxdepth 1 -type d -iname fonts | head -n 1); [ -n \"\$d\" ] || exit 1; for n in arial cour tahoma tahomabd; do [ -n \"\$(find -L \"\$d\" -maxdepth 1 -type f -iname \"\$n.ttf\" -size +0c | head -n 1)\" ] || exit 1; done"
+        hint "Repair explicitly with WINEPREFIX=\"$P\" winetricks corefonts tahoma, then rerun <guest> fonts; status shows font state."
     done
     # v96: 'delphi N build' (dcc32 under Wine, from the project's folder) and 'delphi N vscode', for each Delphi 3-7
     # whose prefix has dcc32.exe; a one-line console program, built and then run by wine.
@@ -6042,8 +6681,10 @@ if ! has nodisk; then
         dapt   com "Wine (64 + 32-bit), mingw-w64, libwine-dev" 'wine*' 'libwine*' 'gcc-mingw-w64*' 'g++-mingw-w64*' mingw-w64-common mingw-w64-tools 'libz-mingw-w64*' cabextract
         dpaths com "COM Wine prefix + winetricks" "$HOME/.local/share/wine/com" "$HOME/.local/bin/winetricks"
     fi
+    has install-retro    && dpaths retro "Retro font acquisition logs" "$ASSETS"/logs/retro-fonts-*.log
+    has install-retro    && dpaths retro "Retro helper and config" "$HOME/.local/lib/dev-retro" "$HOME/.config/dev-retro"
     has install-retro    && dpaths retro "Open Watcom v2 + ~/win31" /opt/watcom "$HOME/win31"
-    has install-retro    && dapt   retro "DOSBox-X (apt)" dosbox-x
+    has install-retro    && dapt   retro "DOSBox-X + ISO authoring (apt)" dosbox-x genisoimage libarchive-tools
     # v92: QEMU and the new guests' workspaces (their disk images grow as Windows is installed)
     has install-retro    && dapt   retro "QEMU, mtools, dosfstools (apt)" qemu-system-x86 qemu-system-gui qemu-system-common qemu-system-data qemu-utils qemu-block-extra mtools dosfstools
     has install-retro    && dpaths retro "~/win95 (DOSBox-X: hdd.img, exchange disk, media)" "$HOME/win95"
@@ -6205,7 +6846,7 @@ info "shell-agent ownership ledger" "$SHELL_AGENT_LEDGER"
 # =================================================================
 echo
 echo "================================================================="
-echo "Test Version 99 complete: ${GRN}PASS $PASS${RST}   ${RED}FAIL $FAIL${RST}   ${YEL}WARN $WARN${RST}   SKIP $SKIP"
+echo "Test Version 100 complete: ${GRN}PASS $PASS${RST}   ${RED}FAIL $FAIL${RST}   ${YEL}WARN $WARN${RST}   SKIP $SKIP"
 if [ ${#FAILED[@]} -gt 0 ]; then
     echo
     echo "Failed (must fix to get started):"

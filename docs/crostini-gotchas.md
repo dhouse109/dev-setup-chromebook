@@ -86,6 +86,9 @@ to see it in context; the comment above each fix usually tells the story.
 
 ## Network
 
+- **NuGet / PowerShell Gallery hang on IPv6** (v100; Nov 2 2026). The owner confirmed IPv4 succeeds where api.nuget.org over IPv6 hangs. Bundle acquisition and implicit restore/build commands use `DOTNET_SYSTEM_NET_DISABLEIPV6=1` only in their child process; this includes generated demo runners and Godot .NET builds. No shell profile or system IPv6 policy is changed. Dev-test makes a bounded .NET service-index request and warns on network/DNS failure; it does not infer that every network error is IPv6.
+
+
 - **One dropped pip download ended the whole setup** (`install-agentic`, v99; Oct 31 2026). The v98 run
   ended at an unhandled ConnectionResetError; pip's own partial retry did not recover. **Fix:** exported
   pip retry/socket settings (resume retries when supported), three-attempt bulk-install retries with
@@ -273,8 +276,35 @@ to see it in context; the comment above each fix usually tells the story.
 
 ## Retro
 
+- **Win95 IDE boot hang and redraw** (v100; Nov 5 2026). win95 boots image disks only; the separate IMGMAKE session still mounts X:. New win95 setup.conf/boot.conf use `output=surface` to fix maximized redraw. Keep guests off when editing output/scaler settings; do not change them from the Video menu during Setup. Untouched v99 `output=opengl` lines upgrade to surface once per file (trailing spaces allowed), atomically recording `# v100: defaults reviewed`. New files start marked. Keep the marker: restoring old values or deleting keys is respected afterwards. Edited/duplicate settings are preserved and marked reviewed too. All four DOSBox-X configs default to `[dosbox] hostkey=ctrlshift` (Ctrl+Shift+F for full screen); existing choices stay, and misplaced hostkey lines require manual review. Missing defaults are added only while the guest is stopped; win31 stays opengl and DOS stays ttf. Review owner-added folder mounts in win95 `[autoexec]` before booting; they are never removed automatically.
+
+
 - **Delphi 1's IDE crashes in a shared Wine prefix** (`install-retro`). It fails with a `winevdm.exe` page
   fault. **Fix:** give it its own 32-bit prefix inside a Wine virtual desktop, with integrated debugging
   turned off.
-- **Some Chromebooks have no `/dev/kvm`.** Windows NT 4.0 and 2000 under QEMU then run in software
-  emulation, which works but is slow. Windows 3.1 and 95 run in DOSBox-X, which doesn't need KVM.
+- **KVM availability is not the guest's configured choice** (v100). NT 4.0's auto mode uses KVM
+  when usable, otherwise TCG; win2000 defaults to intentional TCG after the Nov 5 boot finding.
+  `<guest> accel` reports selection/reason. Windows 3.1/95 use DOSBox-X and do not need KVM.
+
+- **Windows 2000 boot stalls, tablet scaling and noisy audio** (v100; Nov 5–6 2026).
+  New defaults are TCG, zoom-to-fit off and no sound. Untouched v99 ACCEL, DISPLAY_OPTS and
+  SOUND lines upgrade too: the full original value/comment/spacing must match (trailing spaces
+  allowed). Review runs once per file and atomically records `# v100: defaults reviewed`; new
+  files start marked. Keep the marker: restored old values/deleted keys are preserved afterwards.
+  Ambiguous/duplicate settings receive only the marker; running guests defer without marking. TCG completed
+  Setup where the previous selection stalled. Disabling sound alone did not fix the boot.
+  NT 4.0 remains auto, with TCG documented as an untested fallback. QEMU exchange attachment is
+  deferred until installed desktop + shutdown + exchange enable, preventing a preformatted disk
+  taking C: during Setup. See the init checklist and STEPS-winnt.md for existing installs/recovery.
+
+- **Windows 95 NE2000 and COM2** (v100; Nov 5 2026).
+  `win95 net on` uses slirp without raw-network permissions; IRQ3 requires COM2 disabled. Only an
+  absent serial2 is filled; custom conflicts/blocks require manual review. Use Tailscale IPv4
+  addresses for other laptops; guest NAT is not an inbound bridge. See the checklist/STEPS-delphi.md.
+
+- **DOSBox-X full-screen focus and live renderer changes** (v100; Nov 5–6 2026). Switching windows
+  can lose focus: click the picture, then use the mapper/host-key recovery described in the retro
+  STEPS. Shortcuts are verified by the owner during acceptance; Ctrl+Shift+F is the new host-key
+  fullscreen combination, while existing choices remain. Change output/scaler only in config with
+  the guest off; a live Video-menu change spoiled one Windows 95 Setup. The blind Ctrl+Esc, U,
+  Enter shutdown observation is Windows 95-specific, not a DOS/win31/NT procedure. No maximize default.
