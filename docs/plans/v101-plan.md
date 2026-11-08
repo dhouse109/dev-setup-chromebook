@@ -140,8 +140,14 @@ called from clients on other guests and machines: DCOM, then MIDAS/socket, then 
 - **New (Nov 7):** OLEnterprise (Delphi 3 Client/Server) is a candidate win95 transport besides the
   Socket Server, since Windows 95 lacks DCOM without the DCOM95 add-on; it needs the normal core
   (item 7) and win95 networking.
-- Owner inputs still needed: Delphi 4–7 editions; SQL Server version. Unknown to test early: 1999-era
-  SQL Server client libraries against SQL Server on Linux.
+- **Owner inputs (Nov 8):** Delphi 7 **Enterprise** (DataSnap included); database: **SQL Server 2000
+  Developer Edition** in the win2000 guest (Northwind's Customers table for `GetCustomers`; Delphi 7
+  reaches it through dbGo/ADO with SQLOLEDB, or dbExpress). Owner also has SQL Server 6.5 and Oracle
+  8.0.5 / 8i media: candidates for a later "same client, different database" step (6.5 on NT 4.0 as a
+  period piece; Oracle needs its client and Net8 configuration on the application server). Unknown to
+  test later: 1999-era SQL Server client libraries against SQL Server on Linux. Delphi 7's media is
+  loose files in a subfolder of `~/delphi/install/7`; `delphi 7 setup` finds it (AUTORUN.INF up to
+  three levels deep), and an ISO built with `genisoimage` installs it in a guest.
 - **Proven (Nov 8): a shared network between the two QEMU guests works in Crostini, and Windows 2000
   joined an NT 4.0 domain over it.** winnt40 was installed as a primary domain controller (domain
   HADAMIN). Each guest kept its user-mode NIC (internet) and got a second PCnet NIC through
