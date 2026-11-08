@@ -10300,7 +10300,7 @@ for section, key, _, _ in settings:
         ambiguous = True
     if op == 'read':
         if ambiguous or not found: sys.exit(1)
-        print(found[0][2]); sys.exit(0)
+        print(re.split(r'\s*[#;]', found[0][2], maxsplit=1)[0].strip()); sys.exit(0)
 nl = '\r\n' if b'\r\n' in raw else '\n'
 if not ambiguous:
     for section, key, value, legacy in settings:
@@ -10351,6 +10351,7 @@ dosbox_defaults() {   # migrate only existing files; setup and lazy helper paths
 config_defaults() {
     local g
     for g in win31 win95 dos; do dosbox_defaults "$g" || return; done
+    qemu_defaults winnt40
     qemu_defaults win2000
 }
 # v100 (Nov 5 2026): observations only; never migrate an owner's configs during dev-test.
@@ -10368,7 +10369,12 @@ dosbox_config_status() {
             if [ "$actual" != ctrlshift ]; then echo "$g: hostkey=$actual; recommend [dosbox] hostkey=ctrlshift (owner value kept)"; rc=1; fi
             if [ "$g" = win95 ]; then
                 actual=$(ini_setting read "$f" sdl output) || actual=missing
-                if [ "$actual" != surface ]; then echo "win95: output=$actual; recommend [sdl] output=surface with the guest off"; rc=1; fi
+                # v101 (Nov 8 2026): a recognized renderer is an owner preference, not a failure.
+                case "$actual" in
+                    default|surface|ttf|opengl|openglnb|openglpp|openglhq)
+                        echo "win95: output=$actual (owner profile; surface for windowed redraw, OpenGL for stretching)" ;;
+                    *) echo "win95: output=$actual is missing/ambiguous or unrecognized; verify installed-build support"; rc=1 ;;
+                esac
                 if awk 'BEGIN { a=0; found=0 } /^[[:space:]]*\[/ { a=(tolower($0) ~ /^[[:space:]]*\[autoexec\]/) } a && tolower($0) ~ /^[[:space:]]*mount[[:space:]]+[a-z][[:space:]]/ { found=1 } END { exit !found }' "$f"; then
                     echo "win95: folder mount in autoexec; review before boot c: (left unchanged)"; rc=1
                 fi
@@ -10981,10 +10987,11 @@ win95_snapshot() {   # win95_snapshot save|restore|list|delete [NAME] [--yes]
 qemu_config() {   # qemu_config [GUEST]: defaults, then the guest's config file (written once by dev-setup; edit freely)
     # v100 (Nov 5 2026): nested-KVM boot stalls, tablet scaling and noisy AC97 affect win2000 only.
     case "${1:-$GUEST}" in
-        winnt40) MEM=128; HPET=off; DISK_GB=4; SOUND=sb16; MOUSE=ps2; ACCEL=auto; DISPLAY_OPTS="gtk,zoom-to-fit=on" ;;
-        win2000) MEM=256; HPET=on; DISK_GB=8; SOUND=none; MOUSE=tablet; ACCEL=tcg; DISPLAY_OPTS="gtk,zoom-to-fit=off" ;;
+        winnt40) CPU=pentium; MEM=128; HPET=off; DISK_GB=4; SOUND=sb16; MOUSE=ps2; ACCEL=auto; DISPLAY_OPTS="gtk,zoom-to-fit=on" ;;
+        win2000) CPU=pentium3; MEM=256; HPET=on; DISK_GB=8; SOUND=none; MOUSE=tablet; ACCEL=tcg; DISPLAY_OPTS="gtk,zoom-to-fit=off" ;;
     esac
-    CPU=pentium3; MACHINE=pc; DISK_FORMAT=qcow2; VIDEO=cirrus; NIC=pcnet; EXTRA_ARGS=""
+    AUDIO_BACKEND=auto
+    MACHINE=pc; DISK_FORMAT=qcow2; VIDEO=cirrus; NIC=pcnet; EXTRA_ARGS=""
     # shellcheck disable=SC1091
     [ -f "$WS/config" ] && . "$WS/config"
     DISK="$WS/disk.qcow2"; [ "$DISK_FORMAT" = raw ] && DISK="$WS/disk.img"
@@ -11022,10 +11029,53 @@ pick_accel() {
 accel_status() {
     qemu_config "$GUEST"
     pick_accel
-    echo "$GUEST: $ACCEL_NOTE; display=$DISPLAY_OPTS; sound=$SOUND"
+    audio_args || return 1
+    echo "$GUEST: $ACCEL_NOTE; display=$DISPLAY_OPTS; sound=$SOUND; audio=$AUDIO_NOTE"
+}
+# v101 (Nov 8 2026: NT hal.dll STOP on Pentium III): review NT's CPU once, independently of v100.
+qemu_nt_defaults() {
+    if running winnt40; then echo 'NOTE: winnt40 CPU review deferred until stopped.' >&2; return 0; fi
+    python3 - "$HOME/winnt40/config" << 'NT_CPU_DEFAULTS_PY'
+import os, re, stat, sys, tempfile
+from pathlib import Path
+p = Path(sys.argv[1])
+if p.is_symlink():
+    print('NOTE: winnt40/config: symlink preserved; review CPU manually.', file=sys.stderr)
+    sys.exit(0)
+if not p.is_file(): sys.exit(0)
+raw = p.read_bytes()
+lines = raw.decode('latin-1').splitlines(keepends=True)
+marker = '# v101: NT CPU reviewed'
+if any(line.rstrip('\r\n') == marker for line in lines): sys.exit(0)
+active = [line for line in lines if line.strip() and not line.lstrip().startswith('#')]
+assignment = re.compile(r'^\s*(?:export\s+)?[A-Za-z_][A-Za-z_0-9]*=')
+complex_config = any(not assignment.match(line) or any(c in line for c in ('`', '$(', ';', '&', '|', '<', '>', '\\\n')) for line in active)
+count = sum(len(re.findall(r'\bCPU\s*=', line)) for line in active)
+ambiguous = complex_config or count > 1
+nl = '\r\n' if b'\r\n' in raw else '\n'
+legacy = 'CPU=pentium3            # pentium if setup blue-screens on this model'
+if ambiguous:
+    print('NOTE: winnt40/config: complex or duplicate CPU; preserved for manual review.', file=sys.stderr)
+else:
+    for i, line in enumerate(lines):
+        old = line.rstrip('\r\n')
+        if old.rstrip(' ') == legacy:
+            lines[i] = 'CPU=pentium            # v101: NT Setup hal.dll STOP workaround' + line[len(old):]
+    if not count:
+        if lines and not lines[-1].endswith(('\r', '\n')): lines[-1] += nl
+        lines.append('CPU=pentium' + nl)
+lines.insert(0, marker + nl)
+fd, temp = tempfile.mkstemp(prefix='.config.', dir=p.parent)
+try:
+    with os.fdopen(fd, 'wb') as f: f.write(''.join(lines).encode('latin-1'))
+    os.chmod(temp, stat.S_IMODE(p.stat().st_mode)); os.replace(temp, p)
+finally:
+    if os.path.exists(temp): os.unlink(temp)
+NT_CPU_DEFAULTS_PY
 }
 # v100 (Nov 5 2026): never source configs merely to add absent defaults. Ambiguous shell is left for review.
 qemu_defaults() {
+    if [ "$1" = winnt40 ]; then qemu_nt_defaults; return; fi
     [ "$1" = win2000 ] || return 0
     if running "$1"; then echo "NOTE: win2000 config defaults deferred until stopped." >&2; return 0; fi
     python3 - "$HOME/win2000/config" << 'QEMU_DEFAULTS_PY'
@@ -11130,7 +11180,13 @@ qemu_preferences() {   # observational only; never applies defaults
     if [ "$GUEST" = win2000 ]; then
         [ "$ACCEL" = tcg ] || { echo 'win2000: recommend ACCEL=tcg for boot stalls (owner value kept)'; rc=1; }
         [[ "$DISPLAY_OPTS" == *zoom-to-fit=off* ]] || { echo 'win2000: recommend zoom-to-fit=off for tablet alignment'; rc=1; }
-        [ "$SOUND" = none ] || { echo 'win2000: recommend SOUND=none to avoid audio errors'; rc=1; }
+
+    fi
+    # v101: selected sound is informational; an unavailable explicit backend is actionable.
+    if audio_args; then echo "$GUEST: audio=$AUDIO_NOTE"
+    else echo "$GUEST: configured audio unavailable (owner value kept)"; rc=1; fi
+    if [ "$GUEST" = winnt40 ] && [ "$CPU" = pentium3 ]; then
+        echo 'winnt40: CPU=pentium3 caused hal.dll STOP; recommend CPU=pentium (owner value kept)'; rc=1
     fi
     echo "$GUEST: exchange $(exchange_gate state)"
     if [ -f "$DISK" ] && ! exchange_gate check; then
@@ -11139,14 +11195,31 @@ qemu_preferences() {   # observational only; never applies defaults
     return "$rc"
 }
 
-audio_args() {   # the sound card on PulseAudio (PipeWire's pulse server too), found by its socket; else silent
-    case "$SOUND" in none|"") return 0 ;; esac
-    if [ -S "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/pulse/native" ] || { command -v pactl > /dev/null 2>&1 && pactl info > /dev/null 2>&1; }; then
-        echo "-audiodev pa,id=snd0 -device $SOUND,audiodev=snd0"
-    else
-        echo "No PulseAudio socket here: the guest's $SOUND card is silent." >&2
-        echo "-audiodev none,id=snd0 -device $SOUND,audiodev=snd0"
-    fi
+# v101 (Nov 8 2026): capability/socket checks do not start audio services or retry a running guest.
+audio_has() { qemu-system-i386 -audiodev help 2>/dev/null | grep -Fx "$1" >/dev/null; }
+audio_socket() { [ -S "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/$1" ]; }
+audio_args() {
+    AUDIO_ARGS=(); AUDIO_SELECTED=none; AUDIO_NOTE='sound disabled'
+    case "$SOUND" in none|"") return 0 ;; sb16|AC97) ;; *) echo "Unsupported SOUND=$SOUND; use sb16, AC97 or none." >&2; return 1 ;; esac
+    local want=${AUDIO_BACKEND:-auto} backend=""
+    case "$want" in
+        auto)
+            if audio_has pipewire && audio_socket pipewire-0; then backend=pipewire
+            elif audio_has pa && audio_socket pulse/native; then backend=pa
+            elif audio_has none; then backend=none
+            else echo 'QEMU has no usable audio backend.' >&2; return 1; fi ;;
+        pipewire|pa)
+            audio_has "$want" || { echo "Requested AUDIO_BACKEND=$want is not offered by QEMU." >&2; return 1; }
+            if [ "$want" = pipewire ]; then audio_socket pipewire-0
+            else audio_socket pulse/native; fi || { echo "Requested AUDIO_BACKEND=$want has no local runtime socket; use auto or none." >&2; return 1; }
+            backend=$want ;;
+        none) audio_has none || return 1; backend=none ;;
+        *) echo "Invalid AUDIO_BACKEND=$want; use auto, pipewire, pa or none." >&2; return 1 ;;
+    esac
+    AUDIO_SELECTED=$backend
+    AUDIO_NOTE="$backend ($want); card=$SOUND"
+    [ "$backend" != none ] || AUDIO_NOTE="silent backend ($want); card=$SOUND"
+    AUDIO_ARGS=(-audiodev "$backend,id=snd0" -device "$SOUND,audiodev=snd0")
 }
 qmp() {   # qmp JSON: one command on the guest's QMP socket; prints the result, exit 1 on an error
     local sock="$WS/.qmp.sock"
@@ -11212,11 +11285,11 @@ qemu_launch() {   # qemu_launch BOOT(c|d|a) [CD] [FLOPPY]
     case "$boot" in d|a) args+=(-boot "once=$boot") ;; *) args+=(-boot c) ;; esac
     pick_accel
     args+=("${ACCEL_ARGS[@]}")
-    # shellcheck disable=SC2207
-    args+=($(audio_args))
+    audio_args || return 1
+    args+=("${AUDIO_ARGS[@]}")
     # shellcheck disable=SC2206
     [ -n "$EXTRA_ARGS" ] && args+=($EXTRA_ARGS)
-    echo "$TITLE on QEMU: $ACCEL_NOTE; $MEM MB, CPU $CPU, ${DISK##*/}."
+    echo "$TITLE on QEMU: $ACCEL_NOTE; $MEM MB, CPU $CPU, ${DISK##*/}; audio=$AUDIO_NOTE."
     [ "$MOUSE" = ps2 ] && echo "The mouse is captured on click: Ctrl+Alt+G releases it."
     echo "Ctrl+Alt+Del for the login: '$GUEST keys ctrl-alt-del' (ChromeOS keeps the real one)."
     rm -f "$WS/.qmp.sock"
@@ -12550,23 +12623,27 @@ RETRO_COLOR_DEFAULT
     for RETRO_G in winnt40 win2000; do
         [ -f ~/"$RETRO_G"/config ] && continue
         if [ "$RETRO_G" = winnt40 ]; then
+            R_CPU=pentium; R_CPU_MARKER='# v101: NT CPU reviewed'
             R_MEM=128; R_HPET=off; R_DISK=4; R_SOUND=sb16; R_MOUSE=ps2; R_ACCEL=auto; R_DISPLAY=gtk,zoom-to-fit=on
         else
+            R_CPU=pentium3; R_CPU_MARKER=""
             R_MEM=256; R_HPET=on; R_DISK=8; R_SOUND=none; R_MOUSE=tablet; R_ACCEL=tcg; R_DISPLAY=gtk,zoom-to-fit=off
         fi
         cat > ~/"$RETRO_G"/config << EOF_RCFG
 # ~/$RETRO_G/config - written by dev-setup (install-retro) once; edit freely, setup leaves it alone.
 # v100: defaults reviewed
+$R_CPU_MARKER
 # Read by '$RETRO_G' each time it starts QEMU.
 MEM=$R_MEM                # MB
-CPU=pentium3            # pentium if setup blue-screens on this model
+CPU=$R_CPU            # v101: Pentium for NT hal.dll STOP; Windows 2000 stays Pentium III
 MACHINE=pc
 HPET=$R_HPET               # on cuts Windows 2000's idle CPU use
 DISK_GB=$R_DISK              # the size '$RETRO_G setup' creates (NT 4.0 setup cannot format over 4 GB)
 DISK_FORMAT=qcow2       # qcow2 (snapshots), or raw: '$RETRO_G setup --raw' (NT 4.0's old qcow2 boot bug)
 VIDEO=cirrus            # both ship a Cirrus driver; skip NT 4.0's display "Test" button, which can hang
 NIC=pcnet               # AMD PCnet, user-mode networking; none turns it off
-SOUND=$R_SOUND             # sb16, AC97 or none (drivers on the install CDs)
+SOUND=$R_SOUND             # sb16, AC97 or none (owner supplies any required driver)
+AUDIO_BACKEND=auto      # v101: pipewire when available, then pa, then silent; explicit overrides supported
 MOUSE=$R_MOUSE             # ps2 (captured; Ctrl+Alt+G releases it) or tablet (USB: Windows 2000)
 # v100 (Nov 5 2026): win2000 uses TCG for nested-KVM stalls, unscaled tablet and no noisy AC97.
 ACCEL=$R_ACCEL              # auto (KVM when usable), kvm or tcg; explicit owner values stay

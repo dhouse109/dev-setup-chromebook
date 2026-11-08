@@ -317,3 +317,31 @@ The headless blank-disk test keeps stderr, timestamped QMP events and a result r
 accelerator and failure phase, then bounds quit/TERM/KILL cleanup for its own child. It never
 opens an installed guest disk or retries a KVM failure into a PASS. `quick` skips this real probe.
 Read those diagnostics before attributing a stall to KVM; the v100 timeout's cause is unproven.
+
+
+### v101 retro profiles and NT CPU
+
+New NT 4.0 configs use CPU=pentium after the observed Pentium III hal.dll STOP. Existing simple
+configs upgrade only the untouched v100 CPU template (or an absent CPU) once, recording
+`# v101: NT CPU reviewed`. Edited/duplicate/complex settings stay; running guests defer and
+symlink configs stay untouched. Keep both v100 and v101 review markers: later restored/deleted
+settings are owner choices. Windows 2000's CPU and TCG/no-sound defaults stay unchanged.
+
+For NT's drifting PS/2 pointer, use View > Grab On Hover/click capture, Ctrl+Alt+G to release and a
+slower speed in Control Panel > Mouse > Motion. Install NT's Cirrus driver for better drawing;
+skip the display Test button. No USB tablet or VMware mouse driver is added. NT KVM/TCG speed
+and Windows 2000 KVM/audio variants remain owner-run checks, one change at a time with backups.
+
+For a windowed win95 profile, keep `[sdl] output=surface` for maximized redraw. For the owner's
+full-screen stretching profile, edit the stopped guest's config to `[sdl] output=opengl` with
+`fullresolution=desktop` and `[render] aspect=false`, then use Ctrl+Shift+F with the default mapper.
+Stretching can distort aspect ratio and OpenGL may flicker in a maximized window. win31 retains
+OpenGL; verify its full-screen profile separately. DOS text stays ttf. Valid recognized renderer
+choices are informational; missing/duplicate/unrecognized values and unsafe mounts still WARN.
+Never edit the renderer from the live Video menu during Setup.
+
+The owner's Delphi 3 OLEnterprise Object Agent hung/crashed win95 with the dynamic core. Recover
+with `win95 --core normal`; with the guest off, set `[cpu] core=normal` in boot.conf to keep it.
+Setup already uses normal. If the agent is unused, inspect Startup/vendor options and disable
+only the identified action. Do not guess a Run/RunServices registry key; export a confirmed entry
+before editing. This is a finding for that installation, not a guarantee about all RPC software.

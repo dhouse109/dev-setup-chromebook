@@ -30,7 +30,7 @@ in the scripts. They are coarser than the rest, and a version with no surviving 
 The installer: it sets up each stack the flags name. Newest version first.
 
 - **v101** (build in progress; not yet confirmed run on a Chromebook):
-  - Version bump only in stage 2; v101 source archives use a regular shared-rules import and CI checks.
+  - Source archives use a regular shared-rules import and CI checks. NT defaults to Pentium with an independent once-only review; audio auto prefers available native PipeWire, with explicit backend overrides. Valid owner renderers are informational.
 
 - **v100** (owner accepted Nov 7, 2026, with known issues):
   - NuGet downloads and builds use IPv4 without changing system networking.
@@ -136,7 +136,7 @@ The installer: it sets up each stack the flags name. Newest version first.
 The test script: it checks that what setup installed works. Newest version first.
 
 - **v101** (build in progress; not yet confirmed run on a Chromebook):
-  - Save QEMU smoke-test diagnostics before waits, correlate QMP replies and bound owned-child cleanup. Errors remain FAIL.
+  - Save QEMU smoke-test diagnostics before waits, correlate QMP replies and bound owned-child cleanup. Errors remain FAIL. Isolated checks cover NT CPU preservation, audio policy and renderer diagnostics.
 
 - **v100** (owner accepted Nov 7, 2026, with known issues):
   - .NET checks use IPv4; the connectivity probe reports a warning if unreachable.
@@ -212,7 +212,7 @@ The test script: it checks that what setup installed works. Newest version first
 The init script: logins, keys and config from secrets.env. Newest version first.
 
 - **v101** (build in progress; not yet confirmed run on a Chromebook):
-  - Version bump only.
+  - Report the new retro CPU/audio capabilities without claiming guest acceptance.
 
 - **v100** (owner accepted Nov 7, 2026, with known issues):
   - Retro messages report selected acceleration instead of promising KVM use.
@@ -271,7 +271,7 @@ The init script: logins, keys and config from secrets.env. Newest version first.
 The optional demo script: hands-on demos in ~/dev-demo, outside the test loop. Newest version first.
 
 - **v101** (build in progress; not yet confirmed run on a Chromebook):
-  - Version bump only.
+  - Refresh qualified NT CPU/pointer, SB16/PipeWire, display-profile and OLEnterprise normal-core instructions.
 
 - **v100** (owner accepted Nov 7, 2026, with known issues):
   - .NET and PowerShell demo downloads and runners use IPv4; existing projects are preserved.

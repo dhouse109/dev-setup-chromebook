@@ -178,5 +178,16 @@ for line in f:
         self.assertIn('cleanup-complete', events)
 
 
+class RetroDefaults(unittest.TestCase):
+    def test_shared_installed_helper_contract_in_scratch_home(self):
+        with tempfile.TemporaryDirectory(prefix='v101-defaults-', dir=ROOT / 'assets') as tmp:
+            root = Path(tmp)
+            helper = root / 'helper'
+            helper.write_text(embedded('setup', 'DEVRETRO_EOF'))
+            env = dict(PATH='/usr/bin:/bin', HOME=str(root), WORK=str(root), RETRO_HELPER=str(helper))
+            result = subprocess.run(['/usr/bin/python3', '-c', embedded('test', 'RETRO_DEFAULTS_V101_PY')], env=env, text=True, capture_output=True, timeout=60)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()

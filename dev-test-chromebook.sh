@@ -5655,7 +5655,7 @@ RETRO_NET_CHECK_PY
     info "win95 network configuration" "$(~/.local/lib/dev-retro/dev-retro win95 net status)"
     warn "win95 networking: no edited blocks or resource conflicts" '~/.local/lib/dev-retro/dev-retro win95 net check'
     # v100 (Nov 5 2026): config preferences warn; fixture failures are bundle regressions.
-    warn "DOSBox-X host key, win95 renderer and custom boot mounts" '~/.local/lib/dev-retro/dev-retro retro config-status'
+    warn "DOSBox-X host key, valid renderer and custom boot mounts" '~/.local/lib/dev-retro/dev-retro retro config-status'
     hint "With guests stopped, choose [dosbox] hostkey=ctrlshift and win95 [sdl] output=surface; explicit choices are preserved. Review folder mounts in win95 autoexec."
     cat > "$WORK/retro-config-check.py" << 'RETRO_CONFIG_CHECK_PY'
 import os, subprocess, tempfile
@@ -5833,7 +5833,7 @@ with tempfile.TemporaryDirectory(prefix='qemu-fixture-', dir=os.environ['WORK'])
         p = bindir / name; p.write_text(body); p.chmod(0o755)
     for engine in ('dosbox-x', 'wine', 'wineboot', 'wineserver'):
         executable(engine, '#!/bin/sh\nexit 97\n')
-    executable('qemu-system-i386', '#!/usr/bin/python3\nimport json,os,sys\nfrom pathlib import Path\nPath(os.environ["WORK"]+"/args.json").write_text(json.dumps(sys.argv[1:]))\n')
+    executable('qemu-system-i386', '#!/usr/bin/python3\nimport json,os,sys\nfrom pathlib import Path\nif sys.argv[1:]==["-audiodev","help"]: print("none"); raise SystemExit(0)\nPath(os.environ["WORK"]+"/args.json").write_text(json.dumps(sys.argv[1:]))\n')
     executable('qemu-img', '#!/bin/sh\n[ "$1" = create ] || exit 97\ntouch "$5"\n')
     executable('pactl', '#!/bin/sh\nexit 1\n')
     executable('mcopy', '#!/bin/sh\ntouch "$WORK/copied"\n')
@@ -5971,6 +5971,77 @@ EXTRA_ARGS=""           # more QEMU options, e.g. "-smp 2"
 print('QEMU fixtures: once-only v99 upgrade/marker, restored values/deleted keys on launch, edited values/comments/duplicates/running preservation, defaults, overrides, gate/identity, fresh/resumed/CD/floppy/raw setup, run/put guards and 9 acceleration cases PASS')
 RETRO_QEMU_CHECK_PY
     check "QEMU defaults, exchange completion and acceleration (isolated)" 'RETRO_HELPER="$HOME/.local/lib/dev-retro/dev-retro" python3 "$WORK/retro-qemu-check.py"' 180
+    # v101: the same isolated source fixture runs in portable regressions and against the installed helper.
+    cat > "$WORK/retro-v101-check.py" << 'RETRO_DEFAULTS_V101_PY'
+"""v101 defaults/audio/preferences: isolated HOME, fake engines, no guest or real settings."""
+import os
+from pathlib import Path
+import subprocess
+import tempfile
+
+original = Path(os.environ['RETRO_HELPER']).read_text()
+definitions = original.rsplit('main "$@"; exit $?', 1)[0]
+with tempfile.TemporaryDirectory(prefix='retro-v101-', dir=os.environ['WORK']) as tmp:
+    root = Path(tmp); home = root / 'home'; home.mkdir(); bindir = root / 'bin'; bindir.mkdir()
+    for name in ('qemu-system-i386', 'qemu-img', 'wine', 'wineboot', 'wineserver', 'dosbox-x'):
+        p = bindir / name; p.write_text('#!/bin/sh\nexit 97\n'); p.chmod(0o755)
+    helper = root / 'definitions.sh'; helper.write_text(definitions)
+    env = dict(HOME=str(home), PATH=str(bindir)+':/usr/bin:/bin', LC_ALL='C.UTF-8')
+    def call(code, ok=True):
+        r = subprocess.run(['bash','--noprofile','--norc','-c','. "$1"; '+code, '_', str(helper)], env=env, text=True, capture_output=True, timeout=15)
+        assert (r.returncode == 0) == ok, r.stdout+r.stderr
+        return r
+    config = home / 'winnt40/config'; config.parent.mkdir()
+    legacy = b'CPU=pentium3            # pentium if setup blue-screens on this model'
+    marker = b'# v101: NT CPU reviewed'
+    config.write_bytes(b'# v100: defaults reviewed\r\n'+legacy+b'  \r\nMEM=128\r\n')
+    config.chmod(0o640)
+    call('running() { return 1; }; qemu_defaults winnt40')
+    upgraded = config.read_bytes()
+    assert b'CPU=pentium ' in upgraded and b'\r\n' in upgraded and upgraded.count(marker) == 1
+    assert config.stat().st_mode & 0o777 == 0o640
+    for chosen in (marker+b'\n'+legacy+b'\n', marker+b'\nMEM=160\n'):
+        config.write_bytes(chosen); call('running() { return 1; }; qemu_defaults winnt40')
+        assert config.read_bytes() == chosen
+    for chosen in (b'CPU=pentium3 # owner\n', b'CPU=pentium3\nCPU=pentium\n', b'if true; then CPU=pentium3; fi\n'):
+        config.write_bytes(chosen); call('running() { return 1; }; qemu_defaults winnt40')
+        assert config.read_bytes() == marker+b'\n'+chosen
+    config.write_bytes(b'MEM=128\n'); call('running() { return 1; }; qemu_defaults winnt40')
+    assert b'CPU=pentium\n' in config.read_bytes()
+    config.write_bytes(legacy+b'\n'); call('running() { return 0; }; qemu_defaults winnt40')
+    assert config.read_bytes() == legacy+b'\n'
+    target = root/'target'; target.write_bytes(legacy+b'\n'); config.unlink(); config.symlink_to(target)
+    call('running() { return 1; }; qemu_defaults winnt40'); assert target.read_bytes() == legacy+b'\n'
+    config.unlink()
+    r = call('GUEST=winnt40; guest_info "$GUEST"; qemu_config; echo "$CPU $ACCEL $AUDIO_BACKEND"')
+    assert 'pentium auto auto' in r.stdout
+    r = call('GUEST=win2000; guest_info "$GUEST"; qemu_config; echo "$CPU $ACCEL $SOUND"')
+    assert 'pentium3 tcg none' in r.stdout
+    # Capabilities and sockets are stubs; no real audio client or engine starts.
+    stubs = '''
+audio_has() { case " $DRIVERS " in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
+audio_socket() { case " $SOCKETS " in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
+SOUND=sb16; AUDIO_BACKEND=auto
+'''
+    for drivers, sockets, selected in (('pipewire pa none','pipewire-0 pulse/native','pipewire'), ('pa none','pulse/native','pa'), ('pipewire pa none','','none')):
+        r = call(stubs+f'DRIVERS="{drivers}"; SOCKETS="{sockets}"; audio_args || exit; echo "$AUDIO_SELECTED"; printf "[%s]" "${{AUDIO_ARGS[@]}}"')
+        assert r.stdout.startswith(selected+'\n') and r.stdout.count('[\x2daudiodev]') == 1 and '[sb16,audiodev=snd0]' in r.stdout
+    call(stubs+'DRIVERS=none; SOCKETS=""; AUDIO_BACKEND=pipewire; audio_args', ok=False)
+    call(stubs+'DRIVERS=pipewire; SOCKETS=""; AUDIO_BACKEND=pipewire; audio_args', ok=False)
+    r = call(stubs+'DRIVERS=""; SOCKETS=""; SOUND=none; audio_args; echo "${#AUDIO_ARGS[@]}"')
+    assert r.stdout.strip() == '0'
+    ws = home/'win95'; ws.mkdir()
+    for filename in ('setup.conf','boot.conf'):
+        (ws/filename).write_text('# v100: defaults reviewed\n[dosbox]\nhostkey=ctrlshift\n[sdl]\noutput=opengl\n')
+    before = (ws/'boot.conf').read_bytes()
+    r = call('dosbox_config_status'); assert 'owner profile' in r.stdout
+    assert (ws/'boot.conf').read_bytes() == before
+    for value in ('output=bogus\n', 'output=surface\noutput=opengl\n', ''):
+        (ws/'boot.conf').write_text('# v100: defaults reviewed\n[dosbox]\nhostkey=ctrlshift\n[sdl]\n'+value)
+        call('dosbox_config_status', ok=False)
+print('v101 retro: NT once-only preservation, fallback separation, audio policy/argv, renderer diagnostics PASS')
+RETRO_DEFAULTS_V101_PY
+    check "v101 NT CPU, audio policy and renderer preferences (isolated)" 'RETRO_HELPER="$HOME/.local/lib/dev-retro/dev-retro" python3 "$WORK/retro-v101-check.py"' 120
     # v100 (Nov 5–6 2026): read-only preferences warn; a disk does not prove Windows installation.
     for G in winnt40 win2000; do
         info "QEMU selection $G" "$(~/.local/lib/dev-retro/dev-retro "$G" accel)"

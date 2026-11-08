@@ -2260,6 +2260,8 @@ fi
 # they are there yet.
 if has install-retro; then
     section "DOS / Windows 3.x development (install-retro)"
+    # v101 (Nov 8 2026): capability guidance, not guest/audio acceptance.
+    echo "Retro v101: NT defaults to Pentium; audio auto prefers available PipeWire. Guest/media checks remain manual."
     if ! command -v dosbox-x > /dev/null 2>&1; then
         todo "dosbox-x not found: rerun dev-setup with install-retro"
     else
