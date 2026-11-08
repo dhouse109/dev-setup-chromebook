@@ -83,8 +83,23 @@ bounded cleanup, and clear reporting of KVM vs TCG; no root cause is claimed yet
 
 v100 moved item 8's fresh-install acceptance (NT/2000 Setup runs without the exchange disk, Windows
 installs to C:, the disk attaches only after `exchange enable`) to the owner's first winnt40
-install. It has not happened yet. Expect the win2000 findings (item 3) to apply to NT 4.0 as well;
-record what NT 4.0 does on KVM and TCG.
+install. Expect the win2000 findings (item 3) to apply to NT 4.0 as well; record what NT 4.0 does
+on KVM and TCG.
+
+- **Done (Nov 8): fresh-install acceptance passed.** During `winnt40 setup` the exchange disk was
+  withheld: text-mode Setup listed only the 4095 MB system disk, and its new partition was C:.
+- **Finding (Nov 8): NT 4.0 Setup blue-screens on the default CPU.** Three different NT 4.0 Server
+  ISOs stopped at the start of text-mode Setup with `STOP 0x1E` (KMODE_EXCEPTION_NOT_HANDLED,
+  `0xC0000005`) in `hal.dll`, CPUID `GenuineIntel 6.7.3` (QEMU `pentium3`). `CPU=pentium` fixed it;
+  Setup detected an "MPS Uniprocessor PC". Plan: make `CPU=pentium` winnt40's default (the config
+  comment already suggests it), through v100's once-only defaults review for existing configs.
+- **Finding (Nov 8): drawing is slow, and the PS/2 pointer drifts from the host pointer** (with
+  zoom-to-fit on or off). NT 4.0 has no USB, so the USB tablet can't be used. Plan should settle:
+  docs (capture with View > Grab On Hover, Ctrl+Alt+G releases; NT's mouse acceleration off via
+  `HKCU\Control Panel\Mouse` MouseSpeed/MouseThreshold1/MouseThreshold2 = 0; NT's Cirrus Logic
+  display driver instead of the 16-colour VGA driver); whether QEMU's VMware-compatible absolute
+  mouse is worth supporting with an owner-supplied VMware Tools NT 4.0 mouse driver (bring your own
+  media); whether winnt40 should also default to TCG (record the owner's KVM/TCG observation).
 
 ## 6. DOSBox-X full-screen profile and the renderer-preference WARN
 
@@ -124,7 +139,23 @@ called from clients on other guests and machines: DCOM, then MIDAS/socket, then 
 - **New (Nov 7):** OLEnterprise (Delphi 3 Client/Server) is a candidate win95 transport besides the
   Socket Server, since Windows 95 lacks DCOM without the DCOM95 add-on; it needs the normal core
   (item 7) and win95 networking.
-- Owner inputs still needed: Delphi 4–7 editions; SQL Server version. Unknowns to test early: 1999-era
-  SQL Server client libraries against SQL Server on Linux; the shared QEMU socket network in Crostini.
+- Owner inputs still needed: Delphi 4–7 editions; SQL Server version. Unknown to test early: 1999-era
+  SQL Server client libraries against SQL Server on Linux.
+- **Proven (Nov 8): a shared network between the two QEMU guests works in Crostini, and Windows 2000
+  joined an NT 4.0 domain over it.** winnt40 was installed as a primary domain controller (domain
+  HADAMIN). Each guest kept its user-mode NIC (internet) and got a second PCnet NIC through
+  `EXTRA_ARGS`, linked by a point-to-point UDP socket with a unique MAC per guest:
+  - winnt40: `-nic socket,model=pcnet,mac=52:54:00:50:00:10,udp=127.0.0.1:10002,localaddr=127.0.0.1:10001`
+  - win2000: `-nic socket,model=pcnet,mac=52:54:00:50:00:20,udp=127.0.0.1:10001,localaddr=127.0.0.1:10002`
+  - Static IPs on the second NICs: 192.168.50.10 (NT, the DC) and 192.168.50.20 (2000, WINS =
+    192.168.50.10), mask 255.255.255.0, no gateway. NT's NWLink asked for a non-zero internal
+    network number with two adapters.
+  - Two failures on the way: a multicast socket (`mcast=230.0.0.1:1234,localaddr=127.0.0.1`)
+    without explicit MACs got no ping replies. QEMU gives every guest's second NIC the same default
+    MAC (52:54:00:12:34:57), so explicit MACs are required either way; whether multicast itself
+    works in Crostini is untested.
+  - Plan should settle: a supported way to configure this link (for example a `retro lan on|off`
+    command or config keys for a second NIC, port and address per guest), docs, and dev-test checks
+    of the generated arguments. This also covers a "domain lab" use beyond DCOM.
 - Item 3's outcome (KVM or TCG) affects how practical two running QEMU guests are on an 8 GB
   Chromebook; the plan should size this before committing to stage 2.
