@@ -3,8 +3,9 @@
 Guidance for coding agents working in this repository (Claude Code, Codex, or any other). Read this first,
 then the plan for the version you are building (`docs/plans/vNN-plan.md`).
 
-`CLAUDE.md` is a symlink to this file, so Claude Code and Codex read the same rules. Edit `AGENTS.md`;
-never replace the symlink with a copy (v98: the bundle is now also worked on with Codex CLI, locally).
+`AGENTS.md` holds the shared rules. `CLAUDE.md` is a regular file importing it with `@AGENTS.md`.
+Edit `AGENTS.md`; do not duplicate the rules or restore the old symlink. v101 uses an import because
+ChromeOS Files could not extract the symlink in release archives. Keep tracked files free of symlinks.
 
 ## What this repo is
 

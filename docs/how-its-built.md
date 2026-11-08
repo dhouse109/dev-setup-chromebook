@@ -22,7 +22,9 @@ Gemini-era script, then the move to Claude). The version-by-version notes are in
 - **Who decides.** I choose what goes into each version and make every plan choice. The agents diagnose,
   propose the choices (with one marked recommended), build, test, and review.
 - **The rules.** One instruction file holds the repo's rules for whichever agent is working:
-  `CLAUDE.md` through v97, then `AGENTS.md` from v98, with `CLAUDE.md` a symlink to it.
+  `CLAUDE.md` through v97, then `AGENTS.md` from v98, initially with `CLAUDE.md` a symlink to it.
+  v101 replaces that link with a regular `CLAUDE.md` importing `@AGENTS.md`, so ChromeOS Files can
+  extract the source zip while both agents still share the same rules.
 - **The referee.** `dev-test` on a real Chromebook. CI (`bash -n`, ShellCheck, gitleaks, the one-version
   check) catches the rest on every push.
 

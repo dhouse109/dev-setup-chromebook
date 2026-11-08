@@ -29,6 +29,9 @@ All four take the same flags, so `install-web install-node` means the same thing
 
 Since v94, releases are a tag plus a GitHub Release with GitHub-generated source zip/tar archives
 only. The old release kit was last used for v93 and is retired.
+The v101 candidate uses a regular `CLAUDE.md` import so ChromeOS Files can extract it. Archive
+integrity, modes and contents are checked by `tests/check_release_archive.py`; final acceptance
+also requires extracting the actual GitHub source zip in Files.
 
 > **Current version: v100.** Retro setup reviews guest defaults once per config and records `# v100: defaults reviewed`; new configs start marked and later owner choices are preserved. Owner accepted Nov 7, 2026 with the recorded known issues. [CHANGELOG.md](CHANGELOG.md) has the full history.
 
