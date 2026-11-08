@@ -95,8 +95,9 @@ on KVM and TCG.
   comment already suggests it), through v100's once-only defaults review for existing configs.
 - **Finding (Nov 8): drawing is slow, and the PS/2 pointer drifts from the host pointer** (with
   zoom-to-fit on or off). NT 4.0 has no USB, so the USB tablet can't be used. Plan should settle:
-  docs (capture with View > Grab On Hover, Ctrl+Alt+G releases; NT's mouse acceleration off via
-  `HKCU\Control Panel\Mouse` MouseSpeed/MouseThreshold1/MouseThreshold2 = 0; NT's Cirrus Logic
+  docs (capture with View > Grab On Hover, Ctrl+Alt+G releases; a slower pointer speed in NT's Control
+  Panel > Mouse > Motion (the owner's working fix, Nov 8; the registry's MouseSpeed/MouseThreshold
+  values are the fallback); NT's Cirrus Logic
   display driver instead of the 16-colour VGA driver); whether QEMU's VMware-compatible absolute
   mouse is worth supporting with an owner-supplied VMware Tools NT 4.0 mouse driver (bring your own
   media); whether winnt40 should also default to TCG (record the owner's KVM/TCG observation).
