@@ -30,7 +30,7 @@ in the scripts. They are coarser than the rest, and a version with no surviving 
 The installer: it sets up each stack the flags name. Newest version first.
 
 - **v101** (build in progress; not yet confirmed run on a Chromebook):
-  - Source archives use a regular shared-rules import and CI checks. NT defaults to Pentium with an independent once-only review; audio auto prefers available native PipeWire, with explicit backend overrides. Valid owner renderers are informational.
+  - Source archives use a regular shared-rules import and CI checks. NT defaults to Pentium with an independent once-only review; quote-aware comment handling lets untouched v100 templates migrate while real shell constructs stay protected; audio auto prefers available native PipeWire, with explicit backend overrides. Valid owner renderers are informational.
 
 - **v100** (owner accepted Nov 7, 2026, with known issues):
   - NuGet downloads and builds use IPv4 without changing system networking.
@@ -136,7 +136,7 @@ The installer: it sets up each stack the flags name. Newest version first.
 The test script: it checks that what setup installed works. Newest version first.
 
 - **v101** (build in progress; not yet confirmed run on a Chromebook):
-  - Save QEMU smoke-test diagnostics before waits, correlate QMP replies and bound owned-child cleanup. Errors remain FAIL. Isolated checks cover NT CPU preservation, audio policy and renderer diagnostics.
+  - Save QEMU smoke-test diagnostics before waits, correlate QMP replies and bound owned-child cleanup. Errors remain FAIL. Isolated checks cover exact v100 NT templates in LF/CRLF, once-only CPU preservation, real shell refusal, audio policy and renderer diagnostics. Renderer hints describe both windowed and full-screen profiles.
 
 - **v100** (owner accepted Nov 7, 2026, with known issues):
   - .NET checks use IPv4; the connectivity probe reports a warning if unreachable.

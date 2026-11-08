@@ -1,4 +1,5 @@
 """v101 portable regressions. No real bundle run, guest, network or installed helper mutation."""
+import ast
 import io
 import json
 import os
@@ -179,6 +180,13 @@ for line in f:
 
 
 class RetroDefaults(unittest.TestCase):
+    def test_captured_v100_template_matches_shared_regression_input(self):
+        tree = ast.parse(embedded('test', 'RETRO_DEFAULTS_V101_PY'))
+        assignment = next(node for node in tree.body if isinstance(node, ast.Assign)
+                          and any(isinstance(target, ast.Name) and target.id == 'V100_NT_CONFIG' for target in node.targets))
+        self.assertEqual(ast.literal_eval(assignment.value),
+                         (ROOT / 'tests/fixtures/v100-winnt40.config').read_bytes())
+
     def test_shared_installed_helper_contract_in_scratch_home(self):
         with tempfile.TemporaryDirectory(prefix='v101-defaults-', dir=ROOT / 'assets') as tmp:
             root = Path(tmp)

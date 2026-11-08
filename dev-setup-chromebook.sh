@@ -11047,9 +11047,53 @@ raw = p.read_bytes()
 lines = raw.decode('latin-1').splitlines(keepends=True)
 marker = '# v101: NT CPU reviewed'
 if any(line.rstrip('\r\n') == marker for line in lines): sys.exit(0)
-active = [line for line in lines if line.strip() and not line.lstrip().startswith('#')]
+# v101 (Nov 8 2026 review): generated VIDEO/MOUSE/ACCEL comments contain shell punctuation.
+# Analyze code without trailing comments; retain the original lines for exact matching/writes.
+def without_comment(line):
+    quote, escaped, word_start = None, False, True
+    for i, char in enumerate(line):
+        if escaped:
+            escaped, word_start = False, False
+            continue
+        if char == '\\' and quote != "'":
+            escaped, word_start = True, False
+            continue
+        if quote:
+            if char == quote: quote = None
+            continue
+        if char == '#' and word_start: return line[:i]
+        if char in ("'", '"'):
+            quote, word_start = char, False
+        else:
+            word_start = char.isspace()
+    return line
+
+def complex_shell(line):
+    quote, escaped = None, False
+    for i, char in enumerate(line):
+        if escaped:
+            if char in '\r\n': return True
+            escaped = False
+            continue
+        if quote == "'":
+            if char == quote: quote = None
+            continue
+        if char == '\\':
+            escaped = True
+            continue
+        if char == '`' or line[i:i+2] == '$(': return True
+        if quote:
+            if char == quote: quote = None
+        elif char in ("'", '"'):
+            quote = char
+        elif char in ';&|<>':
+            return True
+    return escaped or quote is not None
+
+# As in v100 qemu_defaults, keep line endings and match the untouched template on original bytes.
+active = [code for line in lines if (code := without_comment(line)).strip()]
 assignment = re.compile(r'^\s*(?:export\s+)?[A-Za-z_][A-Za-z_0-9]*=')
-complex_config = any(not assignment.match(line) or any(c in line for c in ('`', '$(', ';', '&', '|', '<', '>', '\\\n')) for line in active)
+complex_config = any(not assignment.match(line) or complex_shell(line) for line in active)
 count = sum(len(re.findall(r'\bCPU\s*=', line)) for line in active)
 ambiguous = complex_config or count > 1
 nl = '\r\n' if b'\r\n' in raw else '\n'

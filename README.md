@@ -34,7 +34,7 @@ The v101 candidate uses a regular `CLAUDE.md` import so ChromeOS Files can extra
 integrity, modes and contents are checked by `tests/check_release_archive.py`; final acceptance
 also requires extracting the actual GitHub source zip in Files.
 
-> **Current version: v101.** Build in progress; not yet confirmed run on a Chromebook. Retro setup reviews guest defaults once per config and records `# v100: defaults reviewed`; new configs start marked and later owner choices are preserved. Owner accepted Nov 7, 2026 with the recorded known issues. [CHANGELOG.md](CHANGELOG.md) has the full history.
+> **Current version: v101.** Build in progress; not yet confirmed run on a Chromebook. Stages 1–3 are built; the Inspector investigation and remaining foundation stages are pending. Owner acceptance has not occurred. [CHANGELOG.md](CHANGELOG.md) has the full history.
 
 v99 implements the [final plan](docs/plans/v99-plan.md): bounded bulk-install retries, stage/EXIT
 reports and focused Playwright, password, model-hint and package-permission fixes. The owner accepted
