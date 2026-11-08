@@ -141,6 +141,8 @@ called from clients on other guests and machines: DCOM, then MIDAS/socket, then 
   (winnt40 and win2000 on joxer), then across two laptops (joxer as server, yaviks as client). The
   bundle's part in v101 is the guest network command and docs; the demo's own code and its home
   are owner decisions listed there.
+- **Scope (owner decision, Nov 8):** v101's demo uses InterBase and SQL Server (6.5 on NT 4.0,
+  2000 on Windows 2000) only; Oracle is noted for a later version.
 
 - Stage 1: server and client in one win2000 guest. Stage 2 (go/no-go): real DCOM between winnt40 and
   win2000 on a shared QEMU socket network. Stage 3: across two Chromebooks over Tailscale. Stage 4:
