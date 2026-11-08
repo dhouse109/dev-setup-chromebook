@@ -14,9 +14,8 @@ id_ed25519*
 # Run output
 *.log
 *.tsv
+# Legacy release-kit output (last used for v93; retired since v94).
 release/
-
-# Marker left by the release kit
 .release-kit
 
 # Editors and OS
