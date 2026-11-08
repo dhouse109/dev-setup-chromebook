@@ -134,6 +134,14 @@ Results table per environment. Stretch: serving from a guest (QEMU `hostfwd`), w
 From v100 (deferred section): a Delphi server method such as `GetCustomers` over a local database,
 called from clients on other guests and machines: DCOM, then MIDAS/socket, then SOAP/HTTP.
 
+- **Expanded (Nov 8): the full demo plan is in `docs/plans/v101-dcom-demo.md`.** The owner has
+  Client/Server or Enterprise editions of Delphi 3, 4, 5, 6 and 7 and wants the demo in every one,
+  each on a database of its era, with a live "swap database" step (the same client, a different
+  era database behind the server). It runs first between two operating systems on one laptop
+  (winnt40 and win2000 on joxer), then across two laptops (joxer as server, yaviks as client). The
+  bundle's part in v101 is the guest network command and docs; the demo's own code and its home
+  are owner decisions listed there.
+
 - Stage 1: server and client in one win2000 guest. Stage 2 (go/no-go): real DCOM between winnt40 and
   win2000 on a shared QEMU socket network. Stage 3: across two Chromebooks over Tailscale. Stage 4:
   bridges (Borland Socket Server for win95 and Wine; SOAP/HTTP for a Lazarus client on Linux).
