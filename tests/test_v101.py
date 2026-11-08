@@ -1,11 +1,24 @@
 """v101 portable regressions. No real bundle run, guest, network or installed helper mutation."""
 import io
+import json
+import os
+from pathlib import Path
 import stat
+import subprocess
 import tarfile
+import tempfile
+import time
 import unittest
 import zipfile
 
 import check_release_archive as archive_check
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def embedded(name, marker):
+    source = (ROOT / f'dev-{name}-chromebook.sh').read_text()
+    return source.split("<< '" + marker + "'\n", 1)[1].split('\n' + marker, 1)[0] + '\n'
 
 
 class Archives(unittest.TestCase):
@@ -62,6 +75,107 @@ class Archives(unittest.TestCase):
                 altered["dev-setup-chromebook.sh"] = (b"x", 0o644)
             with self.subTest(change=change), self.assertRaises(ValueError):
                 archive_check.validate(altered, expected)
+
+
+class QemuProbe(unittest.TestCase):
+    def setUp(self):
+        (ROOT / 'assets').mkdir(exist_ok=True)
+        self.temp = tempfile.TemporaryDirectory(prefix='v101-probe-', dir=ROOT / 'assets')
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.bin = self.root / 'bin'
+        self.bin.mkdir()
+        self.probe = self.root / 'probe.py'
+        self.probe.write_text(embedded('test', 'RETRO_QEMU_PROBE_PY'))
+        self.fake('qemu-img', 'from pathlib import Path\nimport sys\nPath(sys.argv[-2]).touch()')
+        self.fake('qemu-system-i386', '''import json,os,signal,socket,sys,time
+from pathlib import Path
+if '--version' in sys.argv:
+    print('fixture QEMU'); raise SystemExit(0)
+Path('fake.pid').write_text(str(os.getpid()))
+mode=os.environ['FAKE_QEMU_MODE']
+print('fixture stderr before wait', file=sys.stderr, flush=True)
+if mode == 'exit': raise SystemExit(23)
+if mode == 'no-socket':
+    time.sleep(30); raise SystemExit(0)
+if mode == 'ignore-quit': signal.signal(signal.SIGTERM, signal.SIG_IGN)
+s=socket.socket(socket.AF_UNIX); s.bind('qmp.sock'); s.listen(1)
+c,_=s.accept(); f=c.makefile('rwb')
+if mode == 'bad-greeting':
+    f.write(b'not json\\n'); f.flush(); time.sleep(30)
+if mode == 'silent-greeting': time.sleep(30)
+f.write(json.dumps({'QMP': {'version': {}, 'capabilities': []}}).encode()+b'\\n'); f.flush()
+for line in f:
+    request=json.loads(line)
+    command=request['execute']
+    if command=='quit':
+        if mode=='ignore-quit': continue
+        break
+    if mode=='silent-query' and command=='query-status': time.sleep(30)
+    if mode=='error': reply={'error': {'desc':'fixture protocol failure'}, 'id':request['id']}
+    else: reply={'return': {} if command=='qmp_capabilities' else {'status':'paused' if mode=='paused' else 'running'}, 'id':request['id']}
+    # Events and an unrelated response must not be mistaken for this command's reply.
+    f.write(json.dumps({'event':'fixture-event'}).encode()+b'\\n')
+    f.write(json.dumps({'return':{}, 'id':-1}).encode()+b'\\n')
+    f.write(json.dumps(reply).encode()+b'\\n'); f.flush()
+''')
+        self.env = dict(PATH=f'{self.bin}:/usr/bin:/bin', HOME=str(self.root), LC_ALL='C.UTF-8')
+
+    def fake(self, name, body):
+        p = self.bin / name
+        p.write_text('#!/usr/bin/python3\n' + body + '\n')
+        p.chmod(0o755)
+
+    def run_probe(self, mode, signal_parent=False):
+        work, diag = self.root / 'work', self.root / 'diag'
+        process = subprocess.Popen(['/usr/bin/python3', str(self.probe), '--work', str(work), '--diag', str(diag), '--seconds', '0.8'], env=dict(self.env, FAKE_QEMU_MODE=mode), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        if signal_parent:
+            until = time.monotonic() + 5
+            while not (work / 'fake.pid').exists() and time.monotonic() < until:
+                time.sleep(0.02)
+            process.terminate()
+        out, err = process.communicate(timeout=10)
+        result = json.loads((diag / 'result.json').read_text())
+        self.assertIn('Persistent diagnostics:', out, out + err)
+        self.assertIn('fixture stderr before wait', (diag / 'stderr.log').read_text())
+        self.assertTrue((diag / 'events.jsonl').stat().st_size)
+        self.assertFalse((work / 'qmp.sock').exists())
+        pid = int((work / 'fake.pid').read_text())
+        with self.assertRaises(ProcessLookupError):
+            os.kill(pid, 0)
+        return process.returncode, result, (diag / 'events.jsonl').read_text()
+
+    def test_qmp_events_and_response_ids_then_clean_quit(self):
+        rc, result, events = self.run_probe('normal')
+        self.assertEqual(rc, 0)
+        self.assertTrue(result['clean'])
+        self.assertEqual(result['status'], 'running')
+        self.assertIn('fixture-event', events)
+
+    def test_startup_protocol_and_status_failures_are_retained(self):
+        for mode in ('exit', 'no-socket', 'bad-greeting', 'silent-greeting', 'silent-query', 'error', 'paused'):
+            with self.subTest(mode=mode):
+                # Each case needs an independent persistent diagnostic directory.
+                case = QemuProbe('test_qmp_events_and_response_ids_then_clean_quit')
+                case.setUp()
+                try:
+                    rc, result, _ = case.run_probe(mode)
+                    self.assertNotEqual(rc, 0)
+                    self.assertTrue(result['error'])
+                finally:
+                    case.doCleanups()
+
+    def test_ignored_quit_and_term_escalate_to_kill_without_success(self):
+        rc, result, events = self.run_probe('ignore-quit')
+        self.assertNotEqual(rc, 0)
+        self.assertFalse(result['clean'])
+        self.assertIn('"kill"', events)
+
+    def test_parent_term_flushes_and_reaps_child(self):
+        rc, result, events = self.run_probe('silent-query', signal_parent=True)
+        self.assertNotEqual(rc, 0)
+        self.assertIn('InterruptedError', result['error'])
+        self.assertIn('cleanup-complete', events)
 
 
 if __name__ == "__main__":

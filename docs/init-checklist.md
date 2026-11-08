@@ -808,3 +808,12 @@ an optional in-guest `convert C: /fs:ntfs` changes it later (use the actual Wind
 which may differ on old installs). Conversion is never part of dev-test or automatic acceptance.
 Windows 2000 has no built-in Explorer ZIP support: unzip your archive on Linux into the guest
 workspace, then put the resulting folder. No extra ZIP software/media is downloaded by the bundle.
+
+
+### v101 QEMU smoke-test evidence
+
+The headless blank-disk test keeps stderr, timestamped QMP events and a result record under
+`assets/logs/retro-qemu-<run-stamp>/`, even when its outer timeout fails. It reports the selected
+accelerator and failure phase, then bounds quit/TERM/KILL cleanup for its own child. It never
+opens an installed guest disk or retries a KVM failure into a PASS. `quick` skips this real probe.
+Read those diagnostics before attributing a stall to KVM; the v100 timeout's cause is unproven.

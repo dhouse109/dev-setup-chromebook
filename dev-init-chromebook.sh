@@ -1,5 +1,5 @@
 #!/bin/bash
-# dev-init-chromebook - Version 100
+# dev-init-chromebook - Version 101
 # Version history: CHANGELOG.md, next to this script in the bundle
 # (one section per script, newest version first).
 #
@@ -2555,9 +2555,9 @@ fi
 echo
 echo "================================================================="
 if [ ${#TODO[@]} -eq 0 ]; then
-    echo "Init Version 100 complete: nothing left to do. 🎉"
+    echo "Init Version 101 complete: nothing left to do. 🎉"
 else
-    echo "Init Version 100 complete. Still manual (${#TODO[@]}):"
+    echo "Init Version 101 complete. Still manual (${#TODO[@]}):"
     printf '  - %s\n' "${TODO[@]}"
 fi
 echo

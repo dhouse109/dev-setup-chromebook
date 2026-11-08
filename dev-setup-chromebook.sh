@@ -1,5 +1,5 @@
 #!/bin/bash
-# dev-setup-chromebook - Version 100
+# dev-setup-chromebook - Version 101
 # Version history: CHANGELOG.md, next to this script in the bundle
 # (one section per script, newest version first).
 
@@ -406,7 +406,7 @@ stage_exit() {   # Reporting must not replace the original failure/signal if the
         for name in "${STAGE_SKIPS[@]}"; do printf 'skip\tskipped\t\t%s\n' "$name"; done
     } > "$report" && cp "$report" "$ASSETS/setup-stages.tsv"
     echo '================================================================='
-    echo 'Setup stage summary (Version 100)'
+    echo 'Setup stage summary (Version 101)'
     for name in "${STAGE_ORDER[@]}"; do
         state=${STAGE_STATE[$name]}
         printf '  %-26s %s%s\n' "$name" "$state" "${STAGE_REASON[$name]:+: ${STAGE_REASON[$name]}}"
@@ -426,8 +426,8 @@ stage_exit() {   # Reporting must not replace the original failure/signal if the
     [ -z "$rerun" ] || printf 'Rerun: %q %s\n' "$SCRIPT_DIR/dev-setup-chromebook.sh" "$rerun"
     echo "Stage report: $report"
     if [ "$rc" = 0 ]; then
-        if [ "$failed" = 0 ] && [ "$pending" = 0 ]; then echo 'Setup Version 100 complete!'
-        else STAGE_EXIT_RC=1; echo 'Setup Version 100 complete with failures; see stages above.'; fi
+        if [ "$failed" = 0 ] && [ "$pending" = 0 ]; then echo 'Setup Version 101 complete!'
+        else STAGE_EXIT_RC=1; echo 'Setup Version 101 complete with failures; see stages above.'; fi
     fi
     echo '================================================================='
     return 0
@@ -529,7 +529,7 @@ stage_expect install-hermes install-hermes
 stage_expect install-openclaw install-openclaw
 stage_expect finalize
 
-echo "Starting comprehensive Chromebook Linux provisioning (Version 100)..."
+echo "Starting comprehensive Chromebook Linux provisioning (Version 101)..."
 
 stage network
 mkdir -p "$ASSETS/logs" "$ASSETS/downloads"

@@ -29,6 +29,9 @@ in the scripts. They are coarser than the rest, and a version with no surviving 
 
 The installer: it sets up each stack the flags name. Newest version first.
 
+- **v101** (build in progress; not yet confirmed run on a Chromebook):
+  - Version bump only in stage 2; v101 source archives use a regular shared-rules import and CI checks.
+
 - **v100** (owner accepted Nov 7, 2026, with known issues):
   - NuGet downloads and builds use IPv4 without changing system networking.
   - Win95 boots use image disks, avoiding the shared-folder boot hang.
@@ -132,6 +135,9 @@ The installer: it sets up each stack the flags name. Newest version first.
 
 The test script: it checks that what setup installed works. Newest version first.
 
+- **v101** (build in progress; not yet confirmed run on a Chromebook):
+  - Save QEMU smoke-test diagnostics before waits, correlate QMP replies and bound owned-child cleanup. Errors remain FAIL.
+
 - **v100** (owner accepted Nov 7, 2026, with known issues):
   - .NET checks use IPv4; the connectivity probe reports a warning if unreachable.
   - Isolated checks cover Win95 boot arguments and guest-config upgrades without starting guests.
@@ -205,6 +211,9 @@ The test script: it checks that what setup installed works. Newest version first
 
 The init script: logins, keys and config from secrets.env. Newest version first.
 
+- **v101** (build in progress; not yet confirmed run on a Chromebook):
+  - Version bump only.
+
 - **v100** (owner accepted Nov 7, 2026, with known issues):
   - Retro messages report selected acceleration instead of promising KVM use.
   - NT/2000 guidance explains when to enable the exchange disk.
@@ -260,6 +269,9 @@ The init script: logins, keys and config from secrets.env. Newest version first.
 ## dev-demo-chromebook
 
 The optional demo script: hands-on demos in ~/dev-demo, outside the test loop. Newest version first.
+
+- **v101** (build in progress; not yet confirmed run on a Chromebook):
+  - Version bump only.
 
 - **v100** (owner accepted Nov 7, 2026, with known issues):
   - .NET and PowerShell demo downloads and runners use IPv4; existing projects are preserved.

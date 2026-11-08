@@ -1,5 +1,5 @@
 #!/bin/bash
-# dev-demo-chromebook - Version 100
+# dev-demo-chromebook - Version 101
 # Version history: CHANGELOG.md, next to this script in the bundle
 # (one section per script, newest version first).
 #
@@ -82,7 +82,7 @@ net_retry() {   # net_retry SAFE_LABEL COMMAND [ARG...]; no expanded command/sec
 
 # Deliberately NO 'set -e': one demo failing to download must not stop the others.
 
-VERSION=100
+VERSION=101
 
 # =================================================================
 # FLAG EXPANSION (STACK SWITCHES)  -- copied verbatim from the installer

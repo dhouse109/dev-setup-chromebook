@@ -308,3 +308,12 @@ to see it in context; the comment above each fix usually tells the story.
   fullscreen combination, while existing choices remain. Change output/scaler only in config with
   the guest off; a live Video-menu change spoiled one Windows 95 Setup. The blind Ctrl+Esc, U,
   Enter shutdown observation is Windows 95-specific, not a DOS/win31/NT procedure. No maximize default.
+
+
+### v101 QEMU smoke-test evidence
+
+The headless blank-disk test keeps stderr, timestamped QMP events and a result record under
+`assets/logs/retro-qemu-<run-stamp>/`, even when its outer timeout fails. It reports the selected
+accelerator and failure phase, then bounds quit/TERM/KILL cleanup for its own child. It never
+opens an installed guest disk or retries a KVM failure into a PASS. `quick` skips this real probe.
+Read those diagnostics before attributing a stall to KVM; the v100 timeout's cause is unproven.

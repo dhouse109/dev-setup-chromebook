@@ -1,5 +1,5 @@
 #!/bin/bash
-# dev-test-chromebook - Version 100
+# dev-test-chromebook - Version 101
 # Version history: CHANGELOG.md, next to this script in the bundle
 # (one section per script, newest version first).
 #
@@ -523,7 +523,7 @@ info()  { printf '  %-62s %s\n' "$1" "${DIM}INFO${RST} $2"; echo "--- $1: INFO $
 # v92: a check that cannot run because an earlier one already failed for the same cause (counted as SKIP).
 skipped() { printf '  %-62s %s\n' "$1" "${DIM}SKIP${RST} $2"; SKIP=$((SKIP + 1)); LAST=skip; echo "--- $1: SKIP $2" >> "$LOG"; }
 
-echo "Testing Chromebook Linux provisioning (Version 100)... log: $LOG"
+echo "Testing Chromebook Linux provisioning (Version 101)... log: $LOG"
 [ "$QUICK" = 1 ] && echo "(quick mode: slow functional tests will be skipped)"
 
 # v68: say so when dev-init has not applied the secrets file yet. Filling in secrets.env logs
@@ -5979,18 +5979,192 @@ RETRO_QEMU_CHECK_PY
     for G in win31 win95 winnt40 win2000 delphi1; do
         info  "retro guest $G" "$(~/.local/lib/dev-retro/dev-retro "$G" status 2> /dev/null | head -n 1 | sed 's/^[^ ]* *//; s/ *$//; s/   */, /g')"
     done
-    slow  "QEMU starts a blank disk headless (accelerator, QMP answers)" 'cd "$WORK" || exit 1; qemu-img create -q -f qcow2 blank.qcow2 64M || exit 1
-        if [ -c /dev/kvm ] && [ -r /dev/kvm ] && [ -w /dev/kvm ]; then acc=kvm; else acc=tcg; fi
-        qemu-system-i386 -accel $acc -machine pc -cpu pentium3 -m 32 -display none -drive file=blank.qcow2,format=qcow2,if=ide -nic none -qmp unix:qmp.sock,server=on,wait=off > qemu.log 2>&1 & q=$!
-        for i in $(seq 1 30); do [ -S qmp.sock ] && break; sleep 0.5; done
-        st=$(python3 -c "
-import json, socket
-s = socket.socket(socket.AF_UNIX); s.settimeout(10); s.connect(\"qmp.sock\"); f = s.makefile(\"rw\"); f.readline()
-for c in ({\"execute\": \"qmp_capabilities\"}, {\"execute\": \"query-status\"}):
-    f.write(json.dumps(c) + \"\n\"); f.flush(); r = json.loads(f.readline())
-print(r[\"return\"][\"status\"])
-f.write(json.dumps({\"execute\": \"quit\"}) + \"\n\"); f.flush()" 2>&1); wait $q; echo "accelerator $acc, guest status: $st"; cat qemu.log; [ "$st" = running ]' 120
-    hint  "qemu.log above says why; with KVM, 'Permission denied' on /dev/kvm means the kvm group is not active yet (shut Linux down and reopen it)"
+    # v101 (Nov 8 2026): save evidence before waiting; own and reap only this smoke-test child.
+    cat > "$WORK/retro-qemu-probe.py" << 'RETRO_QEMU_PROBE_PY'
+"""v101 (Nov 8 2026): persistent diagnostics and bounded teardown of one owned smoke-test QEMU."""
+import argparse
+from datetime import datetime, timezone
+import json
+import os
+from pathlib import Path
+import signal
+import socket
+import stat
+import subprocess
+import time
+
+
+class Probe:
+    def __init__(self, work, diag, seconds=80):
+        self.work = Path(work).resolve()
+        self.diag = Path(diag).resolve()
+        self.diag.mkdir(parents=True, exist_ok=False)
+        self.work.mkdir(parents=True, exist_ok=True)
+        self.events = (self.diag / 'events.jsonl').open('w', buffering=1)
+        self.stderr = (self.diag / 'stderr.log').open('w', buffering=1)
+        self.started = time.monotonic()
+        self.deadline = self.started + seconds
+        self.phase = 'prepare'
+        self.proc = None
+        self.sock = None
+        self.buffer = b''
+        self.serial = 0
+        self.clean = False
+
+    def record(self, event, **fields):
+        self.events.write(json.dumps(dict(event=event, elapsed=round(time.monotonic()-self.started, 3), phase=self.phase, **fields)) + '\n')
+        self.events.flush()
+
+    def receive(self, deadline):
+        while b'\n' not in self.buffer:
+            remaining = min(deadline, self.deadline) - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError(self.phase)
+            self.sock.settimeout(remaining)
+            data = self.sock.recv(65536)
+            if not data:
+                raise RuntimeError('QMP closed before response')
+            self.buffer += data
+            if len(self.buffer) > 1048576:
+                raise RuntimeError('QMP response too large')
+        line, self.buffer = self.buffer.split(b'\n', 1)
+        reply = json.loads(line)
+        if not isinstance(reply, dict):
+            raise RuntimeError('QMP response is not an object')
+        self.record('qmp-reply', reply=reply)
+        return reply
+
+    def ask(self, command):
+        self.serial += 1
+        request = dict(execute=command, id=self.serial)
+        self.record('qmp-command', request=request)
+        self.sock.sendall((json.dumps(request)+'\n').encode())
+        while True:
+            reply = self.receive(self.deadline)
+            if 'event' in reply or reply.get('id') != self.serial:
+                continue
+            if 'error' in reply:
+                raise RuntimeError('QMP error: ' + json.dumps(reply['error']))
+            if 'return' not in reply:
+                raise RuntimeError('QMP response has no return')
+            return reply['return']
+
+    def stop(self):
+        self.phase = 'cleanup'
+        # Signals during cleanup cannot interrupt the bounded TERM/KILL escalation.
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
+        if self.proc and self.proc.poll() is None:
+            if self.sock:
+                try:
+                    self.sock.settimeout(0.2)
+                    self.sock.sendall(b'{"execute":"quit","id":"cleanup"}\n')
+                except OSError as exc:
+                    self.record('quit-failed', detail=str(exc))
+            try:
+                self.proc.wait(timeout=0.4)
+                self.clean = self.proc.returncode == 0
+            except subprocess.TimeoutExpired:
+                self.record('terminate', process_state='running')
+                try:
+                    os.killpg(self.proc.pid, signal.SIGTERM)
+                except ProcessLookupError:
+                    pass
+                try:
+                    self.proc.wait(timeout=0.8)
+                except subprocess.TimeoutExpired:
+                    self.record('kill', process_state='running')
+                    try:
+                        os.killpg(self.proc.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                    self.proc.wait(timeout=0.8)
+        elif self.proc:
+            self.record('already-exited', returncode=self.proc.returncode)
+        if self.sock:
+            self.sock.close()
+        (self.work / 'qmp.sock').unlink(missing_ok=True)
+        self.record('cleanup-complete', clean=self.clean, returncode=self.proc.returncode if self.proc else None)
+
+    def run(self):
+        error = None
+        status = None
+        try:
+            usable = stat.S_ISCHR(os.stat('/dev/kvm').st_mode) and os.access('/dev/kvm', os.R_OK | os.W_OK)
+        except OSError:
+            usable = False
+        acc = 'kvm' if usable else 'tcg'
+        reason = 'usable /dev/kvm' if acc == 'kvm' else '/dev/kvm unavailable to this user'
+        def interrupted(signum, frame):
+            raise InterruptedError('signal ' + str(signum))
+        signal.signal(signal.SIGTERM, interrupted)
+        signal.signal(signal.SIGINT, interrupted)
+        try:
+            os.chdir(self.work)
+            self.record('start', accelerator=acc, reason=reason, utc=datetime.now(timezone.utc).isoformat())
+            version = subprocess.run(['qemu-system-i386', '--version'], capture_output=True, text=True, timeout=5, check=True)
+            self.record('version', output=version.stdout.strip())
+            subprocess.run(['qemu-img', 'create', '-q', '-f', 'qcow2', 'blank.qcow2', '64M'], stdout=self.stderr, stderr=self.stderr, timeout=10, check=True)
+            args = ['qemu-system-i386', '-accel', acc, '-machine', 'pc', '-cpu', 'pentium3', '-m', '32',
+                    '-display', 'none', '-drive', 'file=blank.qcow2,format=qcow2,if=ide', '-nic', 'none',
+                    '-qmp', 'unix:qmp.sock,server=on,wait=off']
+            self.phase = 'spawn'
+            self.record('argv', argv=args)
+            self.proc = subprocess.Popen(args, stdout=self.stderr, stderr=self.stderr, start_new_session=True)
+            self.phase = 'connect'
+            self.sock = socket.socket(socket.AF_UNIX)
+            while True:
+                if self.proc.poll() is not None:
+                    raise RuntimeError('QEMU exited before QMP: ' + str(self.proc.returncode))
+                if time.monotonic() >= self.deadline:
+                    raise TimeoutError('QMP socket startup')
+                try:
+                    self.sock.settimeout(0.2)
+                    self.sock.connect('qmp.sock')
+                    break
+                except (FileNotFoundError, ConnectionRefusedError):
+                    time.sleep(0.05)
+            self.phase = 'greeting'
+            greeting = self.receive(self.deadline)
+            if 'QMP' not in greeting:
+                raise RuntimeError('missing QMP greeting')
+            self.phase = 'capabilities'
+            self.ask('qmp_capabilities')
+            self.phase = 'query-status'
+            status = self.ask('query-status').get('status')
+            if status != 'running':
+                raise RuntimeError('guest status is ' + str(status))
+        except Exception as exc:
+            error = type(exc).__name__ + ': ' + str(exc)
+            self.record('failure', detail=error, process_state=self.proc.poll() if self.proc else 'not-started')
+        finally:
+            failed_phase = self.phase
+            try:
+                self.stop()
+            except Exception as exc:
+                error = error or ('cleanup: ' + str(exc))
+                self.record('cleanup-failure', detail=str(exc))
+            result = dict(accelerator=acc, status=status, clean=self.clean, phase=failed_phase, error=error)
+            (self.diag / 'result.json').write_text(json.dumps(result, indent=2)+'\n')
+            self.events.close()
+            self.stderr.close()
+        print(f'accelerator {acc} ({reason}); status={status}; cleanup={self.clean}; phase={failed_phase}')
+        print('Persistent diagnostics: ' + str(self.diag))
+        if error:
+            print(error)
+        return 0 if error is None and self.clean else 1
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--work', required=True)
+    parser.add_argument('--diag', required=True)
+    parser.add_argument('--seconds', type=float, default=80)
+    args = parser.parse_args()
+    raise SystemExit(Probe(args.work, args.diag, args.seconds).run())
+RETRO_QEMU_PROBE_PY
+    slow "QEMU starts a blank disk headless (accelerator, QMP answers)" 'python3 "$WORK/retro-qemu-probe.py" --work "$WORK/qemu-smoke" --diag "$ASSETS/logs/retro-qemu-${DEV_RUN_STAMP:-$(date +%Y%m%d-%H%M%S)}"' 120
+    hint "Persistent retro-qemu diagnostics identify the failed phase; a KVM failure is never replaced by a passing TCG retry."
     slow  "the exchange disk takes a file in and gives it back (1 GB, mtools, through the helper)" 'rh="$WORK/retro-home"; mkdir -p "$rh/winnt40/install" && cd "$WORK" || exit 1; echo "exchange $$" > XFER.TXT
         H=~/.local/lib/dev-retro/dev-retro
         HOME="$rh" RETRO_EXCHANGE_MB=1024 "$H" winnt40 put XFER.TXT < /dev/null || exit 1
@@ -6681,6 +6855,7 @@ if ! has nodisk; then
         dapt   com "Wine (64 + 32-bit), mingw-w64, libwine-dev" 'wine*' 'libwine*' 'gcc-mingw-w64*' 'g++-mingw-w64*' mingw-w64-common mingw-w64-tools 'libz-mingw-w64*' cabextract
         dpaths com "COM Wine prefix + winetricks" "$HOME/.local/share/wine/com" "$HOME/.local/bin/winetricks"
     fi
+    has install-retro    && dpaths retro "QEMU smoke-test diagnostics" "$ASSETS"/logs/retro-qemu-*
     has install-retro    && dpaths retro "Retro font acquisition logs" "$ASSETS"/logs/retro-fonts-*.log
     has install-retro    && dpaths retro "Retro helper and config" "$HOME/.local/lib/dev-retro" "$HOME/.config/dev-retro"
     has install-retro    && dpaths retro "Open Watcom v2 + ~/win31" /opt/watcom "$HOME/win31"
@@ -6846,7 +7021,7 @@ info "shell-agent ownership ledger" "$SHELL_AGENT_LEDGER"
 # =================================================================
 echo
 echo "================================================================="
-echo "Test Version 100 complete: ${GRN}PASS $PASS${RST}   ${RED}FAIL $FAIL${RST}   ${YEL}WARN $WARN${RST}   SKIP $SKIP"
+echo "Test Version 101 complete: ${GRN}PASS $PASS${RST}   ${RED}FAIL $FAIL${RST}   ${YEL}WARN $WARN${RST}   SKIP $SKIP"
 if [ ${#FAILED[@]} -gt 0 ]; then
     echo
     echo "Failed (must fix to get started):"
