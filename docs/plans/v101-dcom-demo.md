@@ -17,47 +17,48 @@ individual owner approval; licensed media is supplied by the owner, never downlo
 
 ### What v101 supplies
 
-- Per-guest `winnt40 lan` / `win2000 lan` status/on/off with a default-off managed second PCnet
-  adapter, the proven local UDP preset, validation and manual adoption of existing EXTRA_ARGS.
-  Explicit Tailscale endpoint mode is recommended but still an owner choice; a local-only first
-  release is the alternative. Exact grammar, paths, guards and fixtures are in main-plan item 9A.
-- Foundation docs, version matrix, initially empty results template and owner work directory at
-  `~/dev-demo/retro/delphi/advanced-demo`, with a nested launcher offering steps/status/results and
-  optional explicit documentation-only CD packaging. Main-plan item 9B defines index/lifecycle
-  compatibility and preservation behavior. Existing `retro/matrix` stays available.
-- Network/IP/driver/SP6a/media instructions, the item 8 test protocol and clear labels for evidence
-  already collected versus checks still pending. No automatic VM boot, service-pack/database
-  installation, domain/DCOM configuration or application success claim.
+The owner approved **9A local-only** and **9B without pack** in the review of `936737b`. v101 will
+provide `winnt40 lan` and `win2000 lan` status/on/off for the proven local second-PCnet pair. The
+feature will default off and require explicit adoption of existing manual EXTRA_ARGS. Main-plan
+item 9A compares a separate JSON file with LAN keys in the existing guest config and recommends
+the latter; that new recommendation remains for final review.
 
-**Not generated in v101:** Delphi projects/forms/type libraries, HTTPGET source, per-dialect seed
-SQL, compiled programs, transport bridges, registration scripts or a runnable database-swap demo.
-The optional v101 ISO contains allowlisted foundation docs only, not placeholder application code.
+The approved scaffold will live at `~/dev-demo/retro/delphi/advanced-demo`. Its nested launcher
+will offer steps, read-only status and results guidance. It will include foundation instructions,
+the agreed version matrix, a results template initially marked NOT RUN and an owner work directory.
+Main-plan item 9B describes compatible index/lifecycle changes and preservation on rerun/refresh.
+Existing retro/matrix will remain available.
+
+There will be no pack action or generated ISO in v101. Delphi projects, HTTPGET source, seed SQL,
+compiled programs, COM registration, transport bridges and database integration all belong to the
+follow-up. The scaffold will not boot VMs, install software, configure a domain/DCOM or claim that
+an application stage passed. Cross-laptop mode and packaging will wait until their later stages.
 
 ### Foundation files, checks and documentation
 
-- **Setup:** generated `DEVRETRO_EOF` helper's help/main dispatch, QEMU launch/config integration
-  and proposed LAN config/status/argv functions. JSON lives under `~/.config/dev-retro`, defaults
-  off; never source it as shell or silently replace the owner's manual NIC arguments.
-- **Dev-demo:** proposed `demo_retro_advanced`, install-retro dispatch, `begin`/`write_run`/
-  `done_demo`/`write_index` relative-path metadata and clean handling. Use a flat index key with
-  nested directory/launcher paths; do not put a slash into STACK/index filenames. Preserve future
-  owner code and results on rerun/demo-refresh; ordinary bundle docs may refresh.
-- **Dev-test:** fake-QEMU argument/config fixtures for local/remote pairs, unique MACs, reciprocal
-  ports, on/off/stopped guards, custom networking conflicts, corrupt/symlink state, no-write status,
-  first-NIC preservation and setup exchange withholding. Scaffold fixtures verify nested index,
-  launcher syntax, honest pending-stage labels, refresh/clean and the pack allowlist. Missing
-  manually installed Delphi/databases or an ungenerated live demo is never a retro FAIL.
-- **Disk report:** existing "Retro helper and config" row already measures the new LAN config's
-  parent; clarify its label rather than count it twice. Add retained ISO/results under assets once;
-  existing NT/2000 rows cover guest disks/media. Source/docs are small; measure scaffold/
-  ISO after generation rather than add an unmeasured database-size claim to the demo total.
-- **Docs:** README, init checklist, dev-demo footprint, Crostini network/MAC/TCG notes, proposed
-  `docs/guest-network-tests.md`, generated STEPS and all four CHANGELOG sections at build time.
-  All four script versions/flags remain synchronized, with no new install flag recommended.
+Setup's generated helper will gain local LAN dispatch, status, conservative config editing and
+validated QEMU arguments. With the recommended LAN keys, the existing per-guest config remains
+the single settings location. Read-only status and editing will not execute shell config.
 
-**v101 acceptance:** static checks/isolated fixtures, owner local-link ping/domain/first-NIC checks,
-safe on/off adoption, scaffold lifecycle/menu/optional ISO verification, and clean approved bundle
-test. Remote UDP is separate evidence if tested; DCOM/database results are follow-up acceptance.
+Dev-demo will gain `demo_retro_advanced` and compatible relative-path handling in `begin`,
+`write_run`, `done_demo`, `write_index` and clean logic. The flat index key will refer to nested
+paths. Refresh will update bundle documentation while preserving future owner code and results.
+
+Dev-test will use isolated fake-QEMU fixtures for the local link, config preservation, conflicts,
+collisions, no-write status, first-NIC preservation and setup exchange withholding. Scaffold
+fixtures will check paths/indexes, launcher syntax, refresh/clean and absence of pack or application
+outputs. They will not require proprietary tools, installed guest databases or a live Delphi demo.
+
+Existing guest-workspace disk rows cover LAN settings in those config files. Retained results under
+assets and generated scaffold content will be measured once; there is no v101 application ISO to
+count. Update README, the checklist, demo footprint, Crostini notes, guest-network procedure,
+generated STEPS and the four CHANGELOG sections during implementation. All four versions/flags
+remain synchronized, with no new install flag.
+
+The v101 acceptance checks are static/isolated tests, an owner-run local link and first-NIC check,
+safe on/off adoption, scaffold lifecycle/menu checks and the approved clean bundle test. Remote
+transport, MTU behavior, DCOM and database swaps use the F0–F6 follow-up scheme below and are not
+v101 acceptance gates.
 
 ## Goal
 
@@ -114,7 +115,7 @@ CD carries an InterBase of its year).
 - **One InterBase per guest:** InterBase servers of different versions can't run side by side on one
   machine (one service, port 3050). Proposal: NT 4.0 gets the InterBase from the Delphi 4 CD (used by
   Delphi 3 and 4), Windows 2000 the one from the Delphi 7 CD (used by Delphi 5–7). Older clients
-  against a newer InterBase server are checked in phase D; fall back to each version's own InterBase,
+  against a newer InterBase server are checked in F4; fall back to each version's own InterBase,
   installed one at a time, if they don't work.
 - **How the swap is shown:** the server registers one server object per database (for example
   `CustomerSrv.SQLServer` and `CustomerSrv.InterBase`, or one object with a `Backend` setting). The
@@ -155,51 +156,6 @@ CD carries an InterBase of its year).
   client. Verify actual COM registration/AppID/type-library and runtime dependencies; do not turn
   these remembered details into untested registration scripts.
 
-## Application phases — staged follow-up, not v101 implementation
-
-**A. Foundation boundary (one laptop)**
-
-- v101 makes the hand-proven guest link supported and supplies docs/scaffolding only. Guest
-  snapshots remain explicit owner actions; keep configs/exchange data with backups because an
-  internal system-disk snapshot is not a backup of the entire lab.
-- Follow-up begins with owner SP6a/media preparation, workload sizing and DCOM baseline:
-  `dcomcnfg`, Enable DCOM, proposed Connect/Identify and specific HADAMIN account access/launch
-  permissions. Verify the settings against installed versions, then use a trivial out-of-process
-  object. This object is the **first later code**, not a v101 scaffold feature. Do not blanket-disable
-  authentication or rewrite domain permissions from Linux.
-
-**B. Follow-up vertical slice (go/no-go): Delphi 7 + SQL Server 2000**
-
-- SQL Server 2000 (Mixed Mode, Northwind) and Delphi 7 in Windows 2000.
-- Server and client both in Windows 2000 first; then the client on NT 4.0 over DCOM. If DCOM fails,
-  stop for bounded diagnosis and an owner choice of socket fallback (`scktsrvr`) before proceeding.
-
-**C. Follow-up swap in Delphi 7:** InterBase from the Delphi 7 CD in Windows 2000, the second server
-object, the client choosing between them.
-
-**D. Follow-up back-porting, newest to oldest:** Delphi 6 (InterBase over dbExpress first), 5 (ADO and IBX;
-first HTTP option), 4 (NT 4.0 server, InterBase / SQL Server 6.5, sockets as well as DCOM), 3 (NT 4.0
-server, SQL Server 6.5 / InterBase, DCOM only). The client of each version runs on the other OS.
-
-**E. Follow-up bridges:** Socket Server for win95/Wine; SOAP (Delphi 6/7) for Lazarus/Linux;
-OLEnterprise (Delphi 3/4) as a period alternative with DOSBox-X normal core (main-plan item 7).
-Confirm Socket Server port/runtime against the matching media. Guest inbound serving requires a
-separately planned user-NIC hostfwd feature: map a high host TCP port to the guest service rather
-than require root to bind host port 211. Wine uses host loopback, win95 uses its host alias and
-cross-laptop clients use the host's Tailscale address. No hostfwd/bridge implementation in v101.
-
-**F. Follow-up two laptops: joxer (servers) and yaviks (clients)**
-
-- yaviks needs install-retro and its own NT 4.0 / Windows 2000 guests (owner's media). As clients
-  they need no database software.
-- A point-to-point pair spans Tailscale using explicit numeric peer and **specific local Tailscale
-  binds**, reciprocal ports, distinct MACs and unique guest addresses. Test one server/client
-  guest pair at a time. Two guests on each laptop simultaneously need an additional hub/switch
-  topology; one UDP pair does not provide a four-guest LAN. Prove reachability/domain identity and
-  DCOM separately; they are not guaranteed by the local Nov 8 success. Socket/HTTP may later use
-  Tailscale TCP plus the separately designed hostfwd path.
-- Show each Delphi version's client on yaviks against its server on joxer, with the database swap.
-
 ## Guest state and service packs (owner, Nov 8)
 
 - **win2000 guest:** Windows 2000 5.00.2195 **Service Pack 4** already installed; 256 MB RAM today
@@ -219,8 +175,8 @@ cross-laptop clients use the host's Tailscale address. No hostfwd/bridge impleme
   InterBase per guest"); InterBase 6+ dialect 1 vs 3 for the seed script.
 - **DCOM through Tailscale:** DCOM uses dynamic ports and endpoint identities. A raw guest link
   avoids per-RPC NAT mappings, but naming, advertised endpoints and permissions still need separate
-  tests in phase F. Local ping/domain success alone does not establish remote DCOM.
-- **TCG speed:** two guests on software emulation will be slow; phase B measures it.
+  tests in F6. Local ping/domain success alone does not establish remote DCOM.
+- **TCG speed:** two guests on software emulation will be slow; F2 measures it.
 
 ## Where the demo's code lives (owner decision, Nov 8)
 
@@ -241,23 +197,63 @@ cross-laptop clients use the host's Tailscale address. No hostfwd/bridge impleme
 2. Service packs: available; winnt40 gets SP6a first (above).
 3. The version-to-database mapping above is agreed.
 4. Current task: v101 stops at supported network/scaffold/docs; code is staged afterward.
+5. Review of `936737b`: the managed link is local-only, remote mode moves to F6, and pack waits
+   until application sources exist. The main plan records all other approved choices.
 
-## Follow-up work packages and acceptance gates
+## Follow-up work packages F0–F6 and acceptance gates
 
-These are a roadmap for a later approved version/stage, not build instructions for this v101 plan.
+F0–F6 are the only application staging scheme. The former prose phases A–F have been removed;
+all their prerequisites, transport work and acceptance gates are assigned below. These packages
+are a roadmap for a later approved version/stage, not build instructions for v101.
 Use a new approved plan and version branch before writing application code. Keep each package
 small enough for one reviewable commit and an owner-run result. Proposed source paths below are
 inside `advanced-demo`; the follow-up decides whether their growth warrants a separate repository.
 
 | Stage | Approach / proposed files | Verification and stop condition |
 |---|---|---|
-| F0: media/runtime inventory | Verify edition help, InterBase/runtime versions and licensing; write `docs/media-matrix.md` and `docs/prerequisites.md`; owner snapshots/SP6a | Exact component/driver names and owned media paths recorded; stop before code if core components are absent |
-| F1: local DCOM object | Small Delphi 7 object/client, proposed `delphi7/probe/`; explicit per-machine registration instructions | Local activation/call first, then NT client ↔ 2000 server; confirm credentials/bitness/runtime before database work |
+| F0: lab and media prerequisites | Verify the local foundation, edition help, InterBase/runtime versions and media; write `docs/media-matrix.md` and `docs/prerequisites.md`; take owner-controlled backups/snapshots and apply SP6a | Record exact components, permitted media, workload headroom and DCOM account/settings preparation; stop before code if prerequisites are missing |
+| F1: DCOM go/no-go | Write the first small Delphi 7 object/client in `delphi7/probe/`; document per-machine registration and specific account permissions | Prove local activation/call, then NT client ↔ 2000 server; resolve identity/runtime/permissions before database work |
 | F2: Delphi 7 vertical slice | `delphi7/server/`, `delphi7/client/`, SQL Server adapter, agreed GetCustomers/GetBackendInfo contract | Known rows locally and on other OS, clear backend ID, bounded failure on server loss; if remote DCOM fails investigate then decide socket fallback |
 | F3: Delphi 7 database swap | InterBase adapter, dialect-specific `seed/` scripts and same client contract | Same rows/order/fields from both databases, backend identity changes; stop if runtime/data contract differs |
 | F4: back-port 6 → 5 → 4 → 3 | Per-version project/adapter/runtime docs; share proven presentation/contract only | Each compiles with its own compiler, runs client on other OS and swaps agreed databases; record each transport/version explicitly |
-| F5: optional bridges | Separate sockets/HTTP/SOAP/OLEnterprise projects and hostfwd plan, only after prerequisites verified | Wine/win95/Lazarus routes measured independently; unsupported transport is explicit, never replaced by an unlabelled local call |
-| F6: second laptop | Reuse proven pair and application artifacts; docs/results update, no hidden topology expansion | One-laptop stages pass first; then cross-laptop calls and swap per version, credentials/DNS/port failures distinguished |
+| F5: optional bridges and packaging | Add verified sockets/HTTP/SOAP/OLEnterprise projects and a high-host-port hostfwd design; design source/application CD packaging now that sources exist | Measure Wine/win95/Lazarus routes independently, validate CD allowlists and preserve owner edits; label unsupported routes explicitly |
+| F6: cross-laptop transport and application | Design the remote link over Tailscale, including MTU, endpoint binds and unique identities; reuse the proven application and update docs/results | Pass size-sensitive transport tests before domain/DCOM calls and database swaps; distinguish credentials/DNS/port/MTU failures and avoid hidden topology expansion |
+
+F0 includes the preparation previously described as foundation work. System-disk snapshots do
+not back up guest configs or exchange data, so keep those with the owner's recoverable backup.
+Confirm the installed DCOM settings before use: Enable DCOM, proposed Connect/Identify and access/
+launch permission for the intended domain accounts. Do not disable authentication broadly or
+rewrite domain permissions from Linux. Only F1 writes the trivial object; v101 supplies no object.
+
+F2 uses Delphi 7 with SQL Server 2000 locally before the NT client calls it. It measures performance
+with the intended workload. If DCOM fails, stop for bounded diagnosis and an owner choice about
+socket fallback. F3 proves the same client contract and ordered customer data against InterBase
+before F4 back-ports the agreed adapters newest to oldest: Delphi 6, 5, 4, then 3. Record actual
+compiler/runtime compatibility and the two guest roles per version rather than assume transport
+ABI compatibility between releases.
+
+F5 verifies each transport against matching help/media. Wine and win95 can use the Socket Server;
+Delphi 6/7 SOAP can serve Lazarus/Linux; OLEnterprise remains a period alternative for Delphi 3/4
+and uses the normal DOSBox-X core. A hostfwd design must use a high host TCP port instead of
+requiring root to bind a low service port. Wine reaches host loopback, win95 uses its host alias
+and later cross-laptop clients use the host Tailscale address. Source packaging is deliberately
+absent from v101 and is planned here only after the source tree is real.
+
+F6 must finish transport design before advertising remote support. Use a single server/client
+pair at a time with specific local Tailscale binds, reciprocal endpoints and unique MAC/guest IPs.
+Two guests on each laptop simultaneously require a separate hub/switch topology. Prove domain
+identity and dynamic DCOM endpoints separately from ping, and show the same database swap only
+after the one-laptop application passes.
+
+**F6 MTU risk:** [Tailscale documents a 1280-byte MTU](https://tailscale.com/docs/reference/troubleshooting/network-configuration/tcp-connection-two-devices).
+An ordinary Ethernet frame carrying a 1500-byte guest IP packet, plus outer UDP/IP headers, can
+exceed that path MTU. This is a risk inferred from the encapsulation sizes, not a measured failure
+of this lab. A small ping may pass while larger transfers fragment, fail or stall. F6 must test a
+range of payload sizes and sustained bidirectional transfers before domain/DCOM acceptance, and
+inspect fragmentation/PMTU behavior on the actual path. It must then choose and document a proven
+mitigation, such as an appropriate guest MTU or a different transport, with the owner controlling
+any legacy driver/registry changes and recovery. Do not assume TCP MSS adjustment fixes every
+encapsulated Ethernet frame. No remote UDP feature or host-wide MTU workaround is built in v101.
 
 For every later application stage, dev-demo generation/refresh and ISO packing must preserve owner
 edits/results. Keep sources create-if-missing or versioned; make replacement explicit with backup.

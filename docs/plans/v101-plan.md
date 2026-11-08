@@ -1,6 +1,6 @@
 # dev-setup-chromebook v101 plan
 
-Nov 8, 2026 · **detailed draft for owner review; recommendations are not build approval**
+Nov 8, 2026 · **owner review of `936737b` applied; revised plan awaiting final sign-off**
 
 Baseline: released `v100` (`3de837e`, Nov 8). The scripts on `plan/v101` are still v100.
 This expands the scope notes at `5eb3b35`, following the v100 plan: findings, approach, affected
@@ -26,7 +26,7 @@ database-swap demonstration belong to a **staged follow-up after v101**, describ
 [the companion plan](v101-dcom-demo.md). Completing that application is not a v101 release gate.
 Item 8 does not bring Delphi source generation back into this version.
 
-## Recorded owner decisions and choices still needed
+## Recorded owner decisions and remaining review points
 
 Already settled by the owner; do not reopen these as unanswered questions:
 
@@ -41,24 +41,26 @@ Already settled by the owner; do not reopen these as unanswered questions:
 - **Current instruction:** v101 plans the bundle foundation only; Delphi demo code is a staged
   follow-up. This narrows the earlier companion's full-application wording.
 
-These remaining choices are recommendations, not decisions already made:
+The owner approved the following choices in the review of `936737b`. These are now plan decisions,
+not questions to ask again. Approval of the plan does not authorize implementation or real runs.
 
-| Choice | Recommendation | Owner decision still needed |
+| Choice | Approved scope | Remaining evidence or review |
 |---|---|---|
-| 1A | Regular `CLAUDE.md` containing `@AGENTS.md`; reject tracked symlinks in CI | Approve replacement of the symlink rule; confirm Claude context and ChromeOS extraction |
-| 2A | Diagnose first; exact Inspector spec/context if needed, preserving strict offline testing | Approve real investigation commands individually; choose evidenced small fix or managed cache |
-| 3A | Time-box KVM research; retain win2000 TCG/no-sound defaults unless repeatably clean | Choose experiment budget and any evidence-backed default change |
-| 3B | `AUDIO_BACKEND=auto`: PipeWire, then PulseAudio, then silent | Approve policy for both QEMU guests and explicit-override behavior |
-| 4A | Keep smoke-test errors as FAIL; capture before waits and bound cleanup | Approve diagnostic-only TCG comparison after KVM failure |
-| 5A | NT Pentium default; independent once-only v101 migration; PS/2 docs | Approve migration; record NT KVM/TCG result before any acceleration-default change |
-| 6A | Document windowed/full-screen profiles; valid renderers are informational | Approve WARN policy; defer display switcher |
-| 7A | Existing `--core normal` plus `boot.conf` instructions | Approve docs-only scope; defer another core-setting command |
-| 8A | Manual matrix now; one bounded Delphi 3 HTTPGET in follow-up | Choose controlled endpoints, peer/name forms and acceptance machines |
-| 9A | Per-guest `lan status\|on\|off`, local defaults, explicit Tailscale endpoints | Approve command/config ownership and manual adoption of existing NIC arguments |
-| 9B | Nested docs/status/results/pack scaffold, no application code | Approve index/path extension, scaffold contents and optional remote transport check |
+| 1A | Use regular `CLAUDE.md` with `@AGENTS.md` and reject tracked symlinks in CI. | Cover every release archive producer; confirm real import and Files extraction. |
+| 2A | Investigate first, for one session, on a named machine with retro present. | Check target disk headroom before acquisition; let evidence choose the small fix or managed cache. |
+| 3A | Bound KVM research and retain win2000 TCG/no-sound defaults unless repeatably clean. | Record experiment results before proposing a new default. |
+| 3B | Use native-first `AUDIO_BACKEND=auto` with explicit override behavior. | Verify backend availability and real playback separately. |
+| 4A | Keep failures as FAIL, save diagnostics before waits and bound cleanup. | Keep any diagnostic TCG comparison within budget and retain the original failure. |
+| 5A | Use NT Pentium with independent once-only migration and PS/2 docs. | Record NT KVM/TCG behavior before an acceleration-default change. |
+| 6A | Document display profiles and report valid renderer choices as information. | Verify visual behavior; no display switcher in v101. |
+| 7A | Document existing normal-core options and persistent config editing. | Confirm the actual Object Agent startup control; no new switcher. |
+| 8A | Publish the manual matrix now and defer Delphi HTTPGET code. | Select controlled HTTP targets and peer/name forms before real checks. |
+| 9A | Support the local guest pair only; defer remote mode to the cross-laptop follow-up. | Compare storage below; recommend `LAN_*` keys in the existing per-guest config. |
+| 9B | Supply the nested documentation scaffold without `pack`. | Defer packaging until application sources exist. |
 
-Each item below gives alternatives and the evidence needed to settle its choices. Plan approval
-does not substitute for the separate approvals required for real commands on the owner's machine.
+The LAN storage comparison is a new recommendation requested in this review; it is not presented
+as a previously approved owner choice. The release-kit provenance and Inspector target preflight
+are recorded in items 1 and 2. These review points must be resolved before calling the plan final.
 
 ## Shared implementation and validation contract
 
@@ -68,7 +70,7 @@ does not substitute for the separate approvals required for real commands on the
   those entries. No script/version/changelog implementation belongs in this planning commit.
 - Recommend **no new install flag**. Retro helpers/scaffold use `install-retro`; Inspector uses
   `install-agentic` with Node. Keep flag expansion identical across all four scripts. Local guest
-  linking needs only retro. Cross-laptop work additionally needs configured normal-mode Tailscale
+  linking needs only retro. The later cross-laptop work needs configured normal-mode Tailscale
   (`install-lan`/`install-lan-share`). `install-db-server` is optional for later Linux-server
   comparisons, not a prerequisite that installs Docker databases for the licensed guest lab.
 - Setup stays unattended/idempotent. Preserve owner configs and guest disks. Use atomic,
@@ -78,8 +80,9 @@ does not substitute for the separate approvals required for real commands on the
   quoted `DEVRETRO_EOF` heredoc**, which generates `~/.local/lib/dev-retro/dev-retro`. Re-find
   symbols before editing. Outer `bash -n` does not parse that helper: extract and validate it too.
 - Keep existing dated/versioned comments and add v101 explanations. Retained generated artifacts
-  and diagnostics go under `$ASSETS`, commands under `~/.local/bin`, new helper config under
-  `~/.config/dev-retro`. Guest workspaces/dev-demo remain the established homes for their data.
+  and diagnostics go under `$ASSETS`, commands under `~/.local/bin`, and standalone helper config
+  under `~/.config/dev-retro`. The recommended LAN keys belong in the existing guest config instead.
+  Guest workspaces/dev-demo remain the established homes for their data.
 - Every stack change updates README, `docs/init-checklist.md`, all four CHANGELOG sections and
   its dev-test/disk-report coverage. Each item adds specific docs below. Do not count a new file
   again if a recursive existing disk row already measures it.
@@ -136,14 +139,23 @@ Prefer 1A.
   `dev-setup-chromebook-v101/`, keeping output under `assets/releases/`. Check zip integrity,
   entry modes, the import file and tree manifest, including all four scripts/docs; account for
   deliberately export-ignored files. Do not package loose working files/untracked artifacts.
+- **Release kit:** no kit implementation is tracked here, and neither the ignored `release/`
+  directory nor the ignored `.release-kit` marker exists in this checkout. The published v100
+  release has no uploaded assets; its zip/tar downloads are GitHub-generated source archives.
+  That establishes the published artifacts, not whether an external kit also builds a local
+  archive. Inspect the owner's actual kit entrypoint before final sign-off and record whether
+  it builds one. If it does, pass its exact output through the same integrity, entry-mode,
+  import-file and manifest checks, and include it in the owner's Files extraction check. If the
+  kit only creates the tag/release, record that there is no extra kit-produced archive. Never
+  treat a passing test of a substitute `git archive` command as coverage of another producer.
 - **Dev-test:** source layout is a CI/package check, not an installed-stack FAIL. Owner extracts
   the candidate in ChromeOS Files, checks completeness/final files and repeats with the actual
   GitHub-generated release source zip. Linux extraction alone is insufficient. Disk report has
   no installed-content change.
 - **Docs:** AGENTS.md, `docs/how-its-built.md`, README download/extraction instructions and release
   notes; record results here. No new runtime Crostini workaround or secret/manual init step.
-- **Decision:** approve **1A (recommended)** and the no-tracked-symlink policy, or **1B** with a
-  revised CI policy. Real import/Files verification remains open until performed.
+- **Owner decision:** **1A approved** in the review of `936737b`; 1B is not the chosen approach.
+  Kit provenance remains a final-review point; import/Files results remain implementation checks.
 
 ## 2. Inspector offline cache coherence
 
@@ -153,6 +165,29 @@ Carry forward v99's accepted ENOTCACHED issue retained in v100 item 1. Setup's r
 immediate offline tools/call returned 5; later dev-test offline npx failed while the global CLI
 worked. Matching headline Node/npm versions did not establish matching executable/config/cache/
 cwd/spec inputs. No cache deletion, eviction or version mismatch is a proven cause.
+
+The owner approved **2A with a one-session budget**. Name **joxer** as the proposed investigation
+target because it is the existing retro lab; confirm that identity before running. Keep
+`install-retro` present and use the bundle's own `install-agentic install-node` configuration.
+Do not use a retro-free fresh environment or move the experiment to another machine silently.
+The session includes the preflight, comparisons and a single evidence review; inconclusive results
+end with an honest record and an owner decision about follow-up, not a second unbudgeted session.
+
+Before any acquisition, run read-only `df -B1` on the filesystem holding the bundle/cache and `du`
+on the retro workspaces and existing Inspector/cache paths. Record available bytes, existing
+retro allocation and an acquisition allowance with retained reserve. Recommend at most 2 GiB of
+additional diagnostic caches and at least 10 GiB remaining free; stop if the preflight cannot
+support that budget, rather than deleting guest data or caches. Recheck before each candidate
+cache and stop at the allowance. These are investigation limits, not installer disk defaults.
+The 2 GiB allowance covers diagnostic caches, not a missing agentic stack. If bundle-managed
+agentic/Node prerequisites are absent, include their acquisition footprint and time in the same
+session preflight, obtain the required setup approval and recheck space afterward. Do not assume
+that the full agentic installation fits the cache allowance or silently provision it elsewhere.
+
+The current container's read-only check found roughly 44 GiB available with NT/2000 workspaces
+already present, but its OS hostname is only `penguin`; this reading has not been attributed to
+joxer. The named-target preflight must be repeated/confirmed there. No Inspector acquisition or
+probe was run during this revision, and executable presence alone would not prove bundle setup.
 
 1. Use a machine configured by the bundle's own `install-agentic install-node`; do not hand-build
    Inspector in assets. At actual setup/test probes compare allowlisted executable identities and
@@ -201,9 +236,9 @@ Do not promise offline uv/Python dependencies merely because npm is warm.
 - **Docs:** common README/checklist/CHANGELOG updates, `docs/dev-demo.md` and generated FastMCP
   instructions. State the online warm-up/strict-offline contract. Add a Crostini gotcha only for an
   evidenced host-specific cause, not an assumed npm defect.
-- **Decisions:** approve real research command by command, then choose **2A (recommended)** small
-  fix when proven or managed exact-version cache/launcher when necessary. **2B:** explicitly defer
-  with the accepted WARN; do not call it fixed. The implementation design remains evidence-gated.
+- **Owner decision:** **2A approved for one session**, with named-machine and retro-present disk
+  preflight above. Real commands remain individually approved. Evidence determines the small fix
+  or managed cache; if inconclusive, ask about deferral rather than silently using a second session.
 
 ## 3. Windows 2000 nested KVM and sound
 
@@ -214,7 +249,7 @@ volume errors stop with native PipeWire/sb16. Windows 2000's SB16-compatible WDM
 but stutters under TCG; output latency 100000 did not help. A built-in AC97 driver is not established.
 Keep boot, backend errors and audible quality as separate findings.
 
-**Recommend 3A:** agree a small budget (one session, at most six single-change variants). Start
+**Approved 3A:** use a small budget of one session and at most six single-change variants. Start
 with guest off and an owner-approved recoverable disk/config backup. Use the installed system
 before reinstall experiments. Record elapsed boot, display progress, selected accelerator, CPU
 use and audio separately. Stop unsuccessful variants at an agreed limit (suggest three minutes),
@@ -233,7 +268,7 @@ migration/marker policy before changing defaults. Never reset v100's review mark
 
 ### Audio policy
 
-**Recommend 3B:** `AUDIO_BACKEND=auto|pipewire|pa|none`, with helper fallback auto when absent.
+**Approved 3B:** use `AUDIO_BACKEND=auto|pipewire|pa|none`, with helper fallback auto when absent.
 SOUND=none adds no card/backend. Otherwise auto selects supported native PipeWire when the user's
 runtime socket exists, then supported/reachable PulseAudio, then explicit silent backend with a
 note. Explicit unavailable requests fail before guest launch with a clear override/repair hint.
@@ -259,9 +294,9 @@ currently suggest a suitable AC97 driver necessarily exists on the Windows CD.
   logs under retro diagnostics once. No new guest memory/disk default.
 - **Docs:** common docs, Crostini Retro findings/recovery, `docs/dev-demo.md`, generated STEPS.
   Explain backend errors disappearing separately from stutter being solved.
-- **Decisions:** **3A (recommended)** bounded research, or defer KVM and do backend/docs only.
-  **3B (recommended)** native-first auto/explicit overrides, or opt-in PipeWire only. Any sound/
-  acceleration default change is a later evidence-dependent choice within the approved build.
+- **Owner decisions:** **3A and 3B approved** in the review of `936737b`. Use bounded research
+  and native-first auto with explicit overrides. A sound/acceleration default change still needs
+  evidence and owner agreement; the approved baseline remains conservative.
 
 ## 4. QEMU blank-disk test diagnostics
 
@@ -301,8 +336,8 @@ No silent retries, WARN downgrade or forced-TCG substitution for the KVM asserti
 - **Other scripts:** metadata only. **Docs:** checklist evidence path/troubleshooting, Crostini
   Retro known issue, CHANGELOG and plan results. README points to them. No root-cause claim until
   supported by captured evidence.
-- **Decision:** **4A (recommended)** diagnostics/cleanup plus optional diagnostic TCG comparison,
-  or capture/cleanup alone. Original accelerator failure must always remain visible.
+- **Owner decision:** **4A approved**. Capture diagnostics, bound cleanup and allow a diagnostic
+  TCG comparison only within budget. The original accelerator failure must remain visible.
 
 ## 5. NT 4.0 CPU, installation acceptance and usability
 
@@ -353,9 +388,8 @@ a separately chosen experiment exist.
   NT workspace disk row suffices, no resizing/reservation change.
 - **Docs:** common docs, Crostini NT CPU/pointer/driver findings, `docs/dev-demo.md`/STEPS;
   checklist records C: success and SP6a prerequisite for later apps. No driver/SP downloads.
-- **Decision:** **5A (recommended)** once-only exact-template migration/PS2 docs; **5B** new
-  installs/docs only with manual existing CPU fix. NT acceleration awaits actual owner results.
-  Recommend deferring VMware mouse support.
+- **Owner decision:** **5A approved**. Use the once-only exact-template migration and PS/2 docs.
+  NT acceleration awaits actual owner results; VMware mouse support stays deferred.
 
 ## 6. DOSBox-X full screen and renderer preference WARN
 
@@ -390,8 +424,8 @@ fullscreen=true default or implicit display switcher.
   shortcuts and recovery; parsing config proves no visual behavior. Existing disk rows suffice.
 - **Docs:** common docs, Crostini Graphics/Retro tradeoffs, `docs/dev-demo.md`, generated STEPS;
   retain dated v100 finding alongside profile rationale.
-- **Decision:** **6A (recommended)** documentation/warning policy. **6B:** add display switcher,
-  requiring additional transactional edits/conflict/migration design; defer unless owner chooses it.
+- **Owner decision:** **6A approved**. Update documentation and warning policy without adding
+  a display switcher in v101.
 
 ## 7. OLEnterprise Object Agent and normal core
 
@@ -419,8 +453,8 @@ Do not recommend routine `setup` launches just to select normal core.
   rows cover content; no new downloads/config migration.
 - **Docs:** common docs, Crostini Retro crash/workaround, `docs/dev-demo.md` and generated STEPS;
   broader RPC software is a troubleshooting suggestion, not an established finding.
-- **Decision:** **7A (recommended)** existing commands/docs. **7B:** another persistent core
-  switcher, deferred unless owner wants command-managed config edits.
+- **Owner decision:** **7A approved**. Use the existing command and document persistent editing;
+  do not add another core-setting switcher.
 
 ## 8. Guest network test plan
 
@@ -463,9 +497,10 @@ reports are sanitized. Distinguish NOT RUN, unsupported and FAIL; never pre-fill
   retained assets results once; no database stack content is added.
 - **Docs:** common docs, Crostini NAT/DNS/inbound limits, `docs/dev-demo.md` explaining scaffold
   versus later binary/VM/database footprint.
-- **Decision:** **8A (recommended)** procedure now/probe later. Select controlled peer/listener,
-  external HTTP endpoint, short/FQDN names and test machines before real checks. Win31 networking
-  and guest inbound hostfwd are follow-ups; install-db-server is not a basic-network prerequisite.
+- **Owner decision:** **8A approved**. Publish the procedure now and leave probe code for later.
+  Select the controlled listener, external HTTP target, peer names and machines before real checks.
+  HTTP to another laptop uses the existing user-mode NIC, not the deferred remote second-NIC link.
+  Win31 networking and guest hostfwd remain follow-ups; no database stack is required.
 
 ## 9. Bundle foundation for the later Delphi demo
 
@@ -482,147 +517,194 @@ NT:   -nic socket,model=pcnet,mac=52:54:00:50:00:10,udp=127.0.0.1:10002,localadd
 2000: -nic socket,model=pcnet,mac=52:54:00:50:00:20,udp=127.0.0.1:10001,localaddr=127.0.0.1:10002
 ```
 
-Windows second NICs: 192.168.50.10/.20, mask 255.255.255.0, **no gateway**; 2000 WINS=.10 in the
-existing HADAMIN lab. Guest IPs are distinct from host UDP endpoints and set manually in Windows.
-First NIC keeps internet/default route. NT NWLink requested a nonzero internal network number with
-two adapters; record that observation, not a requirement to add NWLink/IPX. Multicast attempt with
-duplicate default MACs got no replies; multicast itself remains untested.
+The Windows second NICs use 192.168.50.10 and .20 with mask 255.255.255.0 and **no gateway**.
+Windows 2000 uses .10 for WINS in the existing HADAMIN lab. These guest IPs are separate from the
+host UDP endpoints and are set manually in Windows. The first NIC keeps its internet route. NT
+NWLink requested a nonzero internal network number with two adapters; this is an observation,
+not a requirement to add NWLink/IPX. A multicast attempt with duplicate default MACs received no
+replies, so multicast itself remains untested.
 
-### 9A. Supported command and config ownership
+### 9A. Supported local command and config ownership
 
-Recommend existing per-guest style, separate from DOSBox-X's `win95 net`:
+The owner approved a local-only link for v101. The supported commands will be
+`winnt40 lan [status|on|off]` and `win2000 lan [status|on|off]`. They will manage one second PCnet
+adapter in each guest using the proven reciprocal loopback UDP link. They will not accept remote
+peer or bind options. Remote support belongs to F6 in the companion, where the Tailscale MTU risk
+is recorded. DOSBox-X will continue to use its separate `win95 net` command.
 
-```text
-winnt40 lan [status|on|off]
-win2000 lan [status|on|off]
-<guest> lan on [--peer IPV4 --bind IPV4 --local-port N --peer-port N --mac MAC]
-```
+The owner requested a comparison of storage approaches before the plan is final:
 
-- Status defaults, reads only and never migrates/boots. Missing state means off. `on` without
-  options explicitly selects the local preset above by guest; custom mode requires all five
-  endpoint/MAC options. `off` disables managed NIC only and retains parameters for inspection.
-  Changes require that guest stopped; no hot-plug or automatic domain/IP configuration.
-  Dispatch read-only LAN status before today's eager STATE/workspace `mkdir` calls; create
-  directories lazily only for mutations/launches so a first status on a fresh home writes nothing.
-- Record versioned JSON under `~/.config/dev-retro/<guest>-lan.json`; allowlist/schema parsing,
-  no shell source/eval. Validate then atomically replace regular files preserving mode. Refuse
-  symlink, unknown schema or corrupt state without clobbering it. Missing state preserves existing
-  launches. Corrupt state needs manual repair, not guessed recovery writes.
-- Local preset uses PCnet, reciprocal loopback UDP ports, distinct locally administered unicast
-  MACs. Validate IPv4, ports (recommend 1024–65535), unicast MAC, nonidentical local endpoints;
-  reject unsafe wildcard binds, unspecified/multicast/broadcast peers, duplicates and injection.
-  Remote mode requires numeric Tailscale IPv4 peer, **specific local Tailscale IPv4 bind**, explicit
-  ports and lab-unique MAC. Confirm bind address is local at launch without reading credentials.
-- Supported topology is **one point-to-point pair**: NT↔2000 locally, or one selected QEMU guest
-  per laptop. Four simultaneous endpoints require a later hub/switch design. Remote examples name
-  both endpoint/guest IP/MAC identities. No multicast, TAP/bridge, sudo, host reconfiguration,
-  broad 0.0.0.0 bind or ChromeOS port forwarding.
-- Append one validated `-nic socket,...` in `qemu_launch`, preserving existing user-mode NIC
-  policy, exchange gate and CDs. Valid enabled link applies to normal/run/explicit setup launches
-  (including domain-controller installation); setup still withholds exchange. Off changes no
-  Windows settings or disks. Status does not ping peers or launch QEMU.
-- Existing hand-written second-NIC EXTRA_ARGS must not gain a duplicate. Managed off leaves those
-  untouched. Before on, inspect `-nic`, `-net`, `-netdev` and network-device overrides and refuse
-  ambiguous custom networking. Owner adoption with guests off: back up config, remove only known
-  manual link args, run on. Never auto-delete owner text; preserve unrelated args. Revalidate on
-  launch against later edits, failing before opening disks on conflict.
-- Reject known local managed-pair MAC/bind-port collisions; report other-process port ownership
-  without killing anything. QEMU bind failure is an error, no silent alternate port/topology.
-  Cannot prove remote MAC uniqueness/reciprocity locally: status prints expected reciprocal values
-  and docs require checking the peer. No rewrite of tailnet access policy; owner permits UDP ports
-  in existing normal-mode Tailscale configuration.
+| Approach | Advantages | Costs and safeguards |
+|---|---|---|
+| Keep a separate JSON state file under `~/.config/dev-retro`. | A strict schema is easy to parse without executing shell, and a narrow atomic write cannot alter CPU/audio settings. | The owner must maintain two config locations for one QEMU launch. Status, backup and adoption must reconcile that state with the existing config and EXTRA_ARGS. Schema/version handling and a new disk-report location are also required. |
+| Add `LAN_*` keys to `~/winnt40/config` and `~/win2000/config`. | The owner sees networking beside ACCEL, CPU, SOUND and EXTRA_ARGS, and can back up one config per guest. The existing helper already reads these files for every launch. | The command must use a conservative non-executing parser for edits/status, preserve unrelated shell content and refuse ambiguous files. Launch-time validation is still required after the existing trusted config-loading step. |
 
-Local link/domain join is proven; remote UDP/domain/DCOM are distinct unproven stages. Check
-socket syntax against installed Debian QEMU, using the
-[upstream network reference](https://www.qemu.org/docs/master/system/invocation.html#network-options)
-as design guidance, not a substitute for installed support.
+**Recommendation:** use `LAN_*` keys in the existing per-guest config. This fits the established
+editable-config interface and avoids two sources of truth. The existing QEMU migration code already
+provides a model for conservative, atomic edits, although LAN commands need their own focused
+fixtures. This is a recommendation from the requested comparison, not an owner decision already
+made. If JSON is chosen instead, revise the config, status, fixture and disk-accounting contracts
+together before implementation.
+
+The proposed keys are `LAN_ENABLED`, `LAN_LOCAL_PORT`, `LAN_PEER_PORT` and `LAN_MAC`. The helper
+will supply an off default and the preset port/MAC values before loading an existing config. New
+config templates will show those four keys next to the other QEMU options. Old configs will not be
+rewritten just to add disabled networking. The PCnet model and both host endpoints will be fixed
+to the local preset, so no v101 key can select a non-loopback peer or bind address.
+
+`lan status` will be the default operation. It will read literal LAN settings and report the
+selected local parameters without sourcing the shell config, writing files, pinging a peer or
+starting QEMU. It will run before today's eager STATE/workspace directory creation. When a config
+is absent, it will report the helper defaults; when it cannot safely interpret a config, it will
+report that manual review is needed rather than execute it to obtain an answer.
+
+`lan on` and `lan off` will require the selected guest to be stopped. They will require the
+existing regular per-guest config created by setup. The command will update the single literal
+LAN_ENABLED assignment and add only missing LAN defaults in the same atomic transaction; it will
+preserve existing valid local port/MAC choices and every unrelated setting, comment, mode and line
+ending. An already-off old config needs no write. There will be no repeated launch-time migration
+or reset of the v100/v101 defaults-review markers.
+
+The editor will count assignments and accept only supported literal forms. It will refuse
+symlinks, duplicate LAN keys, substitutions, conditionals or other complex shell that could change
+their meaning, leaving the whole file untouched with manual-edit instructions. It will not source
+or eval a config to edit it. Normal guest launch will retain the existing trusted shell-config
+contract, then validate the effective LAN values before opening disks. This validation will reject
+unsupported LAN keys, invalid booleans, out-of-range ports, non-unicast MACs and argument injection.
+The allowed port range will be 1024–65535, and each enabled local endpoint must differ from its
+peer. The two default MACs will remain distinct and locally administered.
+
+`qemu_launch` will append one validated socket-NIC argument when LAN_ENABLED is enabled. It will
+preserve the current user-mode NIC policy, exchange gate and app CDs. An enabled local link will
+apply to normal boot, run and explicitly requested setup launches, including domain-controller
+installation, but setup will still withhold exchange. The command will not set Windows IPs, change
+its domain or hot-plug a NIC. Turning the managed link off will change no guest files or settings.
+
+Existing hand-written second-NIC arguments in EXTRA_ARGS will remain untouched while managed LAN
+is off. Before enabling, the command will inspect `-nic`, `-net`, `-netdev` and network-device
+overrides and refuse conflicting or ambiguous custom networking. The adoption procedure will ask
+the owner to stop the guests, back up the config, remove only the known manual link arguments and
+then run `lan on`. The command will preserve unrelated EXTRA_ARGS and will never delete owner text
+automatically. Launch-time validation will catch a conflicting edit made after enablement.
+
+The helper will reject known local managed-pair MAC or bind-port collisions and incompatible
+reciprocal ports. It will report a port occupied by another process without killing that process.
+A QEMU bind failure will remain an error; there will be no fallback to a different port or topology.
+The supported topology is exactly one local point-to-point pair. Multicast, TAP/bridging, sudo,
+host networking changes and four-endpoint switching are outside v101.
+
+The Windows instructions will retain the manually assigned second-adapter addresses and no-gateway
+rule above. They will distinguish the host UDP ports from the guest IPs and preserve the first
+adapter's internet route. The implementation will verify the socket syntax against installed
+Debian QEMU, using the [upstream network reference](https://www.qemu.org/docs/master/system/invocation.html#network-options)
+as guidance rather than as proof of installed support.
 
 ### 9B. dev-demo scaffold and lifecycle
 
-Add separate `demo_retro_advanced` under install-retro, independent of `demo_retro`'s Watcom guard.
-Keep retro/matrix; generate the agreed nested home:
+The owner approved the scaffold without `pack`. Add a separate `demo_retro_advanced` generator
+under install-retro so missing Watcom does not hide the documentation. It will retain retro/matrix
+and create the agreed nested home shown below. All application code and packaging will wait for
+the staged follow-up.
 
 ```text
 retro/delphi/advanced-demo/
-  README.md              foundation status, prerequisites, follow-up links
-  STEPS.md               network commands, guest IPs, drivers/SP6a/media/recovery
-  VERSIONS.md            agreed mapping; unverified media details labelled
-  results-template.tsv   manual columns, initially NOT RUN
-  work/README.md         owner workspace; application sources arrive later
+  README.md              foundation status, prerequisites and follow-up links
+  STEPS.md               local commands, guest IPs, drivers, SP6a, media and recovery
+  VERSIONS.md            agreed mapping with unverified details labelled
+  results-template.tsv   manual columns initially marked NOT RUN
+  work/README.md         owner workspace reserved for later sources
 retro/delphi/run-advanced-demo.sh
 ```
 
-Menu: `steps`, `status` (read-only helper status), `results` (copy-template guidance) and explicit
-`pack`. No action boots a guest, installs software, configures DCOM or pretends to run application
-stages. Pack uses existing genisoimage to create a **documentation-only foundation CD**; validate
-before atomic publication to `$ASSETS/retro/advanced-demo/ADVDEMO.iso`, then print the owner's
-explicit `<guest> cd FILE.iso` command. Allowlist docs only; exclude work/results/media/config. Later
-code work can extend packaging. Nothing compiles or builds an ISO during this planning task.
+The launcher will offer `steps`, `status` and `results`. Steps will display the foundation
+instructions. Status will call only the supported read-only helper operations. Results will explain
+how to copy the template into assets and record manual evidence. No action will boot a guest,
+install software, configure DCOM or claim that an application stage ran. There will be no pack
+menu entry, ISO generation or application-CD acceptance check in v101. Packaging will be designed
+when actual sources exist.
 
-Existing index assumes `<stack>/<name>` and validates `run-<name>.sh` before reading its record.
-Do not pass `retro/delphi` as STACK: slash-containing `.index` names break discovery/cleanup.
-Recommend optional relative demo/launcher paths in `begin`, retaining all existing defaults:
-STACK=retro, NAME=advanced-demo, relative directory `delphi/advanced-demo`, launcher
-`delphi/run-advanced-demo.sh`, flat key `retro--advanced-demo`. `write_run`, `done_demo` and
-`write_index` consume recorded relative launcher; index reads it before existence validation.
-Reject traversal/absolute paths and keep old TSV records compatible.
+The current index assumes a demo directory at `<stack>/<name>` and validates a fixed launcher
+name before reading its record. Passing retro/delphi as STACK would put a slash in the index key
+and break discovery and cleanup. Instead, extend `begin` with optional relative demo and launcher
+paths while retaining the defaults for every existing demo. The advanced scaffold will use
+STACK=retro, NAME=advanced-demo, the relative directory `delphi/advanced-demo`, the relative
+launcher `delphi/run-advanced-demo.sh` and the flat index key `retro--advanced-demo`.
 
-Bundle README/STEPS/version docs and launcher refresh as retro STEPS do today. Owner workspace/
-template is create-if-missing; never replace future code/results, even on demo-refresh. Existing
-demo-clean confirmation lists the target and removes correct directory/launcher/index, not guest
-workspaces or assets ISO/results. Both retro demos remain indexed/workspace-discoverable. Ready
-means scaffold available, not application accepted.
+`write_run`, `done_demo` and `write_index` will use the recorded relative launcher path. Index
+validation will read that field before checking the launcher exists. Relative paths will be
+validated against absolute paths and traversal, and existing TSV records will remain compatible.
+Both retro demos will remain discoverable in the index and editor workspace.
+
+The bundle will refresh its README, STEPS, version notes and launcher on rerun, as it does for
+existing retro STEPS. It will create the owner workspace and results template only when absent.
+It will preserve owner code and results on ordinary reruns and demo-refresh. The existing explicit
+demo-clean confirmation will list the actual scaffold directory, launcher and index entry before
+removing them. It will not remove guest workspaces or results retained in assets. Readiness will
+mean that the scaffold is available, not that a Delphi application has been built or accepted.
 
 ### Files and functions affected
 
-- **Setup/helper:** header/help, `help_cmd`, main dispatch, `nt_cmd`, `qemu_launch`, `qemu_config`/
-  EXTRA_ARGS integration, where/status notes; proposed `qemu_lan_status`, `qemu_lan_config`,
-  `qemu_lan_args`. New feature defaults off, no automatic adoption/enabling.
-- **Test:** QEMU argv/isolated-home helper fixtures under retro; proposed `tests/test_v101.py`.
-  Existing "Retro helper and config" row already covers `~/.config/dev-retro`; clarify its label
-  for LAN state rather than add the directory again. Add assets ISO/results once and retain guest
-  workspace rows. Add a demo scaffold row only if not already covered by a demo total. Scaffold
-  checks are portable fixtures, not requirements that the owner already ran dev-demo.
-- **Demo:** new `demo_retro_advanced`, bottom dispatch, `begin`, `write_run`, `done_demo`,
-  `write_index` and clean/path metadata. `gen_file`/`present`/`stash_old` must not replace future
-  work on refresh. Cross-link matrix menu/STEPS-delphi/STEPS-winnt to new launcher/docs.
-- **Init:** informational prerequisites only; no required credentials, SQL/SP install or VM start.
-  All four share flags/version metadata.
+In setup's generated helper, update the command header, `help_cmd`, main dispatch, `nt_cmd`,
+`qemu_launch`, `qemu_config` and the config template. Add the LAN status, conservative config-editor
+and argument-builder functions. Where/status reporting must describe local-only support and the
+off default. The implementation must preserve EXTRA_ARGS and make read-only LAN dispatch occur
+before directory creation.
+
+In dev-test, extend the QEMU argument and isolated-home helper fixtures and proposed
+`tests/test_v101.py`. With the recommended config storage, the existing NT/2000 workspace rows
+already include the LAN keys; clarify the measured content without counting config again. Retained
+results under assets need one measurement, and a scaffold row is needed only if a demo total does
+not already cover it. No ISO or new standalone LAN-state directory is added by v101.
+
+In dev-demo, add `demo_retro_advanced` and its install-retro dispatch, then extend `begin`,
+`write_run`, `done_demo` and `write_index` for the nested paths. Review `gen_file`, `present`,
+`stash_old` and clean handling so refresh cannot replace owner work. Link the matrix menu and
+STEPS-delphi/STEPS-winnt to the new instructions. Init needs informational prerequisites only;
+it must not require credentials, install SQL/service packs or start a VM. All four scripts retain
+the same flags and version metadata.
 
 ### Dev-test and owner acceptance
 
-- Required fake-engine fixtures: off/missing preserves argv; exact local presets/reciprocity/MACs;
-  remote explicit pair; on/off/rerun; schema/input/bind rejection; running guards; EXTRA_ARGS
-  refusal/adoption; malformed/symlink state; collisions; status no writes/network/engine; first
-  NIC preserved; second NIC boot/run/setup and exchange withheld in setup. Isolated HOME/config.
-- Scaffold fixtures: nested paths, old/new index compatibility, launcher syntax, honest menu,
-  no application/seed/binary generation, refresh preservation, correct clean target, pack doc
-  allowlist. Real ISO inspection in a portable fixture when genisoimage available; missing pack
-  tool yields a useful message, never installs it from the menu. Owner work/results stay intact.
-- Owner after backup/adoption runs each guest's lan on/status, boots explicitly, sets/verifies
-  PCnet/IPs, pings both directions, confirms existing domain and first-NIC internet. Shut down,
-  off, confirm second adapter absent without data loss; on again retains identity. Windows may
-  need driver rebinding when NICs change: document recovery; owner handles domain credentials.
-- Network-only acceptance starts at current NT 128 MB/2000 256 MB. Future SQL lab may use NT
-  128–256 MB/2000 512 MB, one database workload at a time. No global memory/SMP change: TCG
-  multi-thread mode is not two guest vCPUs; helper currently uses `-smp 1`. Measure responsiveness
-  before requiring two simultaneous guests. No models/Docker databases for this transport test.
-- Optional remote v101 evidence: one endpoint per laptop, explicit Tailscale binds, reciprocal
-  ports, ping and disable/restore. If not run label remote mode unconfirmed; no DCOM claim. Later
-  application work completes one-laptop behavior before cross-laptop demonstrations.
+Required fake-engine fixtures must show that disabled or absent LAN keys preserve existing launch
+arguments, and that the two local presets use reciprocal ports and distinct MACs. They must cover
+on/off/rerun behavior, safe insertion into old configs, owner-edited ports/MACs, complex and duplicate
+assignments, symlinks, line endings, modes, running guards and manual EXTRA_ARGS adoption. They
+must reject nonlocal/remote configuration, collisions and invalid values without rewriting files.
+Status must perform no writes, network calls or engine launches. Launch fixtures must preserve
+the first NIC, add the second NIC during boot/run/setup only when enabled, and retain setup's
+exchange withholding. All fixtures use an isolated HOME and fake engines.
 
-### Docs and decisions
+Scaffold fixtures must verify the nested paths, old/new index compatibility, launcher syntax,
+accurate pending-stage text and preservation of owner work/results during refresh. They must
+verify the explicit clean target and show that no pack entry, ISO, application source, seed data
+or binary is generated. They must not require the owner to have run dev-demo already.
 
-Common docs; `docs/dev-demo.md` scaffold/ISO versus VM/database footprint; Crostini link/MAC/TCG
-notes; proposed guest-network procedure; generated STEPS; companion plan. Document own-media
-SP6a/SQL/InterBase/Delphi without implying installers are included. Preserve qualified domain/
-multicast observations and licensed-media boundaries.
+After backups and manual adoption, the owner will enable each local link, inspect status, boot
+both guests explicitly and verify PCnet drivers and guest IPs. Bidirectional ping, the existing
+domain relationship and first-NIC internet must still work. With both guests shut down, turn the
+managed links off and confirm the second adapters disappear without data loss. Re-enabling must
+retain their identities. Document driver rebinding if Windows detects changed NICs, and leave
+domain credentials and changes to the owner's Windows session.
 
-**9A (recommended):** approve command grammar/JSON ownership, local preset, explicit remote mode
-and manual EXTRA_ARGS adoption. Alternative: local-only command in v101, remote support later to
-reduce acceptance surface. **9B (recommended):** nested docs/status/results/pack scaffold with
-compatible index extension. Alternative: defer pack until sources arrive. Location, mapping,
-SP6a and Delphi-code deferral are settled and do not need deciding again.
+Network-only acceptance starts at the current NT 128 MB and Windows 2000 256 MB allocations.
+The later SQL lab may use NT 128–256 MB and Windows 2000 512 MB, with one database workload at a
+time. The helper currently uses `-smp 1`; TCG multi-thread mode does not assign two guest vCPUs.
+Measure responsiveness before requiring simultaneous guests. Do not run models or Docker
+databases for this transport check. Remote transport, including the MTU investigation, is deferred
+to companion F6 and is neither a v101 feature nor an optional v101 acceptance route.
+
+### Documentation and owner decisions
+
+Update the common docs, `docs/dev-demo.md`, Crostini link/MAC/TCG notes, the guest-network procedure,
+generated STEPS and the companion. Explain the small scaffold/results footprint separately from
+later application CDs and VM/database growth. Document the owner's SP6a, SQL, InterBase and Delphi
+media prerequisites without implying that installers are included. Preserve the qualified local
+domain and multicast observations.
+
+The owner approved **9A local-only** and **9B without pack** in the review of `936737b`. Keep the
+remote command and all packaging in the staged follow-up. The new storage comparison recommends
+LAN keys in the existing per-guest config and still needs final review. The code location, mapping,
+SP6a prerequisite and application-code deferral are already settled.
 
 ## Proposed build stages after owner approval
 
@@ -637,17 +719,18 @@ SP6a and Delphi-code deferral are settled and do not need deciding again.
    FastMCP/demo docs. Investigation can determine this stage's final design.
 5. **Supported link (9A):** config/argv/status/adoption/collision fixtures, docs/disk rows, owner
    local transport and first-NIC validation.
-6. **Procedure/scaffold (8, 9B):** nested lifecycle/index, docs/results/menu, optional foundation CD.
-   No Delphi/SQL source. Check refresh/clean ownership and final command cross-references.
-7. **Acceptance record:** settle pending choices/results, static checks and owner Chromebook route.
+6. **Procedure/scaffold (8, 9B):** build the nested lifecycle/index and docs/results/menu without
+   pack or ISO generation. Check refresh/clean ownership and final command cross-references.
+7. **Acceptance record:** record the approved scope, evidence and owner Chromebook results.
    Every stage commit has Codex co-author trailer; no merge/release implied by a plan/build commit.
 
 ## Proposed owner acceptance route
 
 Commands below are for the later approved build, **not permission to execute now**.
 
-1. Settle 1A–9B, including explicit deferral/claim narrowing if research or remote mode stays
-   unconfirmed. Validate Claude import and archive extraction separately.
+1. Confirm the remaining final-review points without reopening the approved choices: LAN storage,
+   release-kit archive provenance and the named Inspector preflight. Remote mode and pack are
+   deferred, not unconfirmed v101 features. Validate Claude import and archive extraction separately.
 2. Guests/heavy workloads stopped; targeted init → setup → init → test, then optional demo:
 
    ```bash
@@ -659,8 +742,8 @@ Commands below are for the later approved build, **not permission to execute now
    ```
 
    First init on fresh machines only creates template. Approve/run each separately and inspect
-   assets output/stage coverage. Demo remains outside test checklist; verify scaffold menu/status/
-   pack without treating the deferred application as installed.
+   assets output/stage coverage. Demo remains outside the test checklist; verify its steps/status/
+   results menu without treating the deferred application as installed or looking for a pack action.
 3. Separately approved Inspector strict-offline checks after workflow/new session; bounded KVM/
    audio experiments within budget; NT preservation/CPU/usability; DOSBox profiles/core recovery.
    Preserve existing guests: no repeat fresh install needed for recorded C: acceptance.
