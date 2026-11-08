@@ -1,6 +1,6 @@
 # Delphi multi-tier demo across Delphi 3–7: plan
 
-Nov 8, 2026 · **draft for owner review** · companion to `docs/plans/v101-plan.md` item 9
+Nov 8, 2026 · **scope agreed; detailed build plan next** · companion to `docs/plans/v101-plan.md` item 9
 
 ## Goal
 
@@ -82,7 +82,7 @@ CD carries an InterBase of its year).
 
 - **Domain accounts** (HADAMIN) make DCOM security much simpler than matching local accounts: the
   client's user is known to the server machine.
-- **Memory:** NT 4.0 at 128–256 MB (SQL Server 6.5 + InterBase), Windows 2000 at 512 MB (SQL Server
+- **Memory:** NT 4.0 at 128–256 MB (128 MB today) (SQL Server 6.5 + InterBase), Windows 2000 at 512 MB (SQL Server
   2000 + InterBase); both are light next to Oracle. Both guests on TCG use two CPU cores.
 - **IDEs:** Delphi 3 and 4 installed in NT 4.0, Delphi 5–7 in Windows 2000 (their eras; Borland's
   debugger works there). Wine builds (`delphi N`) stay optional.
@@ -127,29 +127,44 @@ win95 (it needs DOSBox-X's normal core).
   Socket and HTTP clients can instead use Tailscale TCP plus QEMU port forwarding.
 - Show each Delphi version's client on yaviks against its server on joxer, with the database swap.
 
+## Guest state and service packs (owner, Nov 8)
+
+- **win2000 guest:** Windows 2000 5.00.2195 **Service Pack 4** already installed; 256 MB RAM today
+  (raise to 512 MB for SQL Server 2000); Pentium III-class CPU; two LAN adapters enabled.
+- **winnt40 guest:** NT 4.0 4.00.1381 with **no service pack** yet; 128 MB RAM; Pentium CPU
+  (`CPU=pentium`, item 5).
+- **Owner-supplied service packs available:** NT 4.0 SP1–SP6a and Windows 2000 SP1–SP4 (bring your
+  own media; nothing in the bundle downloads them).
+- **Plan:** snapshot winnt40, then install NT 4.0 **SP6a** before SQL Server 6.5, InterBase or any
+  Delphi client (Delphi 5–7 programs and later MDAC want SP6a; reapply SP6a if a later install
+  replaces system files). SQL Server 6.5's own service pack (SP5a was its last) is checked when SQL
+  Server 6.5 goes in; not blocking.
+
 ## Risks and checks to do early
 
-- **NT 4.0 service pack:** Delphi 5–7 programs (the clients running on NT 4.0) and later MDAC want
-  NT 4.0 SP6a; SQL Server 6.5 has its own service packs. Confirm what the owner has.
 - **InterBase versions:** older BDE SQL Links and IBX against a newer InterBase server (see "One
   InterBase per guest"); InterBase 6+ dialect 1 vs 3 for the seed script.
 - **DCOM through Tailscale:** DCOM hands out dynamic ports; within the bridged 192.168.50.x network
   that's fine, but it's the first thing to check in phase F.
 - **TCG speed:** two guests on software emulation will be slow; phase B measures it.
 
-## Where the demo's code lives (owner decision)
+## Where the demo's code lives (owner decision, Nov 8)
 
-The Delphi projects and SQL seed scripts are new, publishable source. Options:
-- **A:** a dev-demo item in this bundle (`dev-demo/retro/dcom`), which installs the sources and
-  scripts into `~/dev-demo` for the guests;
-- **B:** a separate repository (for example a "Delphi multi-tier lab"), as a portfolio piece for the
-  legacy-migration practice, with this bundle only providing the guests, network and tools.
+- **In dev-demo, in a Delphi folder of its own called `advanced-demo`:** proposed path
+  `~/dev-demo/retro/delphi/advanced-demo`, next to the existing `retro/matrix`. dev-demo generates
+  the sources (Delphi projects per version, the per-dialect seed scripts, a STEPS file) and, with
+  install-retro's genisoimage, an app CD so a guest can take them through `<guest> cd`.
+- **When it is ready for release** it may move to its own repository, depending on its size.
+- **Source design proposal (for the detailed plan):** forms built in code rather than `.dfm` files,
+  so one source compiles unchanged in Delphi 3–7 (text `.dfm` is the default only from Delphi 5);
+  version differences behind `{$IFDEF VER100}`…`{$IFDEF VER150}` where a feature (sockets, IBX,
+  dbExpress, SOAP) doesn't exist in older versions.
 
-## Owner inputs still needed
+## Owner decisions recorded (Nov 8)
 
-1. Where the code lives (A or B above).
-2. NT 4.0 service packs available (SP6a?), and Windows 2000's service pack level.
-3. Agree the version-to-database mapping above, or adjust it.
+1. Code location: dev-demo, `advanced-demo` (above).
+2. Service packs: available; winnt40 gets SP6a first (above).
+3. The version-to-database mapping above is agreed.
 
 ## Later: Oracle (not in v101)
 
