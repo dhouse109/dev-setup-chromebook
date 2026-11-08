@@ -1,5 +1,5 @@
 #!/bin/bash
-# dev-setup-chromebook - Version 99
+# dev-setup-chromebook - Version 100
 # Version history: CHANGELOG.md, next to this script in the bundle
 # (one section per script, newest version first).
 
@@ -406,7 +406,7 @@ stage_exit() {   # Reporting must not replace the original failure/signal if the
         for name in "${STAGE_SKIPS[@]}"; do printf 'skip\tskipped\t\t%s\n' "$name"; done
     } > "$report" && cp "$report" "$ASSETS/setup-stages.tsv"
     echo '================================================================='
-    echo 'Setup stage summary (Version 99)'
+    echo 'Setup stage summary (Version 100)'
     for name in "${STAGE_ORDER[@]}"; do
         state=${STAGE_STATE[$name]}
         printf '  %-26s %s%s\n' "$name" "$state" "${STAGE_REASON[$name]:+: ${STAGE_REASON[$name]}}"
@@ -426,8 +426,8 @@ stage_exit() {   # Reporting must not replace the original failure/signal if the
     [ -z "$rerun" ] || printf 'Rerun: %q %s\n' "$SCRIPT_DIR/dev-setup-chromebook.sh" "$rerun"
     echo "Stage report: $report"
     if [ "$rc" = 0 ]; then
-        if [ "$failed" = 0 ] && [ "$pending" = 0 ]; then echo 'Setup Version 99 complete!'
-        else STAGE_EXIT_RC=1; echo 'Setup Version 99 complete with failures; see stages above.'; fi
+        if [ "$failed" = 0 ] && [ "$pending" = 0 ]; then echo 'Setup Version 100 complete!'
+        else STAGE_EXIT_RC=1; echo 'Setup Version 100 complete with failures; see stages above.'; fi
     fi
     echo '================================================================='
     return 0
@@ -529,7 +529,7 @@ stage_expect install-hermes install-hermes
 stage_expect install-openclaw install-openclaw
 stage_expect finalize
 
-echo "Starting comprehensive Chromebook Linux provisioning (Version 99)..."
+echo "Starting comprehensive Chromebook Linux provisioning (Version 100)..."
 
 stage network
 mkdir -p "$ASSETS/logs" "$ASSETS/downloads"
@@ -7133,8 +7133,9 @@ if [[ "$FLAGS" =~ " install-bdd " ]]; then
     echo "--- Gherkin / BDD runners (install-bdd)"
     if command -v dotnet > /dev/null 2>&1; then
         if dotnet new list reqnroll-project > /dev/null 2>&1; then
-            dotnet new update > /dev/null 2>&1 || echo "NOTICE: 'dotnet new update' failed (nuget.org unreachable?); the installed Reqnroll templates stay."
-        elif ! dotnet new install Reqnroll.Templates.DotNet > /dev/null 2>&1; then
+            # v100 (Nov 2 2026): NuGet can hang on the unusable IPv6 path; scope IPv4 to acquisition.
+            DOTNET_SYSTEM_NET_DISABLEIPV6=1 dotnet new update > /dev/null 2>&1 || echo "NOTICE: 'dotnet new update' failed (nuget.org unreachable?); the installed Reqnroll templates stay."
+        elif ! DOTNET_SYSTEM_NET_DISABLEIPV6=1 dotnet new install Reqnroll.Templates.DotNet > /dev/null 2>&1; then
             echo "NOTICE: 'dotnet new install Reqnroll.Templates.DotNet' failed (nuget.org unreachable?); rerun setup with install-bdd."
         fi
         dotnet new list reqnroll-project > /dev/null 2>&1 && echo "Reqnroll: 'dotnet new reqnroll-project -t nunit' (or mstest, xunit, tunit); 'dotnet new reqnroll-feature -n Name'."
@@ -9927,8 +9928,8 @@ fi
 # Nothing is downloaded for any operating system: the media and product keys are yours, in each
 # ~/<guest>/install folder (Delphi 1 in ~/win31/install/apps). No disk image is created here: '<cmd> setup'
 # creates its disk after a free-space check (min(10 GB, 15% of the Linux disk) must stay free; RETRO_MIN_FREE_GB
-# overrides it). QEMU uses KVM where /dev/kvm exists (you are added to the group that owns it) and software
-# emulation otherwise. '<guest> fonts' puts the TrueType core fonts and Tahoma from the Wine prefixes on a
+# overrides it). v100 (Nov 5 2026): QEMU selection is per guest; win2000 defaults to TCG, NT stays auto
+# (KVM when usable, otherwise TCG). '<guest> fonts' puts the core fonts and Tahoma from Wine prefixes on a
 # guest, with a README on installing them and on font smoothing (none of these Windows has ClearType); DOS
 # programs draw their text screens in a TrueType font (DOSBox-X output=ttf, ~/.config/dev-retro/dos.conf);
 # delphi1 sets Integrated debugging off and the editor font in DELPHI.INI. 'retro help' lists every subcommand.
@@ -9959,11 +9960,14 @@ if [[ "$FLAGS" =~ " install-retro " ]]; then
     # v93: bsdtar unpacks a Delphi CD's .iso for 'delphi N setup' (Wine has no CD image support of its own).
     apt_get install -y libarchive-tools \
         || echo "NOTICE: apt could not install libarchive-tools; 'delphi N setup' then needs the CD's files, not an .iso."
+    # v100 (Nov 5 2026): author app data CDs from owner-supplied loose files; no media downloads.
+    apt_get install -y genisoimage \
+        || echo "NOTICE: could not install genisoimage; rerun install-retro before building app ISOs."
     if [ -e /dev/kvm ]; then
         # The group that owns /dev/kvm (kvm on Debian); nothing to add when it is root or open to everyone.
         KVM_GROUP=$(stat -c %G /dev/kvm 2> /dev/null || echo kvm)
         if [ -r /dev/kvm ] && [ -w /dev/kvm ]; then
-            echo "KVM: /dev/kvm is usable already: winnt40 and win2000 run at close to native speed."
+            echo "KVM is available; selection is per guest. New defaults: winnt40 auto, win2000 tcg."
         elif [ "$KVM_GROUP" != root ] && getent group "$KVM_GROUP" > /dev/null; then
             sudo usermod -aG "$KVM_GROUP" "$USER"
             echo "KVM: added you to the $KVM_GROUP group, which owns /dev/kvm (it applies after Linux is shut down and reopened)."
@@ -9971,7 +9975,7 @@ if [[ "$FLAGS" =~ " install-retro " ]]; then
             echo "NOTICE: /dev/kvm is here but owned by group '$KVM_GROUP' and not usable by you; QEMU will use software emulation."
         fi
     else
-        echo "KVM: no /dev/kvm on this Chromebook: NT 4.0 and 2000 will run in QEMU's software emulation (slower)."
+        echo "KVM unavailable: auto/kvm falls back to TCG; win2000 defaults to intentional TCG."
     fi
     mkdir -p ~/.local/bin
 
@@ -10023,12 +10027,15 @@ if [[ "$FLAGS" =~ " install-retro " ]]; then
     if [ ! -f "$WIN31/dosbox-x.conf" ]; then
         cat > "$WIN31/dosbox-x.conf" << 'EOF_DBX'
 # ~/win31/dosbox-x.conf - written by dev-setup (install-retro) once; edit it freely, setup leaves it alone.
+# v100: defaults reviewed
 # A Windows 3.1x machine: 16 MB, S3 SVGA (Windows can use the S3 driver for more than 640x480x16),
 # Sound Blaster 16, C: mounted from ~/win31/drive_c. The 'win31' command adds the mounts.
 [sdl]
 autolock=true
 output=opengl
 [dosbox]
+# v100 (Nov 5 2026): Chromebook host key; explicit owner choices are preserved.
+hostkey=ctrlshift
 title=Windows 3.1x (dev-setup)
 machine=svga_s3
 memsize=16
@@ -10092,6 +10099,8 @@ EOF_DBX
 #                                             win2000 swap it while running too
 # win95, winnt40, win2000:
 #   <cmd> put FILE... / get [NAME]   copy into / out of the exchange disk (D: in the guest) while it is off
+#   <cmd> exchange enable|disable    NT/2000: after installed desktop + shutdown, enable attachment; setup clears it
+#   <cmd> accel | preferences         NT/2000: selected acceleration and read-only preference diagnostics
 #   <cmd> exchange info              its size, layout and free space
 #   <cmd> exchange recreate [--yes]  rebuild it empty at RETRO_EXCHANGE_MB ('get' saves its files first)
 # winnt40, win2000 (QEMU):
@@ -10099,6 +10108,8 @@ EOF_DBX
 #   <cmd> floppy IMG|eject                    swap the floppy while running
 #   <cmd> keys ctrl-alt-del                   keys ChromeOS keeps for itself (the NT login needs this one)
 #   <cmd> snapshot save NAME | restore NAME | list | delete NAME      undo points on the qcow2 disk
+# win95 (v100, Nov 5 2026):
+#   win95 net [status|on|off]   next normal boot; IRQ3/I-O300 NE2000 with slirp, guest off to change
 # win95 (v93):
 #   win95 snapshot save NAME | restore NAME [--yes] | list | delete NAME
 #                            undo points: sparse copies of hdd.img in ~/win95/snapshots, guest off only
@@ -10108,6 +10119,8 @@ EOF_DBX
 #                            CD's files), then apply the settings below; FILE picks another installer
 #   delphi N                 start the IDE in a virtual desktop sized to the screen
 #   delphi N run FILE        another program in the same desktop
+#   delphi N colors list|use NAME|save NAME   per-prefix registry colors; default + owner .reg schemes (12B)
+#   delphi1 colors list|use NAME|save NAME    same switcher, separate prefix; close all prefix apps first
 #   delphi N launcher        point Delphi's own launcher entries at 'delphi N'
 #   delphi N ini save        keep the IDE's options (HKCU\Software\Borland in the prefix's registry) in
 #                            ~/.config/dev-retro/delphiN.reg; 'delphi N setup' restores them
@@ -10117,7 +10130,7 @@ EOF_DBX
 #   delphi N vscode [DIR|PROJECT.dpr] [--force]
 #                            v96: .vscode/tasks.json (build, run) for VS Code, Cursor and Devin; no debugging there
 #   Settings per prefix: the Windows version Wine reports (3: win95, 4: win98, 5: win2k, 6: win2k, 7: winxp), black
-#   desktop, TEMP=C:\TEMP, MS Sans Serif -> Tahoma, corefonts + tahoma, fontsmooth=rgb. The integrated
+#   desktop preserved (colors use NAME switches explicitly), TEMP=C:\TEMP, MS Sans Serif -> Tahoma, corefonts + tahoma, fontsmooth=rgb. The integrated
 #   debugger stays on: 'delphi N help' notes what was found with each version.
 # retro:
 #   retro                    the guests: installed or not, running or stopped (Delphi 3-7 once set up)
@@ -10132,6 +10145,8 @@ EOF_DBX
 # no Win16 debugger), and the editor font Courier New 10 where none is set; 'delphi1 ini save' keeps the rest.
 set -o pipefail
 SELF=$(readlink -f "$0")
+# v100 (Nov 5 2026): setup records the bundle assets path; font logs never depend on caller cwd.
+RETRO_ASSETS=$(cat "${SELF%/*}/assets-path" 2> /dev/null || true)
 STATE="$HOME/.local/state/dev-retro"
 mkdir -p "$STATE"
 export MTOOLS_SKIP_CHECK=1
@@ -10240,6 +10255,130 @@ print((start or 63) * 512)
 PY
 }
 
+# v100 (Nov 5 2026): write-once guest configs gain only absent defaults, never changed owner values.
+# v100 (Nov 6 2026): exact v99 template lines also upgrade; any edit, duplicate or misplaced hostkey stays.
+# The parser preserves other bytes/line endings and modes; ambiguous configs require manual review.
+# v100 (Nov 7 2026): review all defaults and record the marker in one atomic file update.
+# Later owner choices, including deleted keys and exact v99 spellings, are never repaired again.
+ini_setting() {   # read FILE SECTION KEY | review FILE win95|hostkey
+    python3 - "$@" << 'RETRO_INI_PY'
+import os, re, stat, sys, tempfile
+from pathlib import Path
+op, filename, *args = sys.argv[1:]
+p = Path(filename)
+if not p.is_file(): sys.exit(0 if op == 'review' else 1)
+raw = p.read_bytes()
+lines = raw.decode('latin-1').splitlines(keepends=True)
+marker = '# v100: defaults reviewed'
+if op == 'review':
+    if any(line.rstrip('\r\n') == marker for line in lines): sys.exit(0)
+    if p.is_symlink():
+        print(f'NOTE: {p.name}: symlink config left unchanged; review defaults manually.', file=sys.stderr)
+        sys.exit(0)
+    settings = [('dosbox', 'hostkey', 'ctrlshift', None)]
+    if args[0] == 'win95': settings.insert(0, ('sdl', 'output', 'surface', 'output=opengl'))
+else:
+    settings = [(args[0].casefold(), args[1].casefold(), None, None)]
+def index():
+    sections, assignments, current = {}, [], ''
+    for i, line in enumerate(lines):
+        m = re.match(r'^\s*\[([^]]+)\]\s*(?:[#;].*)?$', line.strip())
+        if m:
+            current = m[1].strip().casefold()
+            sections.setdefault(current, []).append(i)
+        elif not line.lstrip().startswith(('#', ';')) and '=' in line:
+            k, v = line.split('=', 1)
+            assignments.append((current, k.strip().casefold(), v.strip(), i))
+    return sections, assignments
+sections, assignments = index()
+ambiguous = False
+for section, key, _, _ in settings:
+    found = [x for x in assignments if x[0] == section and x[1] == key]
+    misplaced = key == 'hostkey' and any(x[1] == key and x[0] != section for x in assignments)
+    if len(sections.get(section, [])) > 1 or len(found) > 1 or misplaced:
+        print(f'NOTE: {p.name}: duplicate or misplaced {key}; review manually (settings left unchanged).', file=sys.stderr)
+        ambiguous = True
+    if op == 'read':
+        if ambiguous or not found: sys.exit(1)
+        print(found[0][2]); sys.exit(0)
+nl = '\r\n' if b'\r\n' in raw else '\n'
+if not ambiguous:
+    for section, key, value, legacy in settings:
+        sections, assignments = index()
+        found = [x for x in assignments if x[0] == section and x[1] == key]
+        if found:
+            at = found[0][3]; old = lines[at].rstrip('\r\n')
+            # v100 (Nov 6 2026): only a byte-identical v99 template line (plus trailing spaces) is untouched.
+            if legacy is not None and old.rstrip(' ') == legacy:
+                lines[at] = f'{key}={value}' + lines[at][len(old):]
+        elif section in sections:
+            at = sections[section][0] + 1
+            if not lines[at - 1].endswith(('\r', '\n')): lines[at - 1] += nl
+            lines.insert(at, f'{key}={value}{nl}')
+        else:
+            if lines and not lines[-1].endswith(('\r', '\n')): lines[-1] += nl
+            lines.extend([f'[{section}]{nl}', f'{key}={value}{nl}'])
+# Even custom/ambiguous settings are reviewed once: record that decision without changing them.
+lines.insert(0, marker + nl)
+fd, temp = tempfile.mkstemp(prefix='.' + p.name + '.', dir=p.parent)
+try:
+    with os.fdopen(fd, 'wb') as f: f.write(''.join(lines).encode('latin-1'))
+    os.chmod(temp, stat.S_IMODE(p.stat().st_mode))
+    os.replace(temp, p)
+finally:
+    if os.path.exists(temp): os.unlink(temp)
+RETRO_INI_PY
+}
+dosbox_defaults() {   # migrate only existing files; setup and lazy helper paths use the same rule
+    local g=$1 f
+    case "$g" in
+        win31|win95)
+            if running "$g"; then echo "NOTE: $g config defaults deferred until it is stopped." >&2; return 0; fi ;;
+        dos)
+            if pgrep -u "$(id -u)" -f '[d]osbox-x.*dos.conf' > /dev/null; then
+                echo "NOTE: DOS config defaults deferred until DOSBox-X is stopped." >&2; return 0
+            fi ;;
+    esac
+    case "$g" in
+        win31) f="$HOME/win31/dosbox-x.conf"; ini_setting review "$f" hostkey ;;
+        win95)
+            for f in "$HOME/win95/setup.conf" "$HOME/win95/boot.conf"; do
+                ini_setting review "$f" win95 || return
+            done ;;
+        dos) ini_setting review "$HOME/.config/dev-retro/dos.conf" hostkey ;;
+    esac
+}
+config_defaults() {
+    local g
+    for g in win31 win95 dos; do dosbox_defaults "$g" || return; done
+    qemu_defaults win2000
+}
+# v100 (Nov 5 2026): observations only; never migrate an owner's configs during dev-test.
+dosbox_config_status() {
+    local g f actual rc=0
+    for g in win31 win95 dos; do
+        case "$g" in
+            win31) set -- "$HOME/win31/dosbox-x.conf" ;;
+            win95) set -- "$HOME/win95/setup.conf" "$HOME/win95/boot.conf" ;;
+            dos) set -- "$HOME/.config/dev-retro/dos.conf" ;;
+        esac
+        for f in "$@"; do
+            [ -f "$f" ] || { echo "$g: $(basename "$f") not created yet"; continue; }
+            actual=$(ini_setting read "$f" dosbox hostkey) || actual=missing
+            if [ "$actual" != ctrlshift ]; then echo "$g: hostkey=$actual; recommend [dosbox] hostkey=ctrlshift (owner value kept)"; rc=1; fi
+            if [ "$g" = win95 ]; then
+                actual=$(ini_setting read "$f" sdl output) || actual=missing
+                if [ "$actual" != surface ]; then echo "win95: output=$actual; recommend [sdl] output=surface with the guest off"; rc=1; fi
+                if awk 'BEGIN { a=0; found=0 } /^[[:space:]]*\[/ { a=(tolower($0) ~ /^[[:space:]]*\[autoexec\]/) } a && tolower($0) ~ /^[[:space:]]*mount[[:space:]]+[a-z][[:space:]]/ { found=1 } END { exit !found }' "$f"; then
+                    echo "win95: folder mount in autoexec; review before boot c: (left unchanged)"; rc=1
+                fi
+            fi
+        done
+    done
+    return "$rc"
+}
+
+
 # --- the exchange disk (win95, winnt40, win2000) ------------------------------------------------
 # One FAT16 partition (type 06) at sector 63, geometry 16 heads x 63 sectors: every guest here reads it
 # (NT 4.0 included), DOSBox-X mounts it, and mtools reaches it from Linux while the guest is off.
@@ -10316,7 +10455,12 @@ exch_cmd() {   # exch_cmd GUEST info|recreate [--yes]
     local img="$WS/exchange.img" mb h s c free yes=0 a
     for a in "${@:3}"; do [ "$a" = --yes ] && yes=1; done
     case "${2:-info}" in
+        enable|disable)
+            case "$1" in winnt40|win2000) ;; *) die "exchange enable/disable is for NT/2000 installation completion." ;; esac
+            need_stopped "$1"; qemu_config "$1"
+            exchange_gate "$2"; return ;;
         info)
+            case "$1" in winnt40|win2000) qemu_config "$1"; echo "Exchange attachment: $(exchange_gate state) (setup always withholds it)." ;; esac
             exch_setting
             if [ ! -f "$img" ]; then
                 echo "No exchange disk yet: the first '$1 put', '$1 fonts' or '$1 setup' makes one of $SET_VAL MB (RETRO_EXCHANGE_MB, $SET_SRC)."
@@ -10348,19 +10492,20 @@ exch_cmd() {   # exch_cmd GUEST info|recreate [--yes]
                 rm -f "$img"
             fi
             exch_create "$WS" ;;
-        *) die "usage: $1 exchange info | recreate [--yes]" ;;
+        *) die "usage: $1 exchange info | enable | disable | recreate [--yes]" ;;
     esac
 }
 exch_put() {   # exch_put GUEST PATH...: copy files or folders into the exchange disk's root
     local p
     guest_info "$1"; shift
     need_stopped "$GUEST"
+    exchange_pending
     exch_create "$WS"
     [ $# -gt 0 ] || die "usage: $GUEST put FILE|FOLDER..."
     for p in "$@"; do
         [ -e "$p" ] || die "no such file: $p"
         mcopy -i "$WS/exchange.img@@$EXCH_OFF" -s -o -Q "$p" :: || die "could not copy $p (is the exchange disk full? '$GUEST get' lists it)"
-        echo "put $(basename "$p") -> D:\\$(basename "$p")"
+        echo "put $(basename "$p") -> exchange disk (normally D:\\$(basename "$p"); use its assigned Windows letter)"
     done
 }
 exch_get() {   # exch_get GUEST [NAME]: copy NAME (or everything) out into WS/from-guest
@@ -10476,6 +10621,7 @@ win31_cmd() {
     local mode=${1:-boot} conf="$WS/dosbox-x.conf" args f imgs kind app
     [ -f "$conf" ] || die "no $conf: rerun dev-setup with install-retro."
     need_stopped win31
+    dosbox_defaults win31
     args=(-conf "$conf" -c "mount c \"$WS/drive_c\"")
     [ -d "$WS/install/apps" ] && args+=(-c "mount d \"$WS/install/apps\"")
     # v93: an app CD (.iso in install/apps) as F:, through DOSBox-X's CD-ROM support (MSCDEX).
@@ -10526,11 +10672,15 @@ win31_cmd() {
 # =================================================================================================
 # v93: hdd.img's size is RETRO_WIN95_DISK_MB (default 2048; v92 made 1024 MB), read when it is created.
 win95_confs() {   # write setup.conf and boot.conf once (edit them freely; setup leaves them alone)
+    # v100 (Nov 5 2026): surface fixes maximized redraw; never rewrite an explicit owner value.
     local base
-    base='[sdl]
+    # v100 (Nov 7 2026): new files start reviewed; setup/launch never restores deleted defaults.
+    base='# v100: defaults reviewed
+[sdl]
 autolock=true
-output=opengl
+output=surface
 [dosbox]
+hostkey=ctrlshift
 machine=svga_s3trio64
 memsize=64
 [video]
@@ -10558,13 +10708,153 @@ int13fakev86io=true
 int13fakeio=true
 int13fakev86io=true
 cd-rom insertion delay=4000'
+    if [ "${1:-}" != boot-only ]; then
     [ -f "$WS/setup.conf" ] || printf '%s\n' "# ~/win95/setup.conf - written by dev-setup (install-retro) once; edit freely." \
         "# Installing: the normal core, as DOSBox-X's Windows 95 guide requires." "$base" | sed 's/^cputype=pentium_mmx$/cputype=pentium_mmx\ncore=normal/; s/^\[dosbox\]$/[dosbox]\ntitle=Windows 95 setup (dev-retro)/' > "$WS/setup.conf"
+    fi
     [ -f "$WS/boot.conf" ] || printf '%s\n' "# ~/win95/boot.conf - written by dev-setup (install-retro) once; edit freely." \
         "# Running: the faster dynamic core ('win95 --core normal' for a DOS prompt window inside Windows 95)." \
-        "# Networking (NE2000 through slirp) is off; to turn it on, add:  [ne2000] ne2000=true backend=slirp" "$base" \
+        "# v100 (Nov 5 2026): Networking defaults off; win95 net on|off manages boot.conf with the guest off." "$base" \
         | sed 's/^cputype=pentium_mmx$/cputype=pentium_mmx\ncore=dynamic_x86/; s/^\[dosbox\]$/[dosbox]\ntitle=Windows 95 (dev-retro)/' > "$WS/boot.conf"
+    if [ "${1:-}" != boot-only ]; then dosbox_defaults win95; fi
 }
+# v100 (Nov 5 2026): support is inspected without starting DOSBox-X, as upstream documents.
+slirp_support() {
+    local bin
+    bin=$(command -v dosbox-x) || return 1
+    # grep consumes all output: grep -q would SIGPIPE strings under pipefail.
+    readelf -d "$bin" 2> /dev/null | grep 'NEEDED.*libslirp' > /dev/null || return 1
+    strings "$bin" | grep 'SlirpEthernetConnection' > /dev/null
+}
+win95_net() {
+    local op=${1:-status}
+    case "$op" in
+        status|check) ;;
+        on|off)
+            need_stopped win95
+            if [ "$op" = on ]; then
+                slirp_support || die "DOSBox-X slirp support unavailable/unconfirmed; no changes made. Check the installed Debian build; do not start an emulator probe without owner approval."
+                [ -f "$WS/boot.conf" ] || win95_confs boot-only
+            fi ;;
+        *) die "usage: win95 net [status|on|off]" ;;
+    esac
+    python3 - "$WS/boot.conf" "$op" << 'RETRO_NET_PY'
+# v100 (Nov 5 2026): manage only our intact additions, with the guest off; preserve all custom data.
+import fcntl, os, re, stat, sys, tempfile
+from pathlib import Path
+p, op = Path(sys.argv[1]), sys.argv[2]
+def fail(message): raise ValueError(message)
+try:
+    if p.is_symlink(): fail('Symlink boot.conf left unchanged; manage networking manually')
+    if not p.exists():
+        if op in ('status', 'check', 'off'):
+            print('Network off (boot.conf not created yet); next-boot configuration only'); sys.exit(0)
+        fail('Create boot.conf before enabling networking')
+    with p.open('rb') as locked:
+        if op in ('on', 'off'):
+            try: fcntl.flock(locked, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError: fail('boot.conf is busy; retry with the guest off')
+        initial = p.stat()
+        if (initial.st_dev, initial.st_ino) != (os.fstat(locked.fileno()).st_dev, os.fstat(locked.fileno()).st_ino): fail('boot.conf changed; retry')
+        raw = locked.read(); text = raw.decode('latin-1')
+        nl = '\r\n' if b'\r\n' in raw else '\n'
+        current, sections, values, locations = '', {}, {}, {}
+        position = 0
+        for line in text.splitlines(keepends=True):
+            stripped = line.strip()
+            m = re.fullmatch(r'\[([^]]+)\]\s*(?:[#;].*)?', stripped)
+            if m:
+                current = m[1].strip().casefold()
+                if current in sections: fail('Duplicate sections; review boot.conf manually (unchanged)')
+                sections[current] = position + len(line)
+            elif '=' in line and not stripped.startswith(('#', ';')):
+                key, val = line.split('=', 1); pair = (current, key.strip().casefold())
+                if pair in values: fail('Duplicate keys; review boot.conf manually (unchanged)')
+                values[pair] = val.strip(); locations[pair] = position
+            position += len(line)
+        network = {key: val for (section, key), val in values.items() if section == 'ne2000'}
+        enabled = network.get('ne2000', 'false').casefold() in ('true', '1')
+        backend = network.get('backend', 'auto').casefold()
+        base = network.get('nicbase', '300'); irq = network.get('nicirq', '3')
+        serial = values.get(('serial', 'serial2'), 'default').casefold()
+        def net_block(final):
+            return nl.join([f'# >>> dev-retro v100 net (final-newline={final}) >>>', '[ne2000]', 'ne2000=true', 'backend=slirp', 'nicbase=300', 'nicirq=3', '# <<< dev-retro v100 net <<<', ''])
+        serial_start, serial_end = '# >>> dev-retro v100 serial2 >>>', '# <<< dev-retro v100 serial2 <<<'
+        serial_inline = nl.join([serial_start, 'serial2=disabled', serial_end, ''])
+        serial_section = nl.join([serial_start, '[serial]', 'serial2=disabled', serial_end, ''])
+        net_owned, restore_final = None, 'yes'
+        for final in ('yes', 'no'):
+            candidate = net_block(final)
+            if candidate in text and text.count(candidate) == 1:
+                net_owned, restore_final = candidate, final
+        marker = '# >>> dev-retro v100 net'
+        malformed_net = marker in text and (net_owned is None or text.count(marker) != 1)
+        if net_owned and network != {'ne2000': 'true', 'backend': 'slirp', 'nicbase': '300', 'nicirq': '3'}: malformed_net = True
+        serial_owned = serial_section if serial_section in text else (serial_inline if serial_inline in text else None)
+        malformed_serial = (serial_start in text or serial_end in text) and (serial_owned is None or text.count(serial_start) != 1 or text.count(serial_end) != 1)
+        kind = 'managed' if net_owned and not malformed_net else ('custom' if network or 'ne2000' in sections else 'unconfigured')
+        summary = f'Network {"on" if enabled else "off"}; backend={backend}; I/O={base}; IRQ={irq}; COM2={serial}; {kind}; next-boot config only (not reachability)'
+        if op in ('status', 'check'):
+            print(summary)
+            bad = malformed_net or malformed_serial
+            if enabled:
+                bad = bad or backend not in ('auto', 'slirp', 'pcap') or (irq == '3' and serial != 'disabled')
+                bad = bad or base.upper() not in ('200','220','240','260','280','2C0','300','320','340','360') or irq not in ('3','4','5','9','10','11','12','14','15')
+            if network.get('ne2000', 'false').casefold() not in ('true', 'false', '1', '0'): bad = True
+            if op == 'check' and bad: fail('Custom/edited or conflicting network settings; review manually, left unchanged')
+            sys.exit(0)
+        if malformed_net or malformed_serial: fail('Managed block was edited; review manually, left unchanged')
+        if op == 'on':
+            if net_owned:
+                if serial != 'disabled': fail('IRQ3 conflicts with COM2; resolve serial2 manually, left unchanged')
+                print('Already on; ' + summary); sys.exit(0)
+            if network or 'ne2000' in sections or any(key in ('ne2000','nicbase','nicirq') and section != 'ne2000' for section, key in values):
+                fail('Custom network settings exist; enable manually, left unchanged. ' + summary)
+            if serial not in ('default', 'disabled') or (('serial', 'serial2') in values and serial == 'default'):
+                fail('IRQ3 conflicts with owner serial2; set it to disabled manually before net on (unchanged)')
+            if serial_start in text or serial_end in text: fail('Orphan managed serial block; review manually')
+            restore_final = 'yes' if not text or text.endswith(('\r', '\n')) else 'no'
+            if restore_final == 'no': text += nl
+            if ('serial', 'serial2') not in values:
+                if 'serial' in sections:
+                    at = sections['serial']
+                    # A header at EOF gained the separator newline above; insert after that newline.
+                    if at == len(raw) and restore_final == 'no': at += len(nl)
+                    text = text[:at] + serial_inline + text[at:]
+                else: text += serial_section
+            text += net_block(restore_final)
+        elif op == 'off':
+            if net_owned is None:
+                if enabled: fail('Custom network settings exist; disable manually, left unchanged. ' + summary)
+                print('Already off; ' + summary); sys.exit(0)
+            # No network keys outside the exact owned block may lose their section header.
+            start, end = text.index(net_owned), text.index(net_owned) + len(net_owned)
+            if any(section == 'ne2000' and not start <= locations[(section,key)] < end for section, key in values):
+                fail('Owner additions in the network section require manual review (unchanged)')
+            text = text.replace(net_owned, '', 1)
+            if serial_owned:
+                if serial != 'disabled': fail('Owner edited serial2; left unchanged')
+                other_serial = any(section == 'serial' and key != 'serial2' for section, key in values)
+                replacement = '[serial]' + nl if serial_owned == serial_section and other_serial else ''
+                text = text.replace(serial_owned, replacement, 1)
+            if restore_final == 'no' and text.endswith(nl): text = text[:-len(nl)]
+        else: fail('usage: win95 net [status|check|on|off]')
+        # Recheck concurrent edits before committing both NIC and serial changes as one replacement.
+        current_stat = p.stat()
+        if (current_stat.st_dev, current_stat.st_ino, current_stat.st_mtime_ns) != (initial.st_dev, initial.st_ino, initial.st_mtime_ns): fail('boot.conf changed concurrently; retry (unchanged)')
+        if initial.st_uid != os.getuid(): fail('Config is not owned by this user; review manually')
+        fd, tmp = tempfile.mkstemp(prefix='.boot.conf.net.', dir=p.parent)
+        try:
+            with os.fdopen(fd, 'wb') as f: f.write(text.encode('latin-1'))
+            os.chmod(tmp, stat.S_IMODE(initial.st_mode)); os.replace(tmp, p)
+        finally:
+            if os.path.exists(tmp): os.unlink(tmp)
+        print('Network ' + op + '; applied to boot.conf for next normal boot. Windows driver/TCP-IP setup remains manual.')
+except (OSError, ValueError) as error:
+    print('win95 net: ' + str(error), file=sys.stderr); sys.exit(1)
+RETRO_NET_PY
+}
+
 win95_cmd() {
     local mode=boot core="" iso args conf f app dmb
     while [ $# -gt 0 ]; do
@@ -10596,7 +10886,8 @@ win95_cmd() {
         *) die "usage: win95 [--core normal] [boot|setup|run FILE|put FILE|get [NAME]|cd FILE.iso|eject|list|exchange info|recreate|snapshot save|restore|list|delete NAME|fonts|where|status|launcher|help]" ;;
     esac
     exch_create "$WS" > /dev/null
-    args=(-conf "$conf" -c "mount x \"$WS\"")
+    # v100 (Nov 5 2026): folder mounts become IDE disks on boot c: and hang Win95. IMGMAKE below still needs X:.
+    args=(-conf "$conf")
     if [ "$mode" = setup ] && [ ! -f "$WS/hdd.img" ]; then
         win95_setting; dmb=$SET_VAL
         disk_guard win95 $(( (dmb + 1023) / 1024 ))
@@ -10688,11 +10979,12 @@ win95_snapshot() {   # win95_snapshot save|restore|list|delete [NAME] [--yes]
 # winnt40, win2000 (QEMU)
 # =================================================================================================
 qemu_config() {   # qemu_config [GUEST]: defaults, then the guest's config file (written once by dev-setup; edit freely)
+    # v100 (Nov 5 2026): nested-KVM boot stalls, tablet scaling and noisy AC97 affect win2000 only.
     case "${1:-$GUEST}" in
-        winnt40) MEM=128; HPET=off; DISK_GB=4; SOUND=sb16; MOUSE=ps2 ;;
-        win2000) MEM=256; HPET=on;  DISK_GB=8; SOUND=AC97; MOUSE=tablet ;;
+        winnt40) MEM=128; HPET=off; DISK_GB=4; SOUND=sb16; MOUSE=ps2; ACCEL=auto; DISPLAY_OPTS="gtk,zoom-to-fit=on" ;;
+        win2000) MEM=256; HPET=on; DISK_GB=8; SOUND=none; MOUSE=tablet; ACCEL=tcg; DISPLAY_OPTS="gtk,zoom-to-fit=off" ;;
     esac
-    CPU=pentium3; MACHINE=pc; DISK_FORMAT=qcow2; VIDEO=cirrus; NIC=pcnet; ACCEL=auto; DISPLAY_OPTS="gtk,zoom-to-fit=on"; EXTRA_ARGS=""
+    CPU=pentium3; MACHINE=pc; DISK_FORMAT=qcow2; VIDEO=cirrus; NIC=pcnet; EXTRA_ARGS=""
     # shellcheck disable=SC1091
     [ -f "$WS/config" ] && . "$WS/config"
     DISK="$WS/disk.qcow2"; [ "$DISK_FORMAT" = raw ] && DISK="$WS/disk.img"
@@ -10700,21 +10992,153 @@ qemu_config() {   # qemu_config [GUEST]: defaults, then the guest's config file 
     [ -f "$WS/disk.img" ] && [ ! -f "$WS/disk.qcow2" ] && { DISK="$WS/disk.img"; DISK_FORMAT=raw; }
     return 0
 }
-pick_accel() {   # sets ACCEL_ARGS and ACCEL_NOTE
+# v100 (Nov 5 2026): availability and configured selection are separate; tests can stub this predicate.
+kvm_state() {
+    KVM_STATE=missing
+    if [ -c /dev/kvm ]; then
+        KVM_STATE=present
+        [ -r /dev/kvm ] && [ -w /dev/kvm ] && KVM_STATE=usable
+    fi
+    return 0
+}
+pick_accel() {
     local want=${ACCEL:-auto}
-    if [ "$want" != tcg ] && [ -c /dev/kvm ] && [ -r /dev/kvm ] && [ -w /dev/kvm ]; then
-        ACCEL_ARGS=(-accel kvm); ACCEL_NOTE="KVM (close to native speed)"
-    else
-        if [ "$want" = kvm ]; then echo "NOTE: ACCEL=kvm, but /dev/kvm is missing or not usable (the kvm group needs a new login): using software emulation." >&2; fi
-        if [ -c /dev/kvm ] && [ "$want" != tcg ]; then
-            ACCEL_NOTE="software emulation (TCG): /dev/kvm is here but not usable by you yet (group $(stat -c %G /dev/kvm 2> /dev/null): shut Linux down and reopen it, or rerun dev-setup with install-retro)"
-        else
-            ACCEL_NOTE="software emulation (TCG; no /dev/kvm on this Chromebook: slower)"
-        fi
-        # shellcheck disable=SC2054   # one -accel value, commas included
+    kvm_state
+    if [ "$want" = tcg ]; then
         ACCEL_ARGS=(-accel tcg,thread=multi)
+        ACCEL_NOTE="software emulation (TCG; selected by ACCEL=tcg)"
+    elif [ "$KVM_STATE" = usable ]; then
+        ACCEL_ARGS=(-accel kvm); ACCEL_NOTE="KVM (selected by ACCEL=$want)"
+    else
+        [ "$want" != kvm ] || echo "NOTE: ACCEL=kvm, but /dev/kvm is missing or not usable; using software emulation." >&2
+        ACCEL_ARGS=(-accel tcg,thread=multi)
+        if [ "$KVM_STATE" = present ]; then
+            ACCEL_NOTE="software emulation (TCG; /dev/kvm present but not usable; group $(stat -c %G /dev/kvm 2> /dev/null): shut Linux down and reopen it, or rerun dev-setup with install-retro)"
+        else
+            ACCEL_NOTE="software emulation (TCG; /dev/kvm unavailable)"
+        fi
     fi
 }
+accel_status() {
+    qemu_config "$GUEST"
+    pick_accel
+    echo "$GUEST: $ACCEL_NOTE; display=$DISPLAY_OPTS; sound=$SOUND"
+}
+# v100 (Nov 5 2026): never source configs merely to add absent defaults. Ambiguous shell is left for review.
+qemu_defaults() {
+    [ "$1" = win2000 ] || return 0
+    if running "$1"; then echo "NOTE: win2000 config defaults deferred until stopped." >&2; return 0; fi
+    python3 - "$HOME/win2000/config" << 'QEMU_DEFAULTS_PY'
+import os, re, stat, sys, tempfile
+from pathlib import Path
+p = Path(sys.argv[1])
+if not p.is_file(): sys.exit(0)
+# v100 (Nov 7 2026): one review per file, including absent-key additions; later edits win.
+text = p.read_bytes().decode('latin-1')
+lines = text.splitlines(keepends=True)
+marker = '# v100: defaults reviewed'
+if any(line.rstrip('\r\n') == marker for line in lines): sys.exit(0)
+if p.is_symlink():
+    print('NOTE: win2000/config: symlink config left unchanged; review defaults manually.', file=sys.stderr)
+    sys.exit(0)
+active = [line for line in lines if line.strip() and not line.lstrip().startswith('#')]
+# Config files are normally assignments. Commands, continuations, substitutions or conditionals
+# could supply an unseen value: review without changing assignments in that case.
+assignment = re.compile(r'^\s*(?:export\s+)?[A-Za-z_][A-Za-z_0-9]*=')
+ambiguous = any(not assignment.match(line) or any(c in line for c in ('`', '$(', '\\\n')) for line in active)
+if ambiguous:
+    print('NOTE: win2000/config: complex config; review manually (settings left unchanged).', file=sys.stderr)
+# v100 (Nov 6 2026): v99 wrote these explicit defaults on every retro install. Compare the
+# whole line, including its original comment/spacing; any owner edit wins. Never evaluate it.
+legacy = {
+    'ACCEL': ('ACCEL=auto              # auto (KVM when /dev/kvm is usable), kvm or tcg',
+              'ACCEL=tcg              # auto (KVM when usable), kvm or tcg; explicit owner values stay'),
+    'DISPLAY_OPTS': ('DISPLAY_OPTS=gtk,zoom-to-fit=on', 'DISPLAY_OPTS="gtk,zoom-to-fit=off"'),
+    'SOUND': ('SOUND=AC97             # sb16, AC97 or none (drivers on the install CDs)',
+              'SOUND=none             # sb16, AC97 or none (drivers on the install CDs)'),
+}
+want = {'ACCEL': 'tcg', 'DISPLAY_OPTS': '"gtk,zoom-to-fit=off"', 'SOUND': 'none'}
+counts = {key: sum(len(re.findall(r'\b' + key + r'\s*=', line)) for line in active) for key in want}
+if any(count > 1 for count in counts.values()):
+    print('NOTE: win2000/config: duplicate assignment; review manually (settings left unchanged).', file=sys.stderr)
+    ambiguous = True
+if not ambiguous:
+    for i, line in enumerate(lines):
+        content = line.rstrip('\r\n')
+        for old, new in legacy.values():
+            if content.rstrip(' ') == old:
+                lines[i] = new + line[len(content):]
+                break
+missing = {} if ambiguous else {key: val for key, val in want.items() if not counts[key]}
+text = ''.join(lines)
+nl = '\r\n' if '\r\n' in text else '\n'
+if missing:
+    if text and not text.endswith(('\r', '\n')): text += nl
+    text += '# v100 (Nov 5 2026): absent win2000 defaults; explicit owner choices are preserved.' + nl
+    text += ''.join(key + '=' + value + nl for key, value in missing.items())
+text = marker + nl + text
+fd, temp = tempfile.mkstemp(prefix='.config.', dir=p.parent)
+try:
+    with os.fdopen(fd, 'wb') as f: f.write(text.encode('latin-1'))
+    os.chmod(temp, stat.S_IMODE(p.stat().st_mode)); os.replace(temp, p)
+finally:
+    if os.path.exists(temp): os.unlink(temp)
+QEMU_DEFAULTS_PY
+}
+# v100 (Nov 5–6 2026): disk existence is not installation completion, especially on qcow2/NTFS.
+exchange_gate() {   # check|state|enable|disable; qemu_config must have selected DISK first
+    python3 - "${1:-state}" "$WS/exchange-enabled" "$DISK" << 'EXCHANGE_GATE_PY'
+import json, os, sys, tempfile
+from pathlib import Path
+op, record, disk = sys.argv[1:]
+r, d = Path(record), Path(disk)
+def identity():
+    st = d.stat()
+    return {'path': str(d.resolve()), 'dev': st.st_dev, 'ino': st.st_ino}
+try:
+    state = 'enabled' if json.loads(r.read_text()) == identity() else 'stale'
+except (OSError, ValueError):
+    state = 'stale' if r.exists() else 'deferred'
+if op == 'check': sys.exit(0 if state == 'enabled' else 1)
+if op == 'state': print(state); sys.exit(0)
+if op == 'disable':
+    r.unlink(missing_ok=True); print('Exchange attachment disabled; image contents retained.'); sys.exit(0)
+if op != 'enable': sys.exit(2)
+if not d.is_file():
+    print('No system disk: install Windows first, then enable exchange with the guest stopped.', file=sys.stderr)
+    sys.exit(1)
+fd, temp = tempfile.mkstemp(prefix='.exchange-enabled.', dir=r.parent)
+try:
+    with os.fdopen(fd, 'w') as f: json.dump(identity(), f); f.write('\n')
+    os.replace(temp, r)
+finally:
+    if os.path.exists(temp): os.unlink(temp)
+print('Exchange enabled for this system disk. Setup always withholds it and clears this acknowledgement.')
+EXCHANGE_GATE_PY
+}
+exchange_pending() {
+    case "$GUEST" in
+        winnt40|win2000)
+            qemu_config "$GUEST"
+            exchange_gate check || echo "Exchange disk withheld until Windows installation is complete; after shutdown run '$GUEST exchange enable'." >&2 ;;
+    esac
+    return 0
+}
+qemu_preferences() {   # observational only; never applies defaults
+    qemu_config "$GUEST"
+    local rc=0
+    if [ "$GUEST" = win2000 ]; then
+        [ "$ACCEL" = tcg ] || { echo 'win2000: recommend ACCEL=tcg for boot stalls (owner value kept)'; rc=1; }
+        [[ "$DISPLAY_OPTS" == *zoom-to-fit=off* ]] || { echo 'win2000: recommend zoom-to-fit=off for tablet alignment'; rc=1; }
+        [ "$SOUND" = none ] || { echo 'win2000: recommend SOUND=none to avoid audio errors'; rc=1; }
+    fi
+    echo "$GUEST: exchange $(exchange_gate state)"
+    if [ -f "$DISK" ] && ! exchange_gate check; then
+        echo "After the installed desktop and shutdown: $GUEST exchange enable (never during Setup)."; rc=1
+    fi
+    return "$rc"
+}
+
 audio_args() {   # the sound card on PulseAudio (PipeWire's pulse server too), found by its socket; else silent
     case "$SOUND" in none|"") return 0 ;; esac
     if [ -S "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/pulse/native" ] || { command -v pactl > /dev/null 2>&1 && pactl info > /dev/null 2>&1; }; then
@@ -10759,8 +11183,13 @@ qemu_launch() {   # qemu_launch BOOT(c|d|a) [CD] [FLOPPY]
     args=(-name "$TITLE (dev-retro)" -machine "$MACHINE,hpet=$HPET" -cpu "$CPU" -m "$MEM" -smp 1
           -rtc base=localtime -vga "$VIDEO" -display "$DISPLAY_OPTS"
           -qmp "unix:$(qq "$WS/.qmp.sock"),server=on,wait=off" -pidfile "$WS/.pid"
-          -drive "file=$(qq "$DISK"),format=$DISK_FORMAT,if=ide,index=0,media=disk"
-          -drive "file=$(qq "$WS/exchange.img"),format=raw,if=ide,index=1,media=disk")
+          -drive "file=$(qq "$DISK"),format=$DISK_FORMAT,if=ide,index=0,media=disk")
+    # v100 (Nov 5–6 2026): keep preformatted exchange away from Windows drive-letter assignment.
+    if [ "${QEMU_SETUP:-0}" != 1 ] && exchange_gate check; then
+        args+=(-drive "file=$(qq "$WS/exchange.img"),format=raw,if=ide,index=1,media=disk")
+    else
+        echo "Exchange disk withheld until Windows installation is complete; after shutdown run '$GUEST exchange enable'."
+    fi
     if [ -n "$cd" ]; then args+=(-drive "file=$(qq "$cd"),if=ide,index=2,media=cdrom,readonly=on"); else args+=(-drive "if=ide,index=2,media=cdrom"); fi
     # v93: the second CD drive (ide1-cd1, F:) holds the app CD from install/apps ('<cmd> cd' picks it, and
     # swaps it while running). With no app CD, another ISO in install/ (a service pack) rides there as in v92;
@@ -10771,7 +11200,9 @@ qemu_launch() {   # qemu_launch BOOT(c|d|a) [CD] [FLOPPY]
     fi
     if [ -n "$app" ]; then
         args+=(-drive "file=$(qq "$app"),if=ide,index=3,media=cdrom,readonly=on")
-        echo "F: $(basename "$app")"
+        # v100 (Nov 5–6 2026): CD letters are provisional while exchange is withheld during setup.
+        if [ "${QEMU_SETUP:-0}" = 1 ]; then echo "App CD: $(basename "$app") on IDE index 3 (Setup assigns its letter)."
+        else echo "App CD: $(basename "$app") (normally F:; check Windows drive letters)."; fi
     else
         args+=(-drive "if=ide,index=3,media=cdrom")
     fi
@@ -10794,7 +11225,8 @@ qemu_launch() {   # qemu_launch BOOT(c|d|a) [CD] [FLOPPY]
 }
 
 nt_cmd() {
-    local mode=${1:-boot} raw=0 fromcd=0 iso fd f a
+    local mode=${1:-boot} raw=0 fromcd=0 iso fd f a QEMU_SETUP=0
+    qemu_defaults "$GUEST"
     qemu_config
     case "$mode" in
         boot)
@@ -10804,13 +11236,16 @@ nt_cmd() {
         run)
             f=${2:?usage: $GUEST run FILE}
             installed "$GUEST" || die "$TITLE is not installed yet ('$GUEST setup')."
+            exchange_gate check || die "Exchange is withheld: after completing Windows and shutting down, run '$GUEST exchange enable'."
             exch_put "$GUEST" "$f" > /dev/null || exit 1
-            echo "$(basename "$f") is on the exchange disk: D:\\$(basename "$f") inside $TITLE."
+            echo "$(basename "$f") is on the exchange disk (normally D:\\$(basename "$f") inside $TITLE; use its assigned drive letter)."
             qemu_launch c "$(install_iso)" ;;
         setup)
             shift
             for a in "$@"; do case "$a" in --raw) raw=1 ;; --from-cd) fromcd=1 ;; *) die "usage: $GUEST setup [--raw] [--from-cd]" ;; esac; done
             need_stopped "$GUEST"
+            QEMU_SETUP=1
+            exchange_gate disable > /dev/null || return
             iso=$(install_iso); fd=$(floppies | head -n 1)
             [ -n "$iso$fd" ] || { tell "No $TITLE media in $WS/install: put the CD's .iso there (and the boot floppies' .img files for NT 4.0, if your CD does not boot)."; exit 1; }
             exch_create "$WS" > /dev/null
@@ -10853,7 +11288,7 @@ nt_cmd() {
             hmp "sendkey $a" && echo "sent $a" ;;
         snapshot)
             snapshot_cmd "${2:-list}" "${3:-}" ;;
-        *) die "usage: $GUEST [boot|setup [--raw] [--from-cd]|run FILE|put FILE|get [NAME]|cd [--windows] ISO|eject|list|floppy IMG|keys ctrl-alt-del|snapshot save|restore|list|delete NAME|exchange info|recreate|fonts|where|status|launcher|help]" ;;
+        *) die "usage: $GUEST [boot|setup [--raw] [--from-cd]|run FILE|put FILE|get [NAME]|cd [--windows] ISO|eject|list|floppy IMG|keys ctrl-alt-del|snapshot save|restore|list|delete NAME|exchange info|enable|disable|recreate|fonts|where|status|launcher|help]" ;;
     esac
 }
 snapshot_cmd() {   # disk snapshots: qemu-img while off; a live, crash-consistent one through QMP while running
@@ -10914,17 +11349,270 @@ delphi_media() {   # the Delphi 1 SETUP.EXE in ~/win31/install/apps (a folder na
     printf '%s' "$s"
 }
 delphi_reg() { delphi_wine wine reg add "$@" /f > /dev/null 2>&1; }
+# v100 (Nov 5 2026): verify files, not winetricks' verb marker or status alone. Status never starts Wine.
+font_state() {   # PREFIX: expected core fonts + both Tahoma faces, case-insensitive and nonempty
+    local prefix=$1 dir n missing=""
+    dir=$(find "$prefix/drive_c/windows" -maxdepth 1 -type d -iname fonts 2> /dev/null | head -n 1)
+    for n in arial cour tahoma tahomabd; do
+        [ -n "$dir" ] && [ -n "$(find -L "$dir" -maxdepth 1 -type f -iname "$n.ttf" -size +0c 2> /dev/null | head -n 1)" ] || missing="$missing $n.ttf"
+    done
+    if [ -z "$missing" ]; then echo 'required core fonts and Tahoma ready'; return 0; fi
+    echo "INCOMPLETE: fonts missing:$missing"
+    return 1
+}
+install_fonts() {   # PREFIX; nonfatal caller prints fonts_summary after all other setup work
+    local prefix=$1 attempt rc files_rc
+    FONT_PREFIX=$prefix; FONT_LOG=""; FONT_RESULT="INCOMPLETE: fonts missing"
+    if font_state "$prefix" > /dev/null; then FONT_RESULT='required core fonts and Tahoma ready'; return 0; fi
+    case "$RETRO_ASSETS" in /*) ;; *) echo 'NOTE: no bundle assets-path; rerun dev-setup install-retro before font acquisition.'; return 1 ;; esac
+    mkdir -p "$RETRO_ASSETS/logs" || return 1
+    FONT_LOG="$RETRO_ASSETS/logs/retro-fonts-$(basename "$prefix")-$(date +%Y%m%d-%H%M%S-%N).log"
+    : > "$FONT_LOG" || return 1
+    if ! command -v winetricks > /dev/null 2>&1; then
+        echo 'winetricks missing; install-com supplies it.' >> "$FONT_LOG"
+        return 1
+    fi
+    for attempt in 1 2; do
+        echo "Font acquisition attempt $attempt/2" >> "$FONT_LOG"
+        # v100 (Nov 6 2026): stalled font downloads must not hold unattended setup forever.
+        WINEPREFIX="$prefix" timeout -k 10 300 winetricks -q corefonts tahoma >> "$FONT_LOG" 2>&1; rc=$?
+        case "$rc" in 124|137) echo 'Font acquisition timed out (300 seconds; 10-second kill grace).' >> "$FONT_LOG" ;; esac
+        font_state "$prefix" >> "$FONT_LOG"; files_rc=$?
+        printf 'winetricks exit=%s; required-font files exit=%s\n' "$rc" "$files_rc" >> "$FONT_LOG"
+        if [ "$rc" = 0 ] && [ "$files_rc" = 0 ]; then
+            FONT_RESULT='required core fonts and Tahoma ready'; return 0
+        fi
+        [ "$attempt" != 1 ] || echo 'Font acquisition incomplete; retrying once (diagnostics saved).'
+    done
+    return 1
+}
+fonts_summary() {
+    echo "FONT RESULT: $FONT_RESULT${FONT_LOG:+; log: $FONT_LOG}"
+    if [[ "$FONT_RESULT" == INCOMPLETE:* ]]; then
+        printf 'Repair: WINEPREFIX=%q winetricks corefonts tahoma\n' "$FONT_PREFIX"
+        echo 'Then rerun the required <guest> fonts command. Plain winetricks uses a different default prefix.'
+    fi
+}
+
+# v100 (Nov 5 2026): 12B switcher; explicit use selects No Theme, setup never replays a palette.
+colors_cmd() {   # PREFIX list|save|use|check|init-new|init-existing [NAME]
+    local prefix=$1; shift
+    python3 - "$prefix" "${SELF%/*}/colors/default.reg" "${1:-list}" "${@:2}" << 'RETRO_COLORS_PY'
+# v100 (Nov 5 2026): 12B ships no palette. Only validated, allowlisted RGB values reach Wine.
+import fcntl, json, os, re, subprocess, sys, tempfile
+from pathlib import Path
+prefix, builtin, operation, *arguments = sys.argv[1:]
+prefix, builtin = Path(prefix), Path(builtin)
+folder = Path.home() / '.config/dev-retro/colors'
+label = prefix.name
+selected = folder / (label + '.selected.json')
+keys = '''ActiveBorder ActiveTitle AppWorkSpace Background ButtonAlternativeFace ButtonDkShadow
+ButtonFace ButtonHilight ButtonLight ButtonShadow ButtonText GradientActiveTitle GradientInactiveTitle
+GrayText Hilight HilightText InactiveBorder InactiveTitle InactiveTitleText InfoText InfoWindow Menu
+MenuBar MenuHilight MenuText Scrollbar TitleText Window WindowFrame WindowText'''.split()
+allowed = {key.casefold(): key for key in keys}
+colors = r'HKEY_CURRENT_USER\Control Panel\Colors'
+theme = r'HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\ThemeManager'
+env = dict(os.environ, WINEPREFIX=str(prefix), WINEARCH='win32', LC_ALL='C',
+           WINEDLLOVERRIDES='winemenubuilder.exe=d;mscoree,mshtml=')
+def fail(message):
+    raise ValueError(message)
+def decode(path):
+    if path.is_symlink(): fail('Symlink scheme/registry data refused')
+    data = path.read_bytes()
+    return data.decode('utf-16' if data.startswith((b'\xff\xfe', b'\xfe\xff')) else 'utf-8-sig')
+def parse(path, reset=False, exported=False):
+    current, header, result = None, False, {}
+    for line in decode(path).splitlines():
+        line = line.strip()
+        if not line or line.startswith(';'): continue
+        if not header:
+            if line.casefold() not in ('windows registry editor version 5.00', 'regedit4'):
+                fail('Invalid registry file header')
+            header = True; continue
+        if line.startswith('['):
+            if line.casefold() != ('[' + colors + ']').casefold():
+                if exported: current = None; continue
+                fail('Only HKCU Control Panel Colors is allowed')
+            current = colors; continue
+        if current is None:
+            if exported: continue
+            fail('Value outside the Colors section')
+        m = re.fullmatch(r'"([^"\\]+)"\s*=\s*(?:"([0-9]+\s+[0-9]+\s+[0-9]+)"|(-))', line)
+        if not m or m[1].casefold() not in allowed:
+            if exported and not any(line.casefold().startswith('"' + key + '"') for key in allowed): continue
+            fail('Unsupported name/type or malformed RGB triplet')
+        key = allowed[m[1].casefold()]
+        if key in result: fail('Duplicate color value')
+        if m[3]:
+            if not reset: fail('User schemes cannot delete registry values')
+            result[key] = None
+        else:
+            values = [int(n) for n in m[2].split()]
+            if any(n > 255 for n in values): fail('RGB values must be 0 through 255')
+            result[key] = ' '.join(map(str, values))
+    if not header or (not result and not exported): fail('Empty scheme')
+    if reset and result != dict.fromkeys(keys): fail('Built-in default has been changed; rerun install-retro')
+    return result
+
+def registry_snapshot():
+    # Stream only the two relevant sections/values; never export/copy a complete Wine registry.
+    sections, values, current = set(), {}, None
+    with (prefix / 'user.reg').open(encoding='utf-8', errors='strict') as f:
+        for line in f:
+            m = re.match(r'^\[([^]]+)\]', line)
+            if m:
+                name = m[1].replace('\\\\', '\\')
+                current = next((key for key in (colors, theme) if key.removeprefix('HKEY_CURRENT_USER\\').casefold() == name.casefold()), None)
+                if current: sections.add(current)
+            elif current:
+                m = re.match(r'^"([^"\\]+)"=', line.strip())
+                if m:
+                    key = allowed.get(m[1].casefold()) if current == colors else ('ThemeActive' if m[1].casefold() == 'themeactive' else None)
+                    if key:
+                        value = re.fullmatch(r'"[^"\\]+"="([^"\\]*)"\s*', line.strip())
+                        values[(current, key)] = value[1] if value else '<non-REG_SZ>'
+    return sections, values
+
+def process(args):
+    r = subprocess.run(args, env=env, capture_output=True, text=True, timeout=120)
+    if r.returncode: fail('Wine command failed: ' + ' '.join(args[:3]))
+    return r.stdout
+
+def idle():
+    marker = prefix / '.pid'
+    if marker.is_file():
+        try: os.kill(int(marker.read_text().strip()), 0)
+        except ProcessLookupError: pass
+        except (ValueError, PermissionError): fail('Uncertain prefix state; close its Wine applications first')
+        else: fail('Prefix is running; close its Wine applications first')
+    # Installed wineserver documentation: -w waits for the existing server, including apps outside helper.
+    # A timeout stops only this waiting client; the Wine server/apps are never killed to obtain access.
+    try:
+        r = subprocess.run(['wineserver', '-w'], env=env, capture_output=True, timeout=5)
+    except subprocess.TimeoutExpired: fail('Prefix is busy; close all its Wine applications first')
+    if r.returncode: fail('Cannot establish an idle prefix; close its Wine applications first')
+
+def winpath(path):
+    return process(['winepath', '-w', str(path)]).strip()
+def export(key, path):
+    process(['wine', 'reg', 'export', key, winpath(path), '/y'])
+def import_file(path):
+    process(['wine', 'reg', 'import', winpath(path)])
+def reg_text(values):
+    return 'Windows Registry Editor Version' + ' 5.00\n\n[' + colors + ']\n' + ''.join('"' + key + '"=' + ('-' if val is None else '"' + val + '"') + '\n' for key, val in values.items())
+def atomic(path, data, exclusive=False):
+    fd, tmp = tempfile.mkstemp(prefix='.' + path.name + '.', dir=path.parent)
+    try:
+        with os.fdopen(fd, 'w') as f: f.write(data)
+        if exclusive: os.link(tmp, path)
+        else: os.replace(tmp, path)
+    finally:
+        if os.path.exists(tmp): os.unlink(tmp)
+
+try:
+    operation = operation or 'list'
+    if selected.is_symlink(): fail('Symlink selection record refused')
+    if operation == 'list':
+        if arguments: fail('usage: colors list | use NAME | save NAME')
+        print('default (built-in Wine defaults; removes only known color overrides)')
+        if folder.is_dir():
+            for p in sorted(folder.glob('*.reg')):
+                if p.stem != 'default' and re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]*', p.stem): print(p.stem + ' (owner scheme; validated on use)')
+        if selected.is_file(): print('Selected label: ' + json.loads(selected.read_text())['name'] + ' (manual edits are preserved by setup)')
+        else: print('Selected label: none; existing theme/colors preserved')
+        sys.exit(0)
+    if operation in ('use', 'save'):
+        if len(arguments) != 1 or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]*', arguments[0]): fail('Use a scheme name with letters/digits, dot, dash or underscore; no path components')
+        name = arguments[0]
+        path = builtin if name == 'default' else folder / (name + '.reg')
+        if operation == 'save' and (name == 'default' or path.exists()): fail('Scheme name is reserved or already exists; choose another')
+        # Validate the entire file before even starting Wine; canonical apply data is kept in memory.
+        wanted = parse(path, reset=name == 'default') if operation == 'use' else None
+    elif operation not in ('check', 'init-new', 'init-existing'): fail('usage: colors list | use NAME | save NAME')
+    if (prefix / 'user.reg').is_symlink(): fail('Symlink prefix registry refused')
+    if not (prefix / 'system.reg').is_file() or not (prefix / 'user.reg').is_file():
+        fail('No existing prefix; run the appropriate Delphi setup first')
+    sections, current = registry_snapshot()
+    if operation == 'check':
+        if current.get((theme, 'ThemeActive')) not in (None, '0'):
+            fail('Theme is active; registry colors may be overridden. Explicit colors use NAME selects No Theme')
+        if selected.is_file():
+            record = json.loads(selected.read_text())
+            if any(current.get((colors, key)) != value for key, value in record['values'].items()):
+                fail('Manual colors differ from selected label; retained, not repaired')
+        print('Theme/color observations agree (no changes made)'); sys.exit(0)
+    if operation == 'init-existing' and (theme, 'ThemeActive') in current:
+        if current[(theme, 'ThemeActive')] != '0': print('NOTE: active theme preserved; colors use NAME explicitly selects No Theme.')
+        sys.exit(0)
+    idle()
+    folder.mkdir(parents=True, exist_ok=True)
+    with (folder / ('.' + label + '.lock')).open('a') as lock:
+        try: fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError: fail('Another color operation for this prefix is in progress')
+        idle()
+        if operation in ('init-new', 'init-existing'):
+            process(['wine', 'reg', 'add', theme, '/v', 'ThemeActive', '/t', 'REG_SZ', '/d', '0', '/f'])
+            print('No Theme initialized; existing colors preserved')
+        else:
+            backups = folder / 'backups'; backups.mkdir(exist_ok=True)
+            backup = Path(tempfile.mkdtemp(prefix=label + '-', dir=backups))
+            snapshots = {}
+            for i, key in enumerate((colors, theme)):
+                snapshots[key] = backup / (str(i) + '.reg') if key in sections else None
+                if snapshots[key] is not None: export(key, snapshots[key])
+            if operation == 'save':
+                if snapshots[colors] is None: fail('No color overrides to save')
+                saved = parse(snapshots[colors], exported=True)
+                if not saved: fail('No allowlisted RGB color overrides to save')
+                atomic(path, reg_text(saved), exclusive=True)
+                print('Saved owner scheme ' + name + '; original registry untouched')
+            else:
+                apply = backup / 'apply.reg'
+                apply.write_text(reg_text(wanted) + '\n[' + theme + ']\n"ThemeActive"="0"\n' + ''.join('"' + key + '"=-\n' for key in ('ColorName', 'SizeName', 'DllName', 'LoadedBefore')))
+                try:
+                    import_file(apply)
+                    check = backup / 'readback.reg'; export(colors, check)
+                    actual = parse(check, exported=True)
+                    if any(actual.get(key) != value for key, value in wanted.items()): fail('Color registry readback did not match')
+                    check_theme = backup / 'theme-readback.reg'; export(theme, check_theme)
+                    if not re.search(r'^"ThemeActive"="0"\s*$', decode(check_theme), re.M): fail('No Theme readback did not match')
+                    atomic(selected, json.dumps({'name': name, 'values': wanted}) + '\n')
+                except Exception as error:
+                    rollback_errors = []
+                    for key, snapshot in snapshots.items():
+                        # The full targeted key is restored, including custom values. No other registry tree is touched.
+                        r = subprocess.run(['wine', 'reg', 'delete', key, '/f'], env=env, capture_output=True, timeout=120)
+                        if r.returncode: rollback_errors.append(key)
+                        if snapshot is not None:
+                            try: import_file(snapshot)
+                            except Exception: rollback_errors.append(key)
+                    if rollback_errors: fail('Apply failed; rollback incomplete. Targeted backups retained at ' + str(backup))
+                    fail('Apply failed; previous color/theme keys restored; selection unchanged: ' + str(error))
+                print('Applied ' + name + '; No Theme selected. Restart the prefix applications to observe it.')
+        # Let servers started only for this operation finish naturally; never kill owner applications.
+        try: subprocess.run(['wineserver', '-w'], env=env, capture_output=True, timeout=5, check=True)
+        except (subprocess.TimeoutExpired, subprocess.CalledProcessError): print('NOTE: prefix is still busy; close its applications before another color operation.')
+except (OSError, ValueError, subprocess.SubprocessError, KeyError) as error:
+    print('colors: ' + str(error), file=sys.stderr)
+    sys.exit(1)
+RETRO_COLORS_PY
+}
+
 delphi_setup() {
-    local setup_exe="${1:-$(delphi_media)}" sys ok=1
+    local setup_exe="${1:-$(delphi_media)}" sys ok=1 new_prefix=0
     [ -n "$setup_exe" ] && [ -f "$setup_exe" ] || { tell "No Delphi 1 setup in ~/win31/install/apps: copy the Delphi 1 disks or CD there (SETUP.EXE with its files), then 'delphi1 setup'."; exit 1; }
     command -v wine > /dev/null || die "Wine is missing: rerun dev-setup with install-retro (it pulls in install-com)."
     if [ ! -f "$DELPHI_PREFIX/system.reg" ]; then
+        new_prefix=1
         echo "Creating the 32-bit Wine prefix $DELPHI_PREFIX (no Wine menu entries from wineboot)..."
         mkdir -p "$(dirname "$DELPHI_PREFIX")"
         WINEPREFIX="$DELPHI_PREFIX" WINEARCH=win32 WINEDEBUG=-all WINEDLLOVERRIDES="winemenubuilder.exe=d;mscoree,mshtml=" wineboot -i > /dev/null 2>&1
         WINEPREFIX="$DELPHI_PREFIX" timeout 120 wineserver -w 2> /dev/null
         [ -f "$DELPHI_PREFIX/system.reg" ] || die "wineboot did not create the prefix: 'WINEPREFIX=$DELPHI_PREFIX WINEARCH=win32 wineboot -i' shows why."
     fi
+    if [ "$new_prefix" = 1 ]; then colors_cmd "$DELPHI_PREFIX" init-new; else colors_cmd "$DELPHI_PREFIX" init-existing; fi \
+        || echo "NOTE: No Theme initialization failed; use delphi1 colors use NAME with the prefix closed."
     if installed delphi1; then
         echo "Delphi 1 is already installed in the prefix ($(delphi_bin)); applying the settings again."
     else
@@ -10939,18 +11627,20 @@ delphi_setup() {
     fi
     sys=$(find "$DELPHI_PREFIX/drive_c/windows" -maxdepth 1 -iname system -type d | head -n 1)
     [ -n "$(find "$sys" -maxdepth 1 -iname compobj.dll 2> /dev/null)" ] || { echo "NOTE: no COMPOBJ.DLL in C:\\WINDOWS\\SYSTEM: Delphi's setup normally copies its 16-bit OLE2 there; the IDE will crash without it."; ok=0; }
-    echo "Applying the settings: black desktop, a short TEMP, MS Sans Serif -> Tahoma, ClearType-style fonts..."
-    delphi_reg 'HKCU\Control Panel\Colors' /v Background /t REG_SZ /d '0 0 0'
+    echo "Applying the settings: preserved colors, a short TEMP, MS Sans Serif -> Tahoma, ClearType-style fonts..."
+    # v100 (Nov 5 2026): leave manually chosen and selected scheme colors intact.
     mkdir -p "$DELPHI_PREFIX/drive_c/TEMP"
     delphi_reg 'HKCU\Environment' /v TEMP /t REG_EXPAND_SZ /d 'C:\TEMP'
     delphi_reg 'HKCU\Environment' /v TMP /t REG_EXPAND_SZ /d 'C:\TEMP'
     delphi_reg 'HKLM\Software\Microsoft\Windows NT\CurrentVersion\FontSubstitutes' /v 'MS Sans Serif' /t REG_SZ /d 'Tahoma'
     if command -v winetricks > /dev/null 2>&1; then
         WINEPREFIX="$DELPHI_PREFIX" winetricks -q fontsmooth=rgb > /dev/null 2>&1 || echo "NOTE: winetricks fontsmooth=rgb failed."
-        WINEPREFIX="$DELPHI_PREFIX" winetricks -q corefonts tahoma > /dev/null 2>&1 || echo "NOTE: 'winetricks corefonts tahoma' failed (it downloads the fonts; offline?). Rerun 'delphi1 setup' later."
+
     else
         echo "NOTE: winetricks is missing (install-com installs it): fonts left as Wine's."
     fi
+    # v100 (Nov 5 2026): keep incomplete downloads visible without preventing a usable IDE.
+    install_fonts "$DELPHI_PREFIX" || :
     # The IDE options: a DELPHI.INI you saved ('delphi1 ini save') first, then the keys Wine needs.
     if [ -f "$HOME/.config/dev-retro/DELPHI.INI" ]; then
         cp "$HOME/.config/dev-retro/DELPHI.INI" "$(delphi_ini_path)" && echo "DELPHI.INI restored from ~/.config/dev-retro (your saved options)."
@@ -10960,6 +11650,7 @@ delphi_setup() {
     delphi_launcher
     delphi_offer_com_cleanup
     [ "$ok" = 1 ] && echo "Done: 'delphi1' starts the IDE (or its launcher icon). Limits of this route: 'delphi1 help'."
+    fonts_summary
 }
 # DELPHI.INI (C:\WINDOWS): IntegratedDebugging=0 always (Wine has no Win16 debug hooks: Run fails with
 # "Internal Windows error (15)" otherwise); the editor font Courier New 10 only where the file sets none.
@@ -11083,6 +11774,7 @@ delphi_cmd() {
             delphi_desktop DELPHI.EXE ;;
         setup) shift; delphi_setup "${1:-}" ;;
         run) shift; [ -f "${1:-}" ] || die "usage: delphi1 run PROGRAM.EXE"; delphi_desktop "$(readlink -f "$1")" "${@:2}" ;;
+        colors) colors_cmd "$DELPHI_PREFIX" "${2:-list}" "${@:3}" ;;
         launcher) delphi_launcher ;;
         ini)
             case "${2:-}" in
@@ -11103,7 +11795,7 @@ delphi_cmd() {
 # =================================================================================================
 # delphi N (v93): Delphi 3, 4, 5, 6 and 7 under Wine, one 32-bit prefix each. The delphi1 recipe without its
 # 16-bit pieces (these are 32-bit programs, so no native OLE2): a virtual desktop sized to the screen, the
-# Windows version of the Delphi's own era, black desktop, TEMP=C:\TEMP, MS Sans Serif -> Tahoma, smoothed
+# Windows version of the Delphi's own era, preserved colors (v100, Nov 5 2026), TEMP=C:\TEMP, MS Sans Serif -> Tahoma, smoothed
 # core fonts. The CD (an .iso unpacked once, or its files) is drive D: in the prefix, typed as a CD-ROM,
 # so the installer and later add-ons find it. Each version's own fixes are worked out on the real discs, as
 # Delphi 1's were; the integrated debugger is left on. Real Windows guests for each version: STEPS-delphi.md
@@ -11176,28 +11868,34 @@ dn_desktop() {   # dn_desktop PROGRAM ARGS...: run in the version's virtual desk
     rm -f "$WS/.pid"; return $rc
 }
 dn_prefix() {   # create the 32-bit prefix once, and report the Windows version of the Delphi's era
+    local new_prefix=0
     if [ ! -f "$DN_PREFIX/system.reg" ]; then
+        new_prefix=1
         echo "Creating the 32-bit Wine prefix $DN_PREFIX (no Wine menu entries from wineboot)..."
         mkdir -p "$(dirname "$DN_PREFIX")"
         WINEPREFIX="$DN_PREFIX" WINEARCH=win32 WINEDEBUG=-all WINEDLLOVERRIDES="winemenubuilder.exe=d;mscoree,mshtml=" wineboot -i > /dev/null 2>&1
         WINEPREFIX="$DN_PREFIX" timeout 120 wineserver -w 2> /dev/null
         [ -f "$DN_PREFIX/system.reg" ] || die "wineboot did not create the prefix: 'WINEPREFIX=$DN_PREFIX WINEARCH=win32 wineboot -i' shows why."
     fi
+    if [ "$new_prefix" = 1 ]; then colors_cmd "$DN_PREFIX" init-new; else colors_cmd "$DN_PREFIX" init-existing; fi \
+        || echo "NOTE: No Theme initialization failed; use delphi $DN colors use NAME with the prefix closed."
     WINEDEBUG=-all dn_wine wine winecfg -v "$DN_WINVER" > /dev/null 2>&1 || echo "NOTE: 'winecfg -v $DN_WINVER' failed; Wine reports its default Windows version."
 }
 dn_settings() {
-    echo "Applying the settings: Windows version $DN_WINVER, black desktop, a short TEMP, MS Sans Serif -> Tahoma, smoothed fonts..."
-    dn_reg 'HKCU\Control Panel\Colors' /v Background /t REG_SZ /d '0 0 0'
+    echo "Applying the settings: Windows version $DN_WINVER, preserved colors, a short TEMP, MS Sans Serif -> Tahoma, smoothed fonts..."
+    # v100 (Nov 5 2026): leave manually chosen and selected scheme colors intact.
     mkdir -p "$DN_PREFIX/drive_c/TEMP"
     dn_reg 'HKCU\Environment' /v TEMP /t REG_EXPAND_SZ /d 'C:\TEMP'
     dn_reg 'HKCU\Environment' /v TMP /t REG_EXPAND_SZ /d 'C:\TEMP'
     dn_reg 'HKLM\Software\Microsoft\Windows NT\CurrentVersion\FontSubstitutes' /v 'MS Sans Serif' /t REG_SZ /d 'Tahoma'
     if command -v winetricks > /dev/null 2>&1; then
         WINEPREFIX="$DN_PREFIX" winetricks -q fontsmooth=rgb > /dev/null 2>&1 || echo "NOTE: winetricks fontsmooth=rgb failed."
-        WINEPREFIX="$DN_PREFIX" winetricks -q corefonts tahoma > /dev/null 2>&1 || echo "NOTE: 'winetricks corefonts tahoma' failed (it downloads the fonts; offline?). Rerun 'delphi $DN setup' later."
+
     else
         echo "NOTE: winetricks is missing (install-com installs it): fonts left as Wine's."
     fi
+    # v100 (Nov 5 2026): font state and two acquisition attempts get a final nonfatal summary.
+    install_fonts "$DN_PREFIX" || :
     # reg.exe, not regedit: regedit answers a problem with a dialog box, which would wait for a click.
     if [ -f "$HOME/.config/dev-retro/delphi$DN.reg" ]; then
         dn_wine wine reg import "$(dn_wine winepath -w "$HOME/.config/dev-retro/delphi$DN.reg" 2> /dev/null)" > /dev/null 2>&1 \
@@ -11239,6 +11937,7 @@ dn_setup() {   # dn_setup [INSTALLER]
     dn_launcher
     echo "Done: 'delphi $DN' starts the IDE (or its launcher icon). If Run stops with a debugger error, turn off"
     echo "Tools > Debugger Options > Integrated debugging and debug in a real Windows guest (STEPS-delphi.md)."
+    fonts_summary
 }
 dn_launcher() {   # point the version's Wine menu entries at 'delphi N'; write an IDE entry when none is there
     local apps="$HOME/.local/share/applications" f list=() ide=0
@@ -11400,6 +12099,7 @@ delphi_n_cmd() {   # delphi [N [setup|run|build|vscode|launcher|ini|where|status
         run) shift; [ -f "${1:-}" ] || die "usage: delphi $DN run PROGRAM.EXE"; dn_desktop "$(readlink -f "$1")" "${@:2}" ;;
         build) shift; dn_build "$@" ;;
         vscode) shift; dn_vscode "$@" ;;
+        colors) colors_cmd "$DN_PREFIX" "${2:-list}" "${@:3}" ;;
         launcher) dn_launcher ;;
         where) where_cmd "delphi$DN" ;;
         status) status_cmd "delphi$DN" ;;
@@ -11438,16 +12138,18 @@ fonts_take() {   # fonts_take SRCDIR OUTDIR: the fonts of FONT_FILES found in SR
     local n f
     for n in $FONT_FILES; do
         [ -f "$2/${n^^}.TTF" ] && continue
-        f=$(find "$1" -maxdepth 1 -type f -iname "$n.ttf" 2> /dev/null | head -n 1)
+        f=$(find -L "$1" -maxdepth 1 -type f -iname "$n.ttf" 2> /dev/null | head -n 1)
         [ -n "$f" ] && cp "$f" "$2/${n^^}.TTF"
     done
     return 0
 }
 fonts_collect() {   # fonts_collect DIR: every font found, into DIR as NAME.TTF
-    local out=$1 d f cache="${XDG_CACHE_HOME:-$HOME/.cache}/winetricks" tmp
+    local out=$1 d f n cache="${XDG_CACHE_HOME:-$HOME/.cache}/winetricks" tmp
     mkdir -p "$out"
-    for d in "$DELPHI_PREFIX/drive_c/windows/Fonts" "$COM_PREFIX/drive_c/windows/Fonts"; do
-        [ -d "$d" ] && fonts_take "$d" "$out"
+    # v100 (Nov 5 2026): a successful Delphi 3–7 setup can be the only source; deduplicate by name.
+    for d in "$DELPHI_PREFIX" "$COM_PREFIX" "$HOME"/.local/share/wine/delphi{3,4,5,6,7}; do
+        n=$(find "$d/drive_c/windows" -maxdepth 1 -type d -iname fonts 2> /dev/null | head -n 1)
+        [ -z "$n" ] || fonts_take "$n" "$out"
     done
     if command -v cabextract > /dev/null 2>&1 && [ -d "$cache" ]; then
         tmp=$(mktemp -d)
@@ -11461,6 +12163,9 @@ fonts_collect() {   # fonts_collect DIR: every font found, into DIR as NAME.TTF
 fonts_readme() {   # fonts_readme GUEST: README.TXT for the guest (LF here; CRLF when written)
     cat << EOF
 Fonts from dev-retro ('$1 fonts' on Linux)
+
+v100: Missing fonts? WINEPREFIX="$DELPHI_PREFIX" winetricks corefonts tahoma
+then rerun '$1 fonts'. Font downloads run only when explicitly requested, never by status/test.
 
 The TrueType core fonts (Andale Mono, Arial, Comic Sans MS, Courier New, Georgia, Impact,
 Times New Roman, Trebuchet MS, Verdana, Webdings) and Tahoma, copied from the Wine prefixes
@@ -11513,9 +12218,10 @@ EOF
         winnt40|win2000) cat << EOF
 
 SHARPER PICTURE ON LINUX
-  QEMU scales the guest's screen to its window (zoom-to-fit). For one screen pixel per
+  win2000 defaults to unscaled pixels (tablet alignment); winnt40 keeps scaling. For one screen pixel per
   guest pixel, untick View > Zoom To Fit in QEMU's window, or set
-  DISPLAY_OPTS="gtk,zoom-to-fit=off" in ~/$1/config.
+  DISPLAY_OPTS="gtk,zoom-to-fit=off" in ~/$1/config (guest off). Raise screen area in Windows
+  Display Properties if the unscaled picture is too small.
 EOF
             ;;
     esac
@@ -11528,7 +12234,11 @@ fonts_cmd() {   # fonts_cmd GUEST
     mkdir -p "$tmp/FONTS"
     fonts_collect "$tmp/FONTS"
     n=$(find "$tmp/FONTS" -maxdepth 1 -name '*.TTF' | wc -l)
-    [ "$n" -gt 0 ] || die "No fonts found: 'delphi1 setup' installs them into the delphi1 prefix (winetricks corefonts tahoma), or run 'winetricks corefonts tahoma' once."
+    # v100 (Nov 5 2026): unqualified winetricks repairs the wrong prefix.
+    if [ "$n" = 0 ]; then
+        printf 'No fonts found. Repair: WINEPREFIX=%q winetricks corefonts tahoma\n' "$DELPHI_PREFIX" >&2
+        die "Then rerun '$1 fonts'. Plain winetricks uses a different default prefix."
+    fi
     fonts_readme "$1" | sed 's/$/\r/' > "$tmp/FONTS/README.TXT"
     case "$1" in
         win31)
@@ -11609,6 +12319,12 @@ status_cmd() {   # one line: installed? running? sizes
         delphi3|delphi4|delphi5|delphi6|delphi7) [ -d "$WS" ] && size=$(du -sh "$WS" 2> /dev/null | cut -f1) ;;
     esac
     printf '%-8s %-15s %-9s %-14s %-8s %s\n' "$1" "$TITLE" "$ENGINE" "$inst" "$run" "${size:+$size used}"
+    case "$1" in winnt40|win2000) echo "         exchange: $(exchange_gate state) (setup always withholds it)" ;; esac
+    [ "$1" != win95 ] || win95_net status
+    case "$1" in
+        delphi1) font_state "$DELPHI_PREFIX" || : ;;
+        delphi3|delphi4|delphi5|delphi6|delphi7) font_state "$DN_PREFIX" || : ;;
+    esac
     [ -f "$WS/setup.skipped" ] && echo "         last setup refused: $(cat "$WS/setup.skipped")"
     return 0
 }
@@ -11675,12 +12391,16 @@ dos_conf() {   # ~/.config/dev-retro/dos.conf for DOS programs, written once (ed
         mkdir -p "${c%/*}"
         cat > "$c" << 'EOF'
 # ~/.config/dev-retro/dos.conf - DOSBox-X settings for DOS programs ('retro run', dev-demo's matrix).
+# v100: defaults reviewed
 # Written once by dev-retro (install-retro, v92); edit freely.
 # output=ttf draws DOS text screens with a TrueType font, smoothed by Linux (DOSBox-X's built-in
 # font by default; font= takes a .ttf path). A graphics screen switches to outputswitch's
 # renderer by itself, and back. For the original pixel look: output=opengl.
 [sdl]
 output=ttf
+[dosbox]
+# v100 (Nov 5 2026): host key belongs in dosbox, not sdl.
+hostkey=ctrlshift
 [ttf]
 font=
 lins=25
@@ -11688,6 +12408,7 @@ cols=80
 outputswitch=auto
 EOF
     fi
+    dosbox_defaults dos
     printf '%s' "$c"
 }
 retro_cmd() {
@@ -11697,7 +12418,7 @@ retro_cmd() {
             printf '%-8s %-15s %-9s %-14s %-8s %s\n' GUEST SYSTEM ENGINE INSTALLED STATE DISK
             for g in $GUESTS; do status_cmd "$g"; done
             for g in $DELPHI_VERSIONS; do [ -d "$HOME/.local/share/wine/delphi$g" ] && status_cmd "delphi$g"; done
-            if [ -c /dev/kvm ] && [ -r /dev/kvm ] && [ -w /dev/kvm ]; then echo "QEMU: KVM available."; else echo "QEMU: no usable /dev/kvm here: NT 4.0 and 2000 run in software emulation."; fi ;;
+            echo "QEMU selection is per guest (new defaults: winnt40 auto; win2000 tcg)."; ( GUEST=winnt40; guest_info "$GUEST"; accel_status ); ( GUEST=win2000; guest_info "$GUEST"; accel_status ) ;;
         which)
             f=${2:?usage: retro which FILE}; [ -f "$f" ] || die "no such file: $f"
             retro_pick "$f"; echo "$(basename "$f"): $KIND -> ${PICK:-nothing}. $WHY." ;;
@@ -11722,6 +12443,9 @@ retro_cmd() {
                 *) die "--in takes win31, win95, winnt40, win2000, wine or dos" ;;
             esac ;;
         sizes) sizes_cmd ;;
+        config-defaults) config_defaults ;;
+        config-status) dosbox_config_status ;;
+        slirp-support) slirp_support ;;
         help|-h|--help) help_cmd ;;
         *) die "usage: retro [list] | retro run [--in GUEST] FILE | retro which FILE | retro sizes | retro help" ;;
     esac
@@ -11742,11 +12466,15 @@ main() {
     case "${1:-}" in
         where) where_cmd "$GUEST"; exit ;;
         status) status_cmd "$GUEST"; exit ;;
+        accel|preferences)
+            case "$GUEST" in winnt40|win2000) ;; *) die "accel/preferences is for NT/2000." ;; esac
+            if [ "$1" = accel ]; then accel_status; else qemu_preferences; fi; exit ;;
         help|-h|--help) help_cmd; exit ;;
         launcher) write_launcher "$GUEST"; exit ;;
         fonts) [ "$GUEST" = delphi1 ] && die "delphi1 has them already ('delphi1 setup': winetricks corefonts tahoma, fontsmooth=rgb)."; fonts_cmd "$GUEST"; exit ;;
         put) [ "$GUEST" = win31 ] || [ "$GUEST" = delphi1 ] && die "$GUEST reaches your files directly: '$GUEST run FILE'."; shift; exch_put "$GUEST" "$@"; exit ;;
         get) [ "$GUEST" = win31 ] || [ "$GUEST" = delphi1 ] && die "$GUEST has no exchange disk."; shift; exch_get "$GUEST" "$@"; exit ;;
+        net) [ "$GUEST" = win95 ] || die "net is win95-only."; win95_net "${2:-status}"; exit ;;
         # v93: the app CD, the exchange disk's size, win95's undo points
         cd) [ "$GUEST" = delphi1 ] && die "delphi1 reads its media from ~/win31/install/apps ('delphi1 setup')."; shift; cd_cmd "$GUEST" "$@"; exit ;;
         exchange) case "$GUEST" in win95|winnt40|win2000) ;; *) die "$GUEST has no exchange disk." ;; esac
@@ -11764,6 +12492,51 @@ main "$@"; exit $?
 DEVRETRO_EOF
     chmod +x ~/.local/lib/dev-retro/dev-retro.new
     mv -f ~/.local/lib/dev-retro/dev-retro.new ~/.local/lib/dev-retro/dev-retro
+    # v100 (Nov 5 2026): only our default reset is bundled (12B); no Breeze Dark color data.
+    mkdir -p ~/.local/lib/dev-retro/colors
+    # v100 (Nov 6 2026 review): fresh temp output survives interruption after chmod made an older temp read-only.
+    RETRO_COLOR_TMP=$(mktemp ~/.local/lib/dev-retro/colors/.default.reg.XXXXXX)
+    # v100: build the registry-format header separately so CI's bundle-version scan sees only v100.
+    printf 'Windows Registry Editor %s\n\n' 'Version'' 5.00' > "$RETRO_COLOR_TMP"
+    cat >> "$RETRO_COLOR_TMP" << 'RETRO_COLOR_DEFAULT'
+; v100 (Nov 5 2026): Wine defaults by removing known overrides; no third-party palette.
+[HKEY_CURRENT_USER\Control Panel\Colors]
+"ActiveBorder"=-
+"ActiveTitle"=-
+"AppWorkSpace"=-
+"Background"=-
+"ButtonAlternativeFace"=-
+"ButtonDkShadow"=-
+"ButtonFace"=-
+"ButtonHilight"=-
+"ButtonLight"=-
+"ButtonShadow"=-
+"ButtonText"=-
+"GradientActiveTitle"=-
+"GradientInactiveTitle"=-
+"GrayText"=-
+"Hilight"=-
+"HilightText"=-
+"InactiveBorder"=-
+"InactiveTitle"=-
+"InactiveTitleText"=-
+"InfoText"=-
+"InfoWindow"=-
+"Menu"=-
+"MenuBar"=-
+"MenuHilight"=-
+"MenuText"=-
+"Scrollbar"=-
+"TitleText"=-
+"Window"=-
+"WindowFrame"=-
+"WindowText"=-
+RETRO_COLOR_DEFAULT
+    chmod 444 "$RETRO_COLOR_TMP"
+    mv -f "$RETRO_COLOR_TMP" ~/.local/lib/dev-retro/colors/default.reg
+    # v100 (Nov 5 2026): companion location for retained font logs, refreshed when the bundle moves.
+    printf '%s\n' "$ASSETS" > ~/.local/lib/dev-retro/assets-path.new
+    mv -f ~/.local/lib/dev-retro/assets-path.new ~/.local/lib/dev-retro/assets-path
     for RETRO_CMD in win31 win95 winnt40 win2000 delphi1 delphi retro; do
         # shellcheck disable=SC2016   # $HOME is for the wrapper to expand
         printf '#!/bin/sh\n# %s - written by dev-setup (install-retro); the logic is in ~/.local/lib/dev-retro/dev-retro.\nexec "$HOME/.local/lib/dev-retro/dev-retro" %s "$@"\n' \
@@ -11777,12 +12550,13 @@ DEVRETRO_EOF
     for RETRO_G in winnt40 win2000; do
         [ -f ~/"$RETRO_G"/config ] && continue
         if [ "$RETRO_G" = winnt40 ]; then
-            R_MEM=128; R_HPET=off; R_DISK=4; R_SOUND=sb16; R_MOUSE=ps2
+            R_MEM=128; R_HPET=off; R_DISK=4; R_SOUND=sb16; R_MOUSE=ps2; R_ACCEL=auto; R_DISPLAY=gtk,zoom-to-fit=on
         else
-            R_MEM=256; R_HPET=on; R_DISK=8; R_SOUND=AC97; R_MOUSE=tablet
+            R_MEM=256; R_HPET=on; R_DISK=8; R_SOUND=none; R_MOUSE=tablet; R_ACCEL=tcg; R_DISPLAY=gtk,zoom-to-fit=off
         fi
         cat > ~/"$RETRO_G"/config << EOF_RCFG
 # ~/$RETRO_G/config - written by dev-setup (install-retro) once; edit freely, setup leaves it alone.
+# v100: defaults reviewed
 # Read by '$RETRO_G' each time it starts QEMU.
 MEM=$R_MEM                # MB
 CPU=pentium3            # pentium if setup blue-screens on this model
@@ -11794,11 +12568,14 @@ VIDEO=cirrus            # both ship a Cirrus driver; skip NT 4.0's display "Test
 NIC=pcnet               # AMD PCnet, user-mode networking; none turns it off
 SOUND=$R_SOUND             # sb16, AC97 or none (drivers on the install CDs)
 MOUSE=$R_MOUSE             # ps2 (captured; Ctrl+Alt+G releases it) or tablet (USB: Windows 2000)
-ACCEL=auto              # auto (KVM when /dev/kvm is usable), kvm or tcg
-DISPLAY_OPTS=gtk,zoom-to-fit=on
+# v100 (Nov 5 2026): win2000 uses TCG for nested-KVM stalls, unscaled tablet and no noisy AC97.
+ACCEL=$R_ACCEL              # auto (KVM when usable), kvm or tcg; explicit owner values stay
+DISPLAY_OPTS="$R_DISPLAY"
 EXTRA_ARGS=""           # more QEMU options, e.g. "-smp 2"
 EOF_RCFG
     done
+    # v100 (Nov 5 2026): migrate existing configs after generating new ones; running guests defer.
+    ~/.local/lib/dev-retro/dev-retro retro config-defaults
     # Launcher icons (ChromeOS app drawer): one per guest. A guest not installed yet opens a window saying
     # '<cmd> setup' and where its media goes. delphi1's also points Delphi's own Wine entries at 'delphi1'.
     for RETRO_G in win31 win95 winnt40 win2000 delphi1; do
