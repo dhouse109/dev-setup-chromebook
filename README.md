@@ -27,6 +27,9 @@ the whole lab, as it is.
 
 All four take the same flags, so `install-web install-node` means the same thing to each of them.
 
+Since v94, releases are a tag plus a GitHub Release with GitHub-generated source zip/tar archives
+only. The old release kit was last used for v93 and is retired.
+
 > **Current version: v100.** Retro setup reviews guest defaults once per config and records `# v100: defaults reviewed`; new configs start marked and later owner choices are preserved. Owner accepted Nov 7, 2026 with the recorded known issues. [CHANGELOG.md](CHANGELOG.md) has the full history.
 
 v99 implements the [final plan](docs/plans/v99-plan.md): bounded bulk-install retries, stage/EXIT

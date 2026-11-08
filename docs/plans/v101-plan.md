@@ -1,11 +1,12 @@
 # dev-setup-chromebook v101 plan
 
-Nov 8, 2026 · **owner review of `936737b` applied; revised plan awaiting final sign-off**
+Nov 8, 2026 · **FINAL — owner approved after reviews of `936737b` and `70109e9`; merge before build**
 
 Baseline: released `v100` (`3de837e`, Nov 8). The scripts on `plan/v101` are still v100.
 This expands the scope notes at `5eb3b35`, following the v100 plan: findings, approach, affected
 code, migration, dev-test coverage, documentation and owner choices. This commit changes plans
-only. No bundle run, guest start, installation or implementation is authorized.
+only. The owner will merge this plan before the build starts. Do not start implementation or
+install the approved Inspector prerequisites during this planning task.
 
 ## Items at a glance
 
@@ -26,7 +27,7 @@ database-swap demonstration belong to a **staged follow-up after v101**, describ
 [the companion plan](v101-dcom-demo.md). Completing that application is not a v101 release gate.
 Item 8 does not bring Delphi source generation back into this version.
 
-## Recorded owner decisions and remaining review points
+## Recorded owner decisions and implementation evidence still needed
 
 Already settled by the owner; do not reopen these as unanswered questions:
 
@@ -41,13 +42,14 @@ Already settled by the owner; do not reopen these as unanswered questions:
 - **Current instruction:** v101 plans the bundle foundation only; Delphi demo code is a staged
   follow-up. This narrows the earlier companion's full-application wording.
 
-The owner approved the following choices in the review of `936737b`. These are now plan decisions,
-not questions to ask again. Approval of the plan does not authorize implementation or real runs.
+The owner approved the following choices in the review of `936737b` and settled the remaining
+details in the final review of `70109e9`. These are decisions, not questions to ask again. Plan
+approval alone does not start the build; item 2 records the separately approved prerequisite scope.
 
-| Choice | Approved scope | Remaining evidence or review |
+| Choice | Approved scope | Evidence to collect during implementation |
 |---|---|---|
-| 1A | Use regular `CLAUDE.md` with `@AGENTS.md` and reject tracked symlinks in CI. | Cover every release archive producer; confirm real import and Files extraction. |
-| 2A | Investigate first, for one session, on a named machine with retro present. | Check target disk headroom before acquisition; let evidence choose the small fix or managed cache. |
+| 1A | Use regular `CLAUDE.md` with `@AGENTS.md` and reject tracked symlinks in CI. GitHub source archives are the only release archives. | Confirm real import, archive checks and Files extraction of the actual GitHub source zip. |
+| 2A | Investigate for one session on confirmed joxer, with bundle agentic/Node alongside retro approved within the disk preflight. | Recheck headroom before acquisition; let evidence choose the small fix or managed cache. |
 | 3A | Bound KVM research and retain win2000 TCG/no-sound defaults unless repeatably clean. | Record experiment results before proposing a new default. |
 | 3B | Use native-first `AUDIO_BACKEND=auto` with explicit override behavior. | Verify backend availability and real playback separately. |
 | 4A | Keep failures as FAIL, save diagnostics before waits and bound cleanup. | Keep any diagnostic TCG comparison within budget and retain the original failure. |
@@ -55,12 +57,13 @@ not questions to ask again. Approval of the plan does not authorize implementati
 | 6A | Document display profiles and report valid renderer choices as information. | Verify visual behavior; no display switcher in v101. |
 | 7A | Document existing normal-core options and persistent config editing. | Confirm the actual Object Agent startup control; no new switcher. |
 | 8A | Publish the manual matrix now and defer Delphi HTTPGET code. | Select controlled HTTP targets and peer/name forms before real checks. |
-| 9A | Support the local guest pair only; defer remote mode to the cross-laptop follow-up. | Compare storage below; recommend `LAN_*` keys in the existing per-guest config. |
+| 9A | Support the local pair with approved `LAN_*` keys in the existing per-guest config and preserve the adopted adapter identity. Defer remote mode. | Compare adopted argv/device placement, then confirm unchanged IP/WINS and no new hardware in both guests. |
 | 9B | Supply the nested documentation scaffold without `pack`. | Defer packaging until application sources exist. |
 
-The LAN storage comparison is a new recommendation requested in this review; it is not presented
-as a previously approved owner choice. The release-kit provenance and Inspector target preflight
-are recorded in items 1 and 2. These review points must be resolved before calling the plan final.
+The final review of `70109e9` approves LAN storage in the existing configs, confirms this container
+as joxer and retires the release-kit question. The kit was last used for v93. Since v94, releases
+consist of a tag and a GitHub Release with GitHub-generated source archives only. All plan choices
+are settled; evidence-dependent runtime outcomes remain to be established during the later build.
 
 ## Shared implementation and validation contract
 
@@ -95,9 +98,10 @@ are recorded in items 1 and 2. These review points must be resolved before calli
   `tests/warm-inspector-cache.py` and `tests/refresh-retro-helper.py` mutate the live installation;
   they are not static checks. The existing untracked `tests/inspect-inspector-context.py` is
   untouched by this commit; review/authorize it separately before adopting or running it.
-- Real setup/init/test/demo, Inspector experiments and guest launches require individual owner
-  approval. Read saved assets `.output`/`.log` files afterward. No credential/config dumps, cache
-  purges, host-guard bypasses or unapproved heavy-service starts. Public reports contain counts,
+- Other real setup/init/test/demo runs, Inspector experiments and guest launches require owner
+  approval; item 2's explicitly approved prerequisite scope need not be approved again. Sandbox
+  escalation rules still apply. Read saved assets `.output`/`.log` files afterward. No credential
+  or config dumps, cache purges, host-guard bypasses or unapproved heavy-service starts. Public reports contain counts,
   results and repo-relative paths, not raw local machine details.
 
 ## 1. ChromeOS-compatible release archives
@@ -134,28 +138,28 @@ Prefer 1A.
   proposed `tests/check_release_archive.py`. No bundle function changes for this item.
 - **CI:** parse `git ls-files -s -z`, reject every mode 120000 entry and print relative names.
   Use a synthetic symlink tree to prove failure. The tracked link is expected to remain until
-  implementation; this draft must not claim the proposed guard passes today.
+  implementation; the final plan does not claim the proposed guard passes today.
 - **Archive:** from the candidate committed tree, run `git archive --format=zip` with prefix
   `dev-setup-chromebook-v101/`, keeping output under `assets/releases/`. Check zip integrity,
   entry modes, the import file and tree manifest, including all four scripts/docs; account for
   deliberately export-ignored files. Do not package loose working files/untracked artifacts.
-- **Release kit:** no kit implementation is tracked here, and neither the ignored `release/`
-  directory nor the ignored `.release-kit` marker exists in this checkout. The published v100
-  release has no uploaded assets; its zip/tar downloads are GitHub-generated source archives.
-  That establishes the published artifacts, not whether an external kit also builds a local
-  archive. Inspect the owner's actual kit entrypoint before final sign-off and record whether
-  it builds one. If it does, pass its exact output through the same integrity, entry-mode,
-  import-file and manifest checks, and include it in the owner's Files extraction check. If the
-  kit only creates the tag/release, record that there is no extra kit-produced archive. Never
-  treat a passing test of a substitute `git archive` command as coverage of another producer.
+- **Release process (owner-confirmed in the final review):** the release kit is retired and was
+  last used for v93. Since v94 the process is a tag plus a GitHub Release; GitHub-generated source
+  zip/tar archives are the only release archives. No current kit builds a separate release
+  archive, so there is no extra producer to inspect or test. Validate GitHub archive integrity,
+  member types and manifest against the candidate commit as well as the local archive fixture.
 - **Dev-test:** source layout is a CI/package check, not an installed-stack FAIL. Owner extracts
   the candidate in ChromeOS Files, checks completeness/final files and repeats with the actual
   GitHub-generated release source zip. Linux extraction alone is insufficient. Disk report has
   no installed-content change.
+  The archive checks above plus the owner's ChromeOS Files extraction of the **actual GitHub
+  source zip** provide complete coverage of the release archives. This defines the acceptance
+  coverage; it does not claim those implementation/owner checks have already run.
 - **Docs:** AGENTS.md, `docs/how-its-built.md`, README download/extraction instructions and release
   notes; record results here. No new runtime Crostini workaround or secret/manual init step.
 - **Owner decision:** **1A approved** in the review of `936737b`; 1B is not the chosen approach.
-  Kit provenance remains a final-review point; import/Files results remain implementation checks.
+  The final review of `70109e9` settles kit retirement and archive provenance. Import/Files
+  results remain implementation checks, not unresolved plan decisions.
 
 ## 2. Inspector offline cache coherence
 
@@ -166,9 +170,11 @@ immediate offline tools/call returned 5; later dev-test offline npx failed while
 worked. Matching headline Node/npm versions did not establish matching executable/config/cache/
 cwd/spec inputs. No cache deletion, eviction or version mismatch is a proven cause.
 
-The owner approved **2A with a one-session budget**. Name **joxer** as the proposed investigation
-target because it is the existing retro lab; confirm that identity before running. Keep
-`install-retro` present and use the bundle's own `install-agentic install-node` configuration.
+The owner approved **2A with a one-session budget** and confirmed in the final review that this
+planning container is **joxer**. Joxer is approved for the bundle's `install-agentic install-node`
+alongside the existing `install-retro`, within the disk preflight below. This authorizes the later
+prerequisite setup in that scope; do not ask for the same scope decision again. It does not start
+the setup now: merge the plan and begin the build first. Keep retro present throughout the work.
 Do not use a retro-free fresh environment or move the experiment to another machine silently.
 The session includes the preflight, comparisons and a single evidence review; inconclusive results
 end with an honest record and an owner decision about follow-up, not a second unbudgeted session.
@@ -181,13 +187,15 @@ support that budget, rather than deleting guest data or caches. Recheck before e
 cache and stop at the allowance. These are investigation limits, not installer disk defaults.
 The 2 GiB allowance covers diagnostic caches, not a missing agentic stack. If bundle-managed
 agentic/Node prerequisites are absent, include their acquisition footprint and time in the same
-session preflight, obtain the required setup approval and recheck space afterward. Do not assume
-that the full agentic installation fits the cache allowance or silently provision it elsewhere.
+session preflight, use the owner's approved prerequisite scope and recheck space afterward.
+Do not assume the full installation fits the cache allowance or silently provision it elsewhere.
 
-The current container's read-only check found roughly 44 GiB available with NT/2000 workspaces
-already present, but its OS hostname is only `penguin`; this reading has not been attributed to
-joxer. The named-target preflight must be repeated/confirmed there. No Inspector acquisition or
-probe was run during this revision, and executable presence alone would not prove bundle setup.
+The read-only planning preflight on owner-confirmed joxer found roughly 44 GiB available with
+NT/2000 workspaces already present. The final-review refresh reported 46,464,241,664 available
+bytes; the guest workspaces used approximately 2.5 GiB and 1.3 GiB. The OS hostname `penguin` does
+not indicate a different machine. Recheck the numbers immediately before acquisition because
+free space changes. No Inspector acquisition or probe ran during planning, and executable
+presence alone would not prove that bundle setup completed.
 
 1. Use a machine configured by the bundle's own `install-agentic install-node`; do not hand-build
    Inspector in assets. At actual setup/test probes compare allowlisted executable identities and
@@ -237,8 +245,9 @@ Do not promise offline uv/Python dependencies merely because npm is warm.
   instructions. State the online warm-up/strict-offline contract. Add a Crostini gotcha only for an
   evidenced host-specific cause, not an assumed npm defect.
 - **Owner decision:** **2A approved for one session**, with named-machine and retro-present disk
-  preflight above. Real commands remain individually approved. Evidence determines the small fix
-  or managed cache; if inconclusive, ask about deferral rather than silently using a second session.
+  preflight above. Prerequisite setup on joxer is approved; real experiments remain individually
+  approved. Evidence determines the small fix or managed cache; if inconclusive, ask about
+  deferral rather than silently using a second session.
 
 ## 3. Windows 2000 nested KVM and sound
 
@@ -532,19 +541,17 @@ adapter in each guest using the proven reciprocal loopback UDP link. They will n
 peer or bind options. Remote support belongs to F6 in the companion, where the Tailscale MTU risk
 is recorded. DOSBox-X will continue to use its separate `win95 net` command.
 
-The owner requested a comparison of storage approaches before the plan is final:
+The following comparison records the storage decision approved in the final review of `70109e9`:
 
 | Approach | Advantages | Costs and safeguards |
 |---|---|---|
 | Keep a separate JSON state file under `~/.config/dev-retro`. | A strict schema is easy to parse without executing shell, and a narrow atomic write cannot alter CPU/audio settings. | The owner must maintain two config locations for one QEMU launch. Status, backup and adoption must reconcile that state with the existing config and EXTRA_ARGS. Schema/version handling and a new disk-report location are also required. |
 | Add `LAN_*` keys to `~/winnt40/config` and `~/win2000/config`. | The owner sees networking beside ACCEL, CPU, SOUND and EXTRA_ARGS, and can back up one config per guest. The existing helper already reads these files for every launch. | The command must use a conservative non-executing parser for edits/status, preserve unrelated shell content and refuse ambiguous files. Launch-time validation is still required after the existing trusted config-loading step. |
 
-**Recommendation:** use `LAN_*` keys in the existing per-guest config. This fits the established
+**Owner-approved choice:** use `LAN_*` keys in the existing per-guest config. This fits the established
 editable-config interface and avoids two sources of truth. The existing QEMU migration code already
 provides a model for conservative, atomic edits, although LAN commands need their own focused
-fixtures. This is a recommendation from the requested comparison, not an owner decision already
-made. If JSON is chosen instead, revise the config, status, fixture and disk-accounting contracts
-together before implementation.
+fixtures. The owner accepted this recommendation; the separate JSON file is not part of v101.
 
 The proposed keys are `LAN_ENABLED`, `LAN_LOCAL_PORT`, `LAN_PEER_PORT` and `LAN_MAC`. The helper
 will supply an off default and the preset port/MAC values before loading an existing config. New
@@ -574,8 +581,8 @@ unsupported LAN keys, invalid booleans, out-of-range ports, non-unicast MACs and
 The allowed port range will be 1024–65535, and each enabled local endpoint must differ from its
 peer. The two default MACs will remain distinct and locally administered.
 
-`qemu_launch` will append one validated socket-NIC argument when LAN_ENABLED is enabled. It will
-preserve the current user-mode NIC policy, exchange gate and app CDs. An enabled local link will
+`qemu_launch` will emit the validated second NIC at its preserved device position when LAN_ENABLED
+is enabled. It will preserve the current user-mode NIC policy, exchange gate and app CDs. An enabled local link will
 apply to normal boot, run and explicitly requested setup launches, including domain-controller
 installation, but setup will still withhold exchange. The command will not set Windows IPs, change
 its domain or hot-plug a NIC. Turning the managed link off will change no guest files or settings.
@@ -584,8 +591,32 @@ Existing hand-written second-NIC arguments in EXTRA_ARGS will remain untouched w
 is off. Before enabling, the command will inspect `-nic`, `-net`, `-netdev` and network-device
 overrides and refuse conflicting or ambiguous custom networking. The adoption procedure will ask
 the owner to stop the guests, back up the config, remove only the known manual link arguments and
-then run `lan on`. The command will preserve unrelated EXTRA_ARGS and will never delete owner text
-automatically. Launch-time validation will catch a conflicting edit made after enablement.
+then run `lan on`. Before changing the config, record the old launch arguments, second-adapter MAC
+and guest-visible PCI location. The command will preserve unrelated EXTRA_ARGS and will never
+delete owner text automatically. Launch-time validation will catch a conflicting edit after enablement.
+
+**Adapter identity is an adoption invariant.** Enabling the managed link must preserve the second
+adapter's PCnet model, MAC and PCI bus/slot/function. Unpinned adoption must preserve its ordering
+relative to every other device; a pinned fallback must retain the same effective placement without
+shifting other devices. Keeping only its MAC is insufficient. In the proven handwritten layout, the second `-nic socket`
+is supplied at the end of EXTRA_ARGS, after the helper's user NIC, USB and audio options. Emit the
+managed NIC at that same position, after those same options and any preceding owner device
+arguments. Do not move it beside the first user NIC while removing it from the end of EXTRA_ARGS.
+The adoption fixture will compare the complete pre/post device-producing argument sequence for
+both guests, including unrelated EXTRA_ARGS, rather than just count NICs or compare MACs.
+
+If a custom layout cannot preserve its position, use explicit PCI placement at the **recorded
+original slot**, not a new guessed slot. Installed QEMU 10.0.13 help confirms the socket netdev's
+UDP/localaddr options and the PCnet device's `addr`, `netdev` and `mac` properties. For a pinned
+layout use `-netdev socket,id=retro-lan,...` with
+`-device pcnet,netdev=retro-lan,mac=<unchanged-mac>,addr=<recorded-slot>` instead of assuming that
+the `-nic` shorthand accepts device-address properties. Record the original PCI bus too if the
+layout has more than one, and use that same bus. Add optional validated `LAN_PCI_ADDR` and
+`LAN_PCI_BUS` keys only when explicit placement is needed; otherwise preserve the existing order
+without a new slot default. An ambiguous layout or unknown original slot must stop adoption for manual review before
+any write or guest launch. Never choose a free slot and treat Windows re-detection as successful
+adoption. These capability checks were read-only help queries; they do not claim guest identity
+has already been verified.
 
 The helper will reject known local managed-pair MAC or bind-port collisions and incompatible
 reciprocal ports. It will report a port occupied by another process without killing that process.
@@ -651,7 +682,7 @@ off default. The implementation must preserve EXTRA_ARGS and make read-only LAN 
 before directory creation.
 
 In dev-test, extend the QEMU argument and isolated-home helper fixtures and proposed
-`tests/test_v101.py`. With the recommended config storage, the existing NT/2000 workspace rows
+`tests/test_v101.py`. With the approved config storage, the existing NT/2000 workspace rows
 already include the LAN keys; clarify the measured content without counting config again. Retained
 results under assets need one measurement, and a scaffold row is needed only if a demo total does
 not already cover it. No ISO or new standalone LAN-state directory is added by v101.
@@ -674,17 +705,31 @@ Status must perform no writes, network calls or engine launches. Launch fixtures
 the first NIC, add the second NIC during boot/run/setup only when enabled, and retain setup's
 exchange withholding. All fixtures use an isolated HOME and fake engines.
 
+Add a dedicated adoption fixture that captures handwritten EXTRA_ARGS argv for NT and Windows
+2000, removes only the owner-approved socket stanza in the fixture config and enables LAN keys.
+The adopted argv must retain the same second-NIC model, MAC, effective device position and all
+other device ordering. Cover USB/audio differences between guests and extra owner PCI devices
+before or after the old NIC; a layout that cannot preserve its identity must be refused or use
+the recorded-slot `-netdev`/`-device` form. For the pinned form compare model, MAC, bus/slot and
+backend endpoints rather than demand byte-identical shorthand syntax. Test rejection of unknown
+slots and collisions. Fixtures prove the argument contract; the owner check below proves Windows
+keeps the same adapter.
+
 Scaffold fixtures must verify the nested paths, old/new index compatibility, launcher syntax,
 accurate pending-stage text and preservation of owner work/results during refresh. They must
 verify the explicit clean target and show that no pack entry, ISO, application source, seed data
 or binary is generated. They must not require the owner to have run dev-demo already.
 
-After backups and manual adoption, the owner will enable each local link, inspect status, boot
-both guests explicitly and verify PCnet drivers and guest IPs. Bidirectional ping, the existing
+Before adoption, the owner will record each second adapter's static IP, mask, gateway, WINS,
+MAC and device location, then shut down both guests and keep a recoverable config/disk backup.
+After manual adoption, the owner will enable each local link, inspect status, boot both guests
+explicitly and verify that **neither guest detects new hardware** and that both retain their
+static IP/WINS settings on the original adapter without re-entry. Bidirectional ping, the existing
 domain relationship and first-NIC internet must still work. With both guests shut down, turn the
 managed links off and confirm the second adapters disappear without data loss. Re-enabling must
-retain their identities. Document driver rebinding if Windows detects changed NICs, and leave
-domain credentials and changes to the owner's Windows session.
+retain their identities and settings. New-hardware detection or lost settings is an adoption
+failure: stop, restore the original config and investigate placement instead of accepting driver
+rebinding as a workaround. Leave domain credentials and changes to the owner's Windows session.
 
 Network-only acceptance starts at the current NT 128 MB and Windows 2000 256 MB allocations.
 The later SQL lab may use NT 128–256 MB and Windows 2000 512 MB, with one database workload at a
@@ -701,12 +746,13 @@ later application CDs and VM/database growth. Document the owner's SP6a, SQL, In
 media prerequisites without implying that installers are included. Preserve the qualified local
 domain and multicast observations.
 
-The owner approved **9A local-only** and **9B without pack** in the review of `936737b`. Keep the
-remote command and all packaging in the staged follow-up. The new storage comparison recommends
-LAN keys in the existing per-guest config and still needs final review. The code location, mapping,
-SP6a prerequisite and application-code deferral are already settled.
+The owner approved **9A local-only** and **9B without pack** in the review of `936737b`. The final
+review of `70109e9` also approves LAN keys in the existing configs and requires adapter-identity
+preservation, the adoption fixture and unchanged-IP/WINS hand checks. Keep the remote command and
+all packaging in the staged follow-up. The code location, mapping, SP6a prerequisite and
+application-code deferral are settled.
 
-## Proposed build stages after owner approval
+## Build stages after the owner merges the final plan
 
 1. **Archive (1):** import/rules/history, CI and candidate archive checks; owner context/extraction.
    No script bump needed until first script stage.
@@ -728,9 +774,10 @@ SP6a prerequisite and application-code deferral are already settled.
 
 Commands below are for the later approved build, **not permission to execute now**.
 
-1. Confirm the remaining final-review points without reopening the approved choices: LAN storage,
-   release-kit archive provenance and the named Inspector preflight. Remote mode and pack are
-   deferred, not unconfirmed v101 features. Validate Claude import and archive extraction separately.
+1. Use the settled plan decisions: LAN keys in existing configs, GitHub-only release archives,
+   confirmed joxer and adapter-identity preservation. Recheck the disk preflight before the
+   approved acquisition. Remote mode and pack are deferred, not unconfirmed v101 features.
+   Validate Claude import and archive extraction separately.
 2. Guests/heavy workloads stopped; targeted init → setup → init → test, then optional demo:
 
    ```bash
@@ -741,8 +788,9 @@ Commands below are for the later approved build, **not permission to execute now
    ./dev-demo-chromebook.sh install-retro
    ```
 
-   First init on fresh machines only creates template. Approve/run each separately and inspect
-   assets output/stage coverage. Demo remains outside the test checklist; verify its steps/status/
+   First init on fresh machines only creates the template. Use item 2's existing prerequisite
+   approval within its preflight; approve other real runs separately and inspect their saved
+   output/stage coverage. Demo remains outside the test checklist; verify its steps/status/
    results menu without treating the deferred application as installed or looking for a pack action.
 3. Separately approved Inspector strict-offline checks after workflow/new session; bounded KVM/
    audio experiments within budget; NT preservation/CPU/usability; DOSBox profiles/core recovery.

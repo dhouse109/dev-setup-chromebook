@@ -16,6 +16,9 @@ Gemini-era script, then the move to Claude). The version-by-version notes are in
 - **The loop.** Plan (`docs/plans/vNN-plan.md`, on a `plan/vNN` branch with its own PR), build (on
   `release/vNN`, a PR into `main`), run on a Chromebook until `dev-test` shows FAIL 0, then merge, tag
   `vNN` and publish a GitHub Release.
+- **Release archives.** The release kit was last used for v93 and is retired. Since v94 a release
+  is a tag plus a GitHub Release, with GitHub-generated source zip/tar archives only. No current
+  kit builds an additional archive.
 - **Who decides.** I choose what goes into each version and make every plan choice. The agents diagnose,
   propose the choices (with one marked recommended), build, test, and review.
 - **The rules.** One instruction file holds the repo's rules for whichever agent is working:

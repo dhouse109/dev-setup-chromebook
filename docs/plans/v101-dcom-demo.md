@@ -1,6 +1,6 @@
 # Delphi multi-tier demo across Delphi 3–7: plan
 
-Nov 8, 2026 · **v101 foundation planned; application code deferred to a staged follow-up**
+Nov 8, 2026 · **FINAL v101 foundation plan — owner approved; application code remains a follow-up**
 · companion to [v101 plan item 9](v101-plan.md#9-bundle-foundation-for-the-later-delphi-demo)
 
 ## Version boundary and approval status
@@ -11,7 +11,9 @@ The owner has now limited **v101** to the bundle's supported guest-network comma
 supersedes earlier wording that called the whole application a v101 demo.
 
 The agreed code location, service-pack prerequisite and version/database mapping remain agreed.
-Implementation mechanisms and the remaining choices below are recommendations awaiting approval.
+The owner finalized the v101 foundation in the reviews of `936737b` and `70109e9`. Only the later
+application choices remain recommendations for a future approved plan. The owner will merge this
+plan before the build starts.
 This planning commit changes neither scripts nor installed tools/guests. Real commands still need
 individual owner approval; licensed media is supplied by the owner, never downloaded by the bundle.
 
@@ -20,8 +22,9 @@ individual owner approval; licensed media is supplied by the owner, never downlo
 The owner approved **9A local-only** and **9B without pack** in the review of `936737b`. v101 will
 provide `winnt40 lan` and `win2000 lan` status/on/off for the proven local second-PCnet pair. The
 feature will default off and require explicit adoption of existing manual EXTRA_ARGS. Main-plan
-item 9A compares a separate JSON file with LAN keys in the existing guest config and recommends
-the latter; that new recommendation remains for final review.
+item 9A retains the comparison with a separate JSON file and records the owner's approval of
+LAN keys in the existing config. Adoption must preserve the second adapter's model, MAC and PCI
+identity, either by retaining its original argument position or pinning its recorded slot.
 
 The approved scaffold will live at `~/dev-demo/retro/delphi/advanced-demo`. Its nested launcher
 will offer steps, read-only status and results guidance. It will include foundation instructions,
@@ -37,7 +40,7 @@ an application stage passed. Cross-laptop mode and packaging will wait until the
 ### Foundation files, checks and documentation
 
 Setup's generated helper will gain local LAN dispatch, status, conservative config editing and
-validated QEMU arguments. With the recommended LAN keys, the existing per-guest config remains
+validated QEMU arguments. With the approved LAN keys, the existing per-guest config remains
 the single settings location. Read-only status and editing will not execute shell config.
 
 Dev-demo will gain `demo_retro_advanced` and compatible relative-path handling in `begin`,
@@ -45,7 +48,12 @@ Dev-demo will gain `demo_retro_advanced` and compatible relative-path handling i
 paths. Refresh will update bundle documentation while preserving future owner code and results.
 
 Dev-test will use isolated fake-QEMU fixtures for the local link, config preservation, conflicts,
-collisions, no-write status, first-NIC preservation and setup exchange withholding. Scaffold
+collisions, no-write status, first-NIC preservation and setup exchange withholding. An adoption
+fixture compares the handwritten and managed argument/device layouts for both guests; it must
+preserve the second adapter's model, MAC, position or recorded PCI slot, and other device ordering.
+Installed QEMU help confirms explicit PCnet address/netdev/MAC properties for the pinned fallback.
+The owner must then verify unchanged static IP/WINS settings and no new hardware detected in
+either guest; re-detection is a regression, not a reason to accept rebinding. Scaffold
 fixtures will check paths/indexes, launcher syntax, refresh/clean and absence of pack or application
 outputs. They will not require proprietary tools, installed guest databases or a live Delphi demo.
 
@@ -56,7 +64,8 @@ generated STEPS and the four CHANGELOG sections during implementation. All four 
 remain synchronized, with no new install flag.
 
 The v101 acceptance checks are static/isolated tests, an owner-run local link and first-NIC check,
-safe on/off adoption, scaffold lifecycle/menu checks and the approved clean bundle test. Remote
+safe on/off adoption with unchanged adapter identity/settings, scaffold lifecycle/menu checks and
+the approved clean bundle test. Remote
 transport, MTU behavior, DCOM and database swaps use the F0–F6 follow-up scheme below and are not
 v101 acceptance gates.
 
@@ -199,6 +208,8 @@ CD carries an InterBase of its year).
 4. Current task: v101 stops at supported network/scaffold/docs; code is staged afterward.
 5. Review of `936737b`: the managed link is local-only, remote mode moves to F6, and pack waits
    until application sources exist. The main plan records all other approved choices.
+6. Final review of `70109e9`: LAN keys in existing guest configs are approved, and adoption must
+   preserve the second adapter's identity and static IP/WINS settings without new hardware.
 
 ## Follow-up work packages F0–F6 and acceptance gates
 
