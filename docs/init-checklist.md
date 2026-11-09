@@ -856,3 +856,16 @@ with `win95 --core normal`; with the guest off, set `[cpu] core=normal` in boot.
 Setup already uses normal. If the agent is unused, inspect Startup/vendor options and disable
 only the identified action. Do not guess a Run/RunServices registry key; export a confirmed entry
 before editing. This is a finding for that installation, not a guarantee about all RPC software.
+
+
+### v101 local guest link
+
+`winnt40 lan [status|on|off]` and `win2000 lan [status|on|off]` manage a local-only
+second PCnet pair, default off, through LAN keys in each existing guest config.
+Status creates nothing and never evaluates shell config or probes a peer. Stop both
+guests before editing/adoption. Follow [guest-lan.md](guest-lan.md): record the old
+MAC/model/PCI identity and static IP/WINS, keep backups, and remove only the known
+manual network stanza yourself. The managed NIC stays after USB/audio/EXTRA_ARGS.
+Ambiguous custom device layouts need recorded explicit PCI pins or are refused.
+The owner must confirm no new hardware and unchanged IP/WINS without re-entry,
+bidirectional ping/domain behavior and first-NIC internet. Remote mode is deferred.

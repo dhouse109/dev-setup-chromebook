@@ -34,7 +34,7 @@ The v101 candidate uses a regular `CLAUDE.md` import so ChromeOS Files can extra
 integrity, modes and contents are checked by `tests/check_release_archive.py`; final acceptance
 also requires extracting the actual GitHub source zip in Files.
 
-> **Current version: v101.** Build in progress; not yet confirmed run on a Chromebook. Stages 1–4 are built; guest LAN and advanced-demo foundation stages are pending. Owner acceptance has not occurred. [CHANGELOG.md](CHANGELOG.md) has the full history.
+> **Current version: v101.** Build in progress; not yet confirmed run on a Chromebook. Stages 1–5 are built; the advanced-demo scaffold and acceptance stages are pending. Owner acceptance has not occurred. [CHANGELOG.md](CHANGELOG.md) has the full history.
 
 v99 implements the [final plan](docs/plans/v99-plan.md): bounded bulk-install retries, stage/EXIT
 reports and focused Playwright, password, model-hint and package-permission fixes. The owner accepted
@@ -165,7 +165,7 @@ heavy engines run one at a time, because Linux gets about 6.4 GB of an 8 GB Chro
 | `install-oracle-full` | Oracle's full image instead of Lite |
 | `install-ldap` / `install-ldap-full` | lldap in Docker / OpenLDAP + lldap |
 | `install-lan` / `install-lan-share` | your laptops as one network (Tailscale, an address book, shared services) |
-| `install-retro` | DOS and Windows 3.1 / 95 / NT 4.0 / 2000 guests (DOSBox-X, QEMU; v100 fixes win95 boot/renderer, defaults DOSBox-X host key to Ctrl+Shift, uses TCG for win2000, and defers NT/2000 exchange until `exchange enable`; includes genisoimage, actionable font retry/status and `delphi N colors` with default/owner-supplied schemes only; `win95 net on/off` manages slirp NE2000), Open Watcom, Delphi 1–7 under Wine (`delphi N build` compiles a Delphi 3–7 project with dcc32, `delphi N vscode` sets it up for VS Code, Cursor and Devin); pulls in `install-com` (COM development under Wine) |
+| `install-retro` | DOS and Windows 3.1 / 95 / NT 4.0 / 2000 guests (DOSBox-X, QEMU; v100 fixes win95 boot/renderer, defaults DOSBox-X host key to Ctrl+Shift, uses TCG for win2000, and defers NT/2000 exchange until `exchange enable`; includes genisoimage, actionable font retry/status and `delphi N colors` with default/owner-supplied schemes only; `win95 net on/off` manages slirp NE2000), Open Watcom, Delphi 1–7 under Wine (`delphi N build` compiles a Delphi 3–7 project with dcc32, `delphi N vscode` sets it up for VS Code, Cursor and Devin); pulls in `install-com` (COM development under Wine); v101 adds local-only `winnt40/win2000 lan status/on/off`, default off |
 | `install-models` | curated local models for Ollama (several GB) |
 | `install-ollama-containers` | lets Docker containers reach Ollama |
 | `install-hermes` / `install-openclaw` | personal agents |
@@ -184,6 +184,8 @@ The owner confirmed that `devclean --run` removed npm registry metadata before t
 ENOTCACHED failure. Cache key presence is INFO only: after npm cleanup, npx tools such as
 Inspector need one online use before offline resolution. Full offline npx/FastMCP UI operation
 and Python dependencies are not a v101 guarantee; use the installed global CLI for the verified path.
+
+See [local guest LAN and identity-preserving adoption](docs/guest-lan.md) before replacing handwritten second-NIC arguments. Owner guest checks remain pending.
 
 ## Requirements
 

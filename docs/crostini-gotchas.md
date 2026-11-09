@@ -86,6 +86,13 @@ to see it in context; the comment above each fix usually tells the story.
 
 ## Network
 
+- **v101 NT/2000 local second adapter:** the supported `lan` command uses loopback
+  UDP between the two QEMU processes. It does not need ChromeOS forwarding or
+  Tailscale. Preserve the second adapter's MAC and recorded PCI identity during
+  [manual adoption](guest-lan.md); a moved adapter can lose static IP/WINS or be
+  detected as new hardware. Keep its gateway blank so the original user NIC keeps
+  internet routing. Remote encapsulation/MTU work belongs to companion F6.
+
 - **NuGet / PowerShell Gallery hang on IPv6** (v100; Nov 2 2026). The owner confirmed IPv4 succeeds where api.nuget.org over IPv6 hangs. Bundle acquisition and implicit restore/build commands use `DOTNET_SYSTEM_NET_DISABLEIPV6=1` only in their child process; this includes generated demo runners and Godot .NET builds. No shell profile or system IPv6 policy is changed. Dev-test makes a bounded .NET service-index request and warns on network/DNS failure; it does not infer that every network error is IPv6.
 
 

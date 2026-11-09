@@ -4666,6 +4666,18 @@ Setup already uses normal. If the agent is unused, inspect Startup/vendor option
 only the identified action. Do not guess a Run/RunServices registry key; export a confirmed entry
 before editing. This is a finding for that installation, not a guarantee about all RPC software.
 
+
+v101 local link: `winnt40 lan [status|on|off]` and `win2000 lan [status|on|off]`
+use LAN keys in the existing guest configs; default off, loopback UDP only. Status
+never writes, evaluates shell config, probes a peer or launches a guest. Before
+adopting handwritten EXTRA_ARGS, record the second adapter's MAC/model/PCI and
+static IP/WINS, stop both guests and retain backups. Remove only the known manual
+link yourself. The managed NIC stays after USB/audio and preceding EXTRA_ARGS.
+Custom PCI layouts need recorded explicit slots for the link and custom devices;
+unknown placement is refused. Verify no new hardware and unchanged static IP/WINS
+without re-entry, ping/domain behavior and first-NIC internet. Restore and stop on
+any re-detection. No remote mode, Delphi source or application packaging in v101.
+
 EOF
     # v100 (Nov 5–6 2026): distinguish exchange/drive-letter conventions and guest-specific key procedures.
     cat > "$DIR/STEPS-winnt.md" << 'EOF'
@@ -4810,6 +4822,18 @@ v101 NT CPU and pointer: new configs use Pentium; the exact old CPU template upg
 Use capture/Grab On Hover, Ctrl+Alt+G release and reduced NT Mouse > Motion speed. NT's Cirrus
 video driver helps drawing; no VMware/USB mouse driver is installed. See STEPS-delphi.md for the
 full defaults/audio/display findings.
+
+
+v101 local link: `winnt40 lan [status|on|off]` and `win2000 lan [status|on|off]`
+use LAN keys in the existing guest configs; default off, loopback UDP only. Status
+never writes, evaluates shell config, probes a peer or launches a guest. Before
+adopting handwritten EXTRA_ARGS, record the second adapter's MAC/model/PCI and
+static IP/WINS, stop both guests and retain backups. Remove only the known manual
+link yourself. The managed NIC stays after USB/audio and preceding EXTRA_ARGS.
+Custom PCI layouts need recorded explicit slots for the link and custom devices;
+unknown placement is refused. Verify no new hardware and unchanged static IP/WINS
+without re-entry, ping/domain behavior and first-NIC internet. Restore and stop on
+any re-detection. No remote mode, Delphi source or application packaging in v101.
 
 EOF
     FRESH=1

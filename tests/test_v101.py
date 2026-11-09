@@ -212,5 +212,17 @@ class Inspector(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
 
+class GuestLan(unittest.TestCase):
+    def test_shared_local_pair_editing_status_and_adoption_contracts(self):
+        with tempfile.TemporaryDirectory(prefix='v101-lan-', dir=ROOT / 'assets') as tmp:
+            root = Path(tmp)
+            helper = root / 'helper'
+            helper.write_text(embedded('setup', 'DEVRETRO_EOF'))
+            env = dict(PATH='/usr/bin:/bin', HOME=str(root), WORK=str(root), RETRO_HELPER=str(helper))
+            result = subprocess.run(['/usr/bin/python3', '-c', embedded('test', 'RETRO_LAN_FIXTURES_V101_PY')],
+                                    env=env, text=True, capture_output=True, timeout=120)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()

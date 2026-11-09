@@ -5965,7 +5965,8 @@ with tempfile.TemporaryDirectory(prefix='retro-args-', dir=os.environ['WORK']) a
     engine.write_text("#!/bin/sh\nprintf '%s\\0' \"$@\" >> \"$WORK/args\"; printf '\\0' >> \"$WORK/args\"\ncase \"$*\" in *imgmake*) touch \"$HOME/win95/hdd.img\" ;; esac\n")
     engine.chmod(0o755)
     stub = """
-GUEST=win95; guest_info win95; mkdir -p "$WS/install/apps"
+# v101: this definitions-only fixture bypasses main, which now creates non-LAN state lazily.
+GUEST=win95; guest_info win95; mkdir -p "$STATE" "$WS/install/apps"
 installed() { [ "$SIM_INSTALLED" = 1 ]; }
 exch_create() { :; }; exch_mount_size() { echo 512,63,16,100; }; exch_put() { :; }
 disk_guard() { :; }; win95_setting() { SET_VAL=512; SET_SRC=fixture; }
@@ -6310,6 +6311,217 @@ SOUND=sb16; AUDIO_BACKEND=auto
         call('dosbox_config_status', ok=False)
 print('v101 retro: exact v100 LF/CRLF template, comment/quote safety, NT once-only preservation, fallback separation, audio policy/argv, renderer diagnostics PASS')
 RETRO_DEFAULTS_V101_PY
+    cat > "$WORK/retro-lan-v101.py" << 'RETRO_LAN_FIXTURES_V101_PY'
+"""v101 local LAN fixtures: isolated HOME and fake engines/port inspection only."""
+import json
+import os
+from pathlib import Path
+import subprocess
+import tempfile
+
+HELPER = Path(os.environ['RETRO_HELPER'])
+with tempfile.TemporaryDirectory(prefix='retro-lan-', dir=os.environ['WORK']) as tmp:
+    root = Path(tmp)
+    home = root / 'home'
+    home.mkdir()
+    bindir = root / 'bin'
+    bindir.mkdir()
+    def fake(name, text):
+        path = bindir / name
+        path.write_text('#!/usr/bin/python3\n' + text + '\n')
+        path.chmod(0o755)
+    fake('qemu-system-i386', '''import json,os,sys
+from pathlib import Path
+if os.environ.get('FIX_STATUS'): raise SystemExit('status must not call QEMU')
+if sys.argv[1:]==['-audiodev','help']: print('none'); raise SystemExit(0)
+Path(os.environ['WORK'],'argv.json').write_text(json.dumps(sys.argv[1:]))
+''')
+    fake('ss', "import os\nif os.environ.get('FIX_STATUS'): raise SystemExit('status must not inspect ports')\nprint('occupied' if os.environ.get('FIX_OCCUPIED') else '')")
+    for name in ('qemu-img', 'dosbox-x', 'wine', 'ping', 'curl'):
+        fake(name, "raise SystemExit('unexpected engine/network path')")
+    env = dict(HOME=str(home), WORK=str(root), PATH=str(bindir)+':/usr/bin:/bin', LC_ALL='C.UTF-8')
+    definitions = HELPER.read_text().rsplit('main "$@"; exit $?', 1)[0]
+    count = 0
+    def tree():
+        return sorted((str(p.relative_to(home)), p.lstat().st_size, p.lstat().st_mtime_ns)
+                      for p in home.rglob('*'))
+    def command(guest, operation='status', good=True, more=None, extra=()):
+        global count
+        result = subprocess.run(['bash', str(HELPER), guest, 'lan', operation, *extra],
+                                env=dict(env, **dict({'FIX_STATUS': '1'} if operation == 'status' else {}, **(more or {}))), cwd=root, capture_output=True, text=True, timeout=10)
+        assert (result.returncode == 0) == good, result.stdout + result.stderr
+        count += 1
+        return result
+    def config(guest, extra='', settings='', ending='\n'):
+        workspace = home / guest
+        workspace.mkdir(exist_ok=True)
+        content = ("# v100: defaults reviewed\n# v101: NT CPU reviewed\nCPU=pentium\n"
+                   "VIDEO=cirrus # semicolon ; stays a comment\nMOUSE=" + ('ps2' if guest=='winnt40' else 'tablet') +
+                   "\nSOUND=" + ('sb16' if guest=='winnt40' else 'none') + "\nEXTRA_ARGS='" + extra + "'\n" + settings)
+        path = workspace / 'config'
+        path.write_bytes(content.replace('\n', ending).encode())
+        path.chmod(0o640)
+        return path
+    def launch(guest, setup=False, good=True, more=None):
+        global count
+        script = definitions + '''
+GUEST=$1
+guest_info "$GUEST"
+qemu_config
+pick_accel() { ACCEL_ARGS=(-accel tcg); ACCEL_NOTE=fixture; }
+app_cd() { echo "$WS/install/apps/fixture.iso"; }
+exchange_gate() { return 0; }
+QEMU_SETUP=$2
+qemu_launch c "$WS/install/fixture.iso"
+'''
+        argv_file = root / 'argv.json'
+        argv_file.unlink(missing_ok=True)
+        script_file = root / 'launch.sh'
+        script_file.write_text(script)
+        result = subprocess.run(['bash', str(script_file), guest, '1' if setup else '0'],
+                                env=dict(env, **(more or {})), capture_output=True, text=True, timeout=10)
+        assert (result.returncode == 0) == good, result.stdout + result.stderr
+        count += 1
+        if good:
+            return json.loads(argv_file.read_text())
+        assert not argv_file.exists()
+    before = tree()
+    command('winnt40')
+    command('win2000', more={'DEV_RETRO_LAUNCHER': '1'})
+    assert tree() == before  # Includes directory sizes/mtimes; status creates nothing.
+    command('winnt40', 'on', good=False)
+    command('winnt40', extra=('remote',), good=False)
+    for guest in ('winnt40', 'win2000'):
+        path = config(guest)
+        original = path.read_bytes()
+        original_stat = path.stat()
+        command(guest, 'off')
+        assert path.read_bytes() == original and path.stat().st_mtime_ns == original_stat.st_mtime_ns
+        command(guest, 'on')
+        enabled = path.read_bytes()
+        assert enabled.startswith(original) and b'LAN_ENABLED=1' in enabled
+        assert path.stat().st_mode & 0o777 == 0o640
+        identity = (path.stat().st_ino, path.stat().st_mtime_ns)
+        command(guest, 'on')
+        assert identity == (path.stat().st_ino, path.stat().st_mtime_ns)
+        args = launch(guest)
+        assert '-nic' in args and args[args.index('-nic')+1] == 'user,model=pcnet'
+        assert 'socket,model=pcnet' in args[-1]
+        setup = launch(guest, setup=True)
+        assert not any('exchange.img' in a for a in setup)
+        assert any('fixture.iso' in a and 'index=3' in a for a in setup)
+        command(guest, 'off')
+        assert not any('socket,model=pcnet' in a for a in launch(guest))
+        stopped = path.read_bytes()
+        command(guest, 'off')
+        assert path.read_bytes() == stopped
+    # Exact legacy/adopted argument sequence: second NIC stays after USB/audio
+    # and non-device owner arguments for both guests, never beside the user NIC.
+    for guest, port, peer, mac in (('winnt40',10001,10002,'52:54:00:50:00:10'),
+                                   ('win2000',10002,10001,'52:54:00:50:00:20')):
+        legacy = '-nic socket,model=pcnet,mac=%s,udp=127.0.0.1:%s,localaddr=127.0.0.1:%s' % (mac, peer, port)
+        path = config(guest, '-smp 2 ' + legacy)
+        old = launch(guest)
+        snapshot = path.read_bytes()
+        command(guest, 'on', good=False)
+        assert path.read_bytes() == snapshot
+        path = config(guest, '-smp 2 ')
+        command(guest, 'on')
+        assert launch(guest) == old
+        command(guest, 'off')
+    path = config('winnt40', ending='\r\n')
+    before = path.read_bytes()
+    command('winnt40', 'on')
+    assert path.read_bytes().startswith(before) and b'\n' not in path.read_bytes().replace(b'\r\n',b'')
+    command('winnt40', 'off')
+    # Unsafe shell is never evaluated by status/edit; unrelated bytes stay intact.
+    for bad in ("LAN_ENABLED=0\nLAN_ENABLED=1\n", "LAN_REMOTE_HOST=example\n",
+                "LAN_ENABLED=2\n", "LAN_LOCAL_PORT=22\n", "LAN_PEER_PORT=10001\n",
+                "LAN_MAC=ff:ff:ff:ff:ff:ff\n", "LAN_MAC=00:00:00:00:00:00\n",
+                "LAN_ENABLED=$(touch MUST_NOT_EXIST)\n", "LAN_ENABLED=`touch MUST_NOT_EXIST`\n",
+                "if true; then LAN_ENABLED=1; fi\n", "LAN_ENABLED=0 | cat\n",
+                "LAN_LOCAL_PORT='10001,host=evil'\n", "LAN_PCI_ADDR=20\n",
+                "LAN_PCI_BUS=pci.0\n"):
+        path = config('winnt40', settings=bad)
+        before = tree()
+        command('winnt40', 'status', good=False)
+        command('winnt40', 'on', good=False)
+        assert tree() == before and not (root / 'MUST_NOT_EXIST').exists()
+    path = config('winnt40')
+    target = home / 'saved-config'
+    path.rename(target)
+    path.symlink_to(target)
+    command('winnt40', 'status', good=False)
+    command('winnt40', 'on', good=False)
+    path.unlink()
+    path = config('winnt40')
+    (path.parent / '.pid').write_text(str(os.getpid()))
+    command('winnt40', 'on', good=False)
+    command('winnt40', 'off', good=False)
+    command('winnt40')
+    (path.parent / '.pid').unlink()
+    command('winnt40', 'on', good=False, more={'FIX_OCCUPIED': '1'})
+    config('win2000', settings='LAN_MAC=52:54:00:50:00:10\n')
+    command('winnt40', 'on', good=False)
+    config('win2000', settings='LAN_LOCAL_PORT=10003\n')
+    command('winnt40', 'on', good=False)
+    config('win2000')
+    # Owner ports/MAC choices survive enable/disable and must be reciprocal.
+    custom='LAN_LOCAL_PORT=11001\nLAN_PEER_PORT=11002\nLAN_MAC=52:54:00:ab:00:10\n'
+    path=config('winnt40', settings=custom)
+    config('win2000', settings='LAN_LOCAL_PORT=11002\nLAN_PEER_PORT=11001\n')
+    command('winnt40','on'); command('winnt40','off')
+    assert custom.encode() in path.read_bytes()
+    config('win2000')
+    for extra in ('-device virtio-balloon-pci', '-device virtio-rng-pci',
+                  '-device pcnet,addr=0x0b', '-netdev socket,id=owner', '-usb'):
+        path=config('winnt40', extra)
+        original=path.read_bytes()
+        command('winnt40','on',good=False)
+        assert original == path.read_bytes()
+    # Pinned fallback: custom PCI devices before/after the old NIC retain their
+    # recorded slots. Unpinned extra devices are refused rather than reallocated.
+    for guest, port, peer, mac in (('winnt40',10001,10002,'52:54:00:50:00:10'),
+                                   ('win2000',10002,10001,'52:54:00:50:00:20')):
+        first='-device virtio-balloon-pci,addr=0x0a'
+        last='-device virtio-rng-pci,addr=0x0c'
+        network='-netdev socket,id=retro-lan,udp=127.0.0.1:%s,localaddr=127.0.0.1:%s -device pcnet,netdev=retro-lan,mac=%s,addr=0x0b,bus=pci.0' % (peer,port,mac)
+        config(guest, first+' '+network+' '+last)
+        old=launch(guest)
+        config(guest, first+' '+last, 'LAN_PCI_ADDR=0x0b\nLAN_PCI_BUS=pci.0\n')
+        command(guest,'on')
+        adopted=launch(guest)
+        def devices(args):
+            return sorted(args[i+1] for i,x in enumerate(args) if x=='-device')
+        assert devices(old)==devices(adopted)
+        def without_managed(args):
+            result=[]; index=0
+            while index < len(args):
+                if (args[index] == '-netdev' and args[index+1].startswith('socket,id=retro-lan,') or
+                    args[index] == '-device' and args[index+1].startswith('pcnet,netdev=retro-lan,')):
+                    index += 2
+                else:
+                    result.append(args[index]); index += 1
+            return result
+        assert without_managed(old) == without_managed(adopted)
+        assert [old[i+1] for i,x in enumerate(old) if x=='-netdev'] == [adopted[i+1] for i,x in enumerate(adopted) if x=='-netdev']
+        assert [x for x in devices(old) if not x.startswith('pcnet,')] == [x for x in devices(adopted) if not x.startswith('pcnet,')]
+        command(guest,'off')
+    path=config('winnt40','-device virtio-rng-pci,addr=0x0b','LAN_PCI_ADDR=0x0b\n')
+    command('winnt40','on',good=False)
+    path=config('winnt40', settings='LAN_ENABLED=1\nLAN_MAC=bad\n')
+    launch('winnt40',good=False)
+    path=config('winnt40', settings='LAN_ENABLED=1\n')
+    launch('winnt40',good=False,more={'FIX_OCCUPIED':'1'})
+    config('winnt40', '-nic none', 'LAN_ENABLED=1\n')
+    launch('winnt40', good=False)
+    config('winnt40', settings='LAN_ENABLED=1\nLAN_REMOTE_HOST=evil\n')
+    launch('winnt40', good=False)
+    assert not (home / '.local/state/dev-retro').exists()
+    print('Local LAN contracts: %s isolated checks passed; no guest/network engine run' % count)
+RETRO_LAN_FIXTURES_V101_PY
+    check "Local guest LAN/adoption contracts (isolated fake engines)" 'RETRO_HELPER="$HOME/.local/lib/dev-retro/dev-retro" python3 "$WORK/retro-lan-v101.py"' 120
+
     check "v101 NT CPU, audio policy and renderer preferences (isolated)" 'RETRO_HELPER="$HOME/.local/lib/dev-retro/dev-retro" python3 "$WORK/retro-v101-check.py"' 120
     # v100 (Nov 5–6 2026): read-only preferences warn; a disk does not prove Windows installation.
     for G in winnt40 win2000; do
@@ -7203,8 +7415,8 @@ if ! has nodisk; then
     # v92: QEMU and the new guests' workspaces (their disk images grow as Windows is installed)
     has install-retro    && dapt   retro "QEMU, mtools, dosfstools (apt)" qemu-system-x86 qemu-system-gui qemu-system-common qemu-system-data qemu-utils qemu-block-extra mtools dosfstools
     has install-retro    && dpaths retro "~/win95 (DOSBox-X: hdd.img, exchange disk, media)" "$HOME/win95"
-    has install-retro    && dpaths retro "~/winnt40 (QEMU: disk, exchange disk, media)" "$HOME/winnt40"
-    has install-retro    && dpaths retro "~/win2000 (QEMU: disk, exchange disk, media)" "$HOME/win2000"
+    has install-retro    && dpaths retro "~/winnt40 (QEMU: disk, exchange disk, media, LAN config)" "$HOME/winnt40"
+    has install-retro    && dpaths retro "~/win2000 (QEMU: disk, exchange disk, media, LAN config)" "$HOME/win2000"
     has install-retro    && dpaths retro "delphi1 Wine prefix" "$HOME/.local/share/wine/delphi1"
     # v93: Delphi 3, 4, 5, 6, 7 (each prefix, and the media with the unpacked CDs) and win95's snapshots
     if has install-retro; then
