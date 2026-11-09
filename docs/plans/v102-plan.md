@@ -1,6 +1,6 @@
 # dev-setup-chromebook v102 plan
 
-Nov 9, 2026 · **DRAFT — owner decisions recorded Nov 9; planning only**
+Nov 9, 2026 · **FINAL — owner approved Nov 9, 2026 after review of `0db00e1`; merge before build**
 
 **Read-only-checked:** baseline is released `v101`, commit
 `68113ff633e19005707394b375f25dd505cfccee`, the merge of PR #17. After fetching,

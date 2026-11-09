@@ -1,6 +1,6 @@
 # v102 Delphi F0/F1 detail
 
-Nov 9, 2026 · **DRAFT — owner decisions recorded; companion to [v102 items 3/4](v102-plan.md)**
+Nov 9, 2026 · **FINAL — owner approved Nov 9, 2026 after review of `0db00e1`; merge before build**
 
 Evidence labels follow the main plan. Recorded owner decisions settle the design; **Hypothesis**
 still applies to unverified Delphi compatibility, implementation details and expected results.
