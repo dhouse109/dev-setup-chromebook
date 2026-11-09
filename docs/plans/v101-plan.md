@@ -789,6 +789,13 @@ application-code deferral are settled.
 7. **Acceptance record:** record the approved scope, evidence and owner Chromebook results.
    Every stage commit has Codex co-author trailer; no merge/release implied by a plan/build commit.
 
+**Build record:** stages 1–6 are implemented; required static/isolated checks run
+per stage. The Inspector contract was narrowed by owner approval as recorded in
+item 2. LAN identity fixtures and the nested scaffold/manual protocol are built;
+real guest hand checks, archive/import confirmation and stage 7 acceptance remain
+pending. No application source, pack, remote link, guest launch, merge or release
+is implied by this record.
+
 ## Proposed owner acceptance route
 
 Commands below are for the later approved build, **not permission to execute now**.

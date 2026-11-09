@@ -86,6 +86,14 @@ to see it in context; the comment above each fix usually tells the story.
 
 ## Network
 
+- **v101 guest HTTP evidence:** use the fixed-marker procedure in
+  [guest-network-tests.md](guest-network-tests.md). Wine reaches host loopback;
+  QEMU user networking exposes the host at 10.0.2.2. Verify the installed DOSBox-X
+  slirp alias separately. Peer HTTP uses the first/user NIC and a listener bound
+  explicitly to the peer Tailscale address. Guest DNS need not inherit MagicDNS;
+  a name failure after IPv4 success is a separate result. Legacy HTTPS failures
+  do not invalidate a successful controlled plain-HTTP marker.
+
 - **v101 NT/2000 local second adapter:** the supported `lan` command uses loopback
   UDP between the two QEMU processes. It does not need ChromeOS forwarding or
   Tailscale. Preserve the second adapter's MAC and recorded PCI identity during

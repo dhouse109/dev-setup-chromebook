@@ -6311,6 +6311,164 @@ SOUND=sb16; AUDIO_BACKEND=auto
         call('dosbox_config_status', ok=False)
 print('v101 retro: exact v100 LF/CRLF template, comment/quote safety, NT once-only preservation, fallback separation, audio policy/argv, renderer diagnostics PASS')
 RETRO_DEFAULTS_V101_PY
+    cat > "$WORK/retro-scaffold-v101.py" << 'RETRO_SCAFFOLD_V101_PY'
+"""Extracted scaffold/lifecycle fixtures; isolated HOME, no installed demo required."""
+import csv
+import io
+import json
+import os
+from pathlib import Path
+import subprocess
+import tempfile
+
+SOURCE = Path(os.environ['DEMO_SOURCE']).read_text()
+helpers = SOURCE[SOURCE.index('READY=(); SKIPPED=();'):SOURCE.index('\ndemo_base() {')]
+index = SOURCE[SOURCE.index('read_demo_record() {'):SOURCE.index('# RUN\n', SOURCE.index('read_demo_record() {'))]
+advanced = SOURCE[SOURCE.index('demo_retro_advanced() {'):SOURCE.index('\ndemo_retro() {')]
+assert 'if has install-retro; then demo_retro; demo_retro_advanced; fi' in SOURCE
+assert 'need wcl' not in advanced
+with tempfile.TemporaryDirectory(prefix='advanced-fixture-', dir=os.environ['WORK']) as tmp:
+    root = Path(tmp)
+    home = root / 'home'
+    home.mkdir()
+    demos = home / 'dev-demo'
+    (demos / '.index').mkdir(parents=True)
+    bindir = root / 'bin'
+    bindir.mkdir()
+    for name in ('sudo','curl','git','uv','qemu-system-i386','qemu-img','wine','genisoimage','docker','wcl'):
+        p = bindir / name
+        p.write_text('#!/bin/sh\necho unexpected-engine-or-installer >&2\nexit 97\n')
+        p.chmod(0o755)
+    env = dict(HOME=str(home), WORK=str(root), PATH=str(bindir)+':/usr/bin:/bin', LC_ALL='C.UTF-8')
+    prelude = '''DEMO_ROOT="$HOME/dev-demo"; CACHE="$WORK/cache"
+VERSION=101; CLEAN=0; REFRESH=0
+GRN=; YEL=; RED=; BLD=; DIM=; RST=
+has() { [ "$1" = install-retro ]; }
+'''
+    definitions = prelude + helpers + '\n' + index + '\n' + advanced
+    count = 0
+    def shell(code, good=True, stdin=''):
+        global count
+        script = root / 'fixture.sh'
+        script.write_text(definitions + '\n' + code)
+        result = subprocess.run(['bash', str(script)], env=env, cwd=root,
+                                input=stdin, capture_output=True, text=True, timeout=20)
+        assert (result.returncode == 0) == good, result.stdout + result.stderr
+        count += 1
+        return result
+    def launch(action, good=True):
+        global count
+        result = subprocess.run(['bash', str(demos/'retro/delphi/run-advanced-demo.sh'), action],
+                                env=env, cwd=root, input='', capture_output=True, text=True, timeout=10)
+        assert (result.returncode == 0) == good, result.stdout + result.stderr
+        count += 1
+        return result
+    def snapshot(path):
+        paths = [path] + list(path.rglob('*')) if path.exists() else []
+        return [(str(p.relative_to(home)), p.lstat().st_ino, p.lstat().st_size,
+                 p.lstat().st_mtime_ns, p.lstat().st_mode) for p in sorted(paths)]
+    shell('demo_retro_advanced\nwrite_index')
+    folder = demos / 'retro/delphi/advanced-demo'
+    launcher = demos / 'retro/delphi/run-advanced-demo.sh'
+    expected = {'README.md','STEPS.md','VERSIONS.md','results-template.tsv','work','work/README.md'}
+    assert {str(p.relative_to(folder)) for p in folder.rglob('*')} == expected
+    assert launcher.stat().st_mode & 0o111
+    subprocess.run(['bash','-n',str(launcher)],check=True)
+    record = (demos / '.index/retro--advanced-demo').read_text().rstrip('\n').split('\t')
+    assert record[1]=='delphi/run-advanced-demo.sh' and record[3]=='delphi/advanced-demo'
+    assert 'retro/delphi/run-advanced-demo.sh' in (demos/'README.md').read_text()
+    assert json.loads((demos/'dev-demo.code-workspace').read_text())['folders']==[{'path':'retro'}]
+    generated_bytes=launcher.stat().st_size+sum(p.stat().st_size for p in folder.rglob('*') if p.is_file())
+    assert generated_bytes < 100000
+    assert not any(p.suffix in ('.pas','.dpr','.dfm','.sql','.exe','.dll','.iso','.py') for p in folder.rglob('*'))
+    rows=list(csv.DictReader(io.StringIO((folder/'results-template.tsv').read_text()),delimiter='\t'))
+    assert len(rows)==27 and all(row['status']=='NOT RUN' for row in rows)
+    assert all(row[field]=='NOT RUN' for row in rows for field in ('dns','connect','http'))
+    # A shared demo environment would read keys/make logs: this minimal launcher
+    # must never source it for any action.
+    (demos/'.demo-env.sh').write_text('touch "$HOME/ENV_WAS_READ"\n')
+    before=snapshot(home)
+    assert 'Controlled HTTP marker' in launch('steps').stdout
+    assert 'not installed' in launch('status').stdout
+    assert 'writes nothing' in launch('results').stdout
+    launch('pack',False)
+    assert snapshot(home)==before
+    helper=home/'.local/lib/dev-retro/dev-retro'
+    helper.parent.mkdir(parents=True)
+    helper.write_text('#!/bin/sh\ntouch "$HOME/OLD_HELPER_WAS_CALLED"\n')
+    helper.chmod(0o755)
+    launch('status')
+    assert not (home/'OLD_HELPER_WAS_CALLED').exists()
+    helper.write_text('''#!/bin/sh
+# RETRO_LAN_V101_PY capability marker in this fake only.
+[ "$2 $3" = 'lan status' ] || exit 97
+printf '%s\\n' "$*" >> "$WORK/helper-calls"
+echo "$1 LAN off (fixture)"
+''')
+    before=snapshot(home)
+    assert 'NOT RUN' in launch('status').stdout
+    assert (root/'helper-calls').read_text().splitlines()==['winnt40 lan status','win2000 lan status']
+    assert snapshot(home)==before and not (home/'ENV_WAS_READ').exists()
+    # Existing three-field records and default launchers remain compatible.
+    shell('''begin base old old-description old-source
+mkdir -p "$DIR"
+write_run <<'BODY'
+echo legacy-body
+BODY
+done_demo
+mv "$DEMO_ROOT/base/run-old.sh" "$DEMO_ROOT/base/run-moved.sh"
+printf 'old-description\\trun-moved.sh\\t\\n' > "$DEMO_ROOT/.index/base--old"
+begin retro matrix matrix-description matrix-source
+mkdir -p "$DIR"
+write_run <<'BODY'
+echo matrix-body
+BODY
+done_demo
+write_index
+''')
+    legacy=subprocess.run(['bash',str(demos/'base/run-moved.sh')],env=env,cwd=root,capture_output=True,text=True,timeout=10)
+    assert legacy.returncode==0 and 'legacy-body' in legacy.stdout
+    assert (home/'ENV_WAS_READ').exists()
+    (home/'ENV_WAS_READ').unlink()
+    assert 'base/run-moved.sh' in (demos/'README.md').read_text()
+    assert 'retro/delphi/run-advanced-demo.sh' in (demos/'README.md').read_text()
+    assert {row['path'] for row in json.loads((demos/'dev-demo.code-workspace').read_text())['folders']}=={'base','retro'}
+    # Ordinary rerun and refresh replace bundle docs, preserving all owner work/results.
+    (folder/'work/owner.pas').write_text('owner future source placeholder')
+    (folder/'results.tsv').write_text('owner observations')
+    (folder/'results-template.tsv').write_text('owner template modifications')
+    protected=snapshot(folder/'work')+snapshot(folder/'results.tsv')+snapshot(folder/'results-template.tsv')
+    for setting in ('REFRESH=0','REFRESH=1'):
+        (folder/'README.md').write_text('replace bundle-owned README')
+        shell(setting+'\ndemo_retro_advanced\nwrite_index')
+        assert protected==snapshot(folder/'work')+snapshot(folder/'results.tsv')+snapshot(folder/'results-template.tsv')
+        assert 'v101 foundation' in (folder/'README.md').read_text()
+    # Unsafe relative paths cannot write/clean outside a demo's scope.
+    for relative in ('../escape','/absolute','delphi/../../escape','delphi//escape','./escape'):
+        shell('begin retro bad desc src '+repr(relative)+' run-bad.sh',False)
+    outside=root/'outside';outside.mkdir()
+    (demos/'retro/link').symlink_to(outside,target_is_directory=True)
+    shell('begin retro bad desc src link/escape run-bad.sh',False)
+    assert not list(outside.iterdir())
+    (demos/'.index/retro--bad').write_text('bad\t../outside.sh\tsrc\t../outside\n')
+    shell('write_index')
+    assert not (demos/'.index/retro--bad').exists()
+    # Confirm targets before deletion; cancellation preserves everything.
+    before=snapshot(folder)
+    refused=shell('confirm_demo_clean',False,stdin='n\n')
+    for target in (folder,launcher,demos/'.index/retro--advanced-demo'):
+        assert str(target) in refused.stdout
+    assert snapshot(folder)==before
+    (home/'winnt40').mkdir();(home/'winnt40/config').write_text('guest stays')
+    (root/'retained-results.tsv').write_text('outside scaffold stays')
+    shell('confirm_demo_clean || exit 1\nCLEAN=1\ndemo_retro_advanced\nwrite_index',stdin='y\n')
+    assert not folder.exists() and not launcher.exists() and not (demos/'.index/retro--advanced-demo').exists()
+    assert (demos/'retro/matrix').is_dir() and (demos/'retro/run-matrix.sh').is_file()
+    assert (home/'winnt40/config').read_text()=='guest stays'
+    assert (root/'retained-results.tsv').is_file()
+    print('Advanced scaffold/lifecycle contracts: %s isolated actions passed; generated text %s bytes' % (count,generated_bytes))
+RETRO_SCAFFOLD_V101_PY
+    check "Advanced-demo scaffold/lifecycle contracts (isolated)" 'DEMO_SOURCE="$SCRIPT_DIR/dev-demo-chromebook.sh" python3 "$WORK/retro-scaffold-v101.py"' 90
     cat > "$WORK/retro-lan-v101.py" << 'RETRO_LAN_FIXTURES_V101_PY'
 """v101 local LAN fixtures: isolated HOME and fake engines/port inspection only."""
 import json
@@ -7409,6 +7567,7 @@ if ! has nodisk; then
     fi
     has install-retro    && dpaths retro "QEMU smoke-test diagnostics" "$ASSETS"/logs/retro-qemu-*
     has install-retro    && dpaths retro "Retro font acquisition logs" "$ASSETS"/logs/retro-fonts-*.log
+    has install-retro    && dpaths retro "Owner guest LAN/network evidence" "$ASSETS/logs/guest-lan" "$ASSETS/logs/guest-network"
     has install-retro    && dpaths retro "Retro helper and config" "$HOME/.local/lib/dev-retro" "$HOME/.config/dev-retro"
     has install-retro    && dpaths retro "Open Watcom v2 + ~/win31" /opt/watcom "$HOME/win31"
     has install-retro    && dapt   retro "DOSBox-X + ISO authoring (apt)" dosbox-x genisoimage libarchive-tools
@@ -7557,7 +7716,7 @@ if ! has nodisk; then
     dpaths total "Docker data: images, containers, volumes" /var/lib/docker
     dpaths total "~/.cache (uv, pip, puppeteer, dev-test...)" "$HOME/.cache"
     dpaths total "npm and pnpm stores"                      "$HOME/.npm" "$HOME/.local/share/pnpm"
-    dpaths total "~/dev-demo"                               "$HOME/dev-demo"
+    dpaths total "~/dev-demo (includes advanced-demo scaffold and owner work)"                               "$HOME/dev-demo"
     dpaths total "home directory, everything in it"         "$HOME"
     read -r _dsize _dused _davail < <(df -B1 --output=size,used,avail / | tail -n 1)
     _disk_report total "Linux disk used (of $(numfmt --to=iec --suffix=B "${_dsize:-0}"), $(numfmt --to=iec --suffix=B "${_davail:-0}") free)" "${_dused:-0}" "df /"

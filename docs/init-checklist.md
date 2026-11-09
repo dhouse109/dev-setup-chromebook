@@ -869,3 +869,18 @@ manual network stanza yourself. The managed NIC stays after USB/audio/EXTRA_ARGS
 Ambiguous custom device layouts need recorded explicit PCI pins or are refused.
 The owner must confirm no new hardware and unchanged IP/WINS without re-entry,
 bidirectional ping/domain behavior and first-NIC internet. Remote mode is deferred.
+
+
+### v101 network procedure and advanced-demo checks
+
+- [ ] Follow [guest-network-tests.md](guest-network-tests.md); select peer addresses,
+  short/full names and a plain HTTP target before starting the controlled listener.
+- [ ] Owner starts/stops the fixed-marker listener explicitly, records DNS/connect/
+  HTTP independently and labels browser evidence accurately. HTTPGET is not built.
+- [ ] With a separately approved `./dev-demo-chromebook.sh install-retro`, confirm
+  the independent advanced-demo steps/status/results menu and its NOT RUN template.
+  No Watcom, guest media, compiler or database is needed to generate the scaffold.
+- [ ] Verify rerun/refresh preserves owner work and results. Read demo-clean's exact
+  targets before confirming deletion; results under assets stay outside cleanup.
+- [ ] Keep NT SP6a, licensed media and the F0–F6 Delphi/DCOM/database/remote work as
+  staged follow-ups. Scaffold readiness is not application or guest acceptance.

@@ -224,5 +224,16 @@ class GuestLan(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
 
+class DemoFoundation(unittest.TestCase):
+    def test_nested_scaffold_refresh_index_and_clean(self):
+        with tempfile.TemporaryDirectory(prefix='v101-scaffold-', dir=ROOT / 'assets') as tmp:
+            root = Path(tmp)
+            env = dict(PATH='/usr/bin:/bin', HOME=str(root), WORK=str(root),
+                       DEMO_SOURCE=str(ROOT / 'dev-demo-chromebook.sh'))
+            result = subprocess.run(['/usr/bin/python3', '-c', embedded('test', 'RETRO_SCAFFOLD_V101_PY')],
+                                    env=env, text=True, capture_output=True, timeout=90)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -34,7 +34,7 @@ The v101 candidate uses a regular `CLAUDE.md` import so ChromeOS Files can extra
 integrity, modes and contents are checked by `tests/check_release_archive.py`; final acceptance
 also requires extracting the actual GitHub source zip in Files.
 
-> **Current version: v101.** Build in progress; not yet confirmed run on a Chromebook. Stages 1–5 are built; the advanced-demo scaffold and acceptance stages are pending. Owner acceptance has not occurred. [CHANGELOG.md](CHANGELOG.md) has the full history.
+> **Current version: v101.** Build in progress; not yet confirmed run on a Chromebook. Stages 1–6 are built; owner hand checks and stage 7 acceptance remain pending. Owner acceptance has not occurred. [CHANGELOG.md](CHANGELOG.md) has the full history.
 
 v99 implements the [final plan](docs/plans/v99-plan.md): bounded bulk-install retries, stage/EXIT
 reports and focused Playwright, password, model-hint and package-permission fixes. The owner accepted
@@ -185,7 +185,11 @@ ENOTCACHED failure. Cache key presence is INFO only: after npm cleanup, npx tool
 Inspector need one online use before offline resolution. Full offline npx/FastMCP UI operation
 and Python dependencies are not a v101 guarantee; use the installed global CLI for the verified path.
 
-See [local guest LAN and identity-preserving adoption](docs/guest-lan.md) before replacing handwritten second-NIC arguments. Owner guest checks remain pending.
+See [local guest LAN and identity-preserving adoption](docs/guest-lan.md) before replacing handwritten second-NIC arguments, then use the [manual guest-network matrix](docs/guest-network-tests.md).
+`dev-demo install-retro` supplies the documentation-only `retro/delphi/advanced-demo`
+scaffold with `steps`, `status` and `results`; it needs no Watcom to generate. Delphi
+application code, HTTPGET, DCOM/database integration, remote mode and pack are follow-ups.
+Owner guest checks remain pending.
 
 ## Requirements
 

@@ -17,6 +17,13 @@ plan before the build starts.
 This planning commit changes neither scripts nor installed tools/guests. Real commands still need
 individual owner approval; licensed media is supplied by the owner, never downloaded by the bundle.
 
+**Build record (v101 stages 5–6):** the local command, adoption fixtures, nested
+scaffold and manual network procedure are implemented on release/v101. Guest
+identity/transport hand checks and clean Chromebook acceptance remain pending.
+The scaffold provides 27 NOT RUN rows and generates no application, pack or ISO.
+Owner code/results survive rerun/refresh; explicit confirmed clean includes work
+inside the scaffold. This build record does not advance any F0–F6 application gate.
+
 ### What v101 supplies
 
 The owner approved **9A local-only** and **9B without pack** in the review of `936737b`. v101 will

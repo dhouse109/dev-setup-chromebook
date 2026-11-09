@@ -43,6 +43,7 @@ The download itself is about 1 GB, and Godot's demo projects are half of it. Siz
 | drupal/drupal-astro and drupal/umami-headless (generated Astro sources and launchers; Astro's packages and the shared Drupal site arrive on first use, v96) | under 1 MB each |
 | iac/cm-bakeoff (generated Ansible playbook, Puppet module, Chef cookbook, InSpec profile and Dockerfiles; the images build on first use, v91) | under 1 MB |
 | cloud/cloudflare (a Worker, its D1 migration and a launcher, v89) | under 1 MB |
+| retro/delphi/advanced-demo (v101 foundation docs, NOT RUN results template and minimal launcher; owner work excluded) | under 0.1 MB generated text |
 | All other demos | under 3 MB each |
 | **Total** | **about 1 GB** |
 
@@ -370,3 +371,27 @@ manual network stanza yourself. The managed NIC stays after USB/audio/EXTRA_ARGS
 Ambiguous custom device layouts need recorded explicit PCI pins or are refused.
 The owner must confirm no new hardware and unchanged IP/WINS without re-entry,
 bidirectional ping/domain behavior and first-NIC internet. Remote mode is deferred.
+
+
+### v101 advanced-demo foundation
+
+`./dev-demo-chromebook.sh install-retro` also generates
+`~/dev-demo/retro/delphi/advanced-demo` and
+`~/dev-demo/retro/delphi/run-advanced-demo.sh`, independently of Watcom and the
+existing matrix demo. The three actions are steps, read-only status and results
+guidance. Status uses only the v101 local LAN status operations; an older/missing
+helper is reported without invoking it. The minimal launcher reads no demo
+credentials and starts no guest, listener, installer or service.
+
+README/STEPS/VERSIONS and the launcher refresh on every generation. Existing
+work/, results-template.tsv and owner results remain intact on ordinary reruns
+and demo-refresh. Explicit demo-clean lists the directory, launcher and flat index
+entry before confirmation; owner work inside the directory is included. Keep
+completed results separately under assets/logs/guest-network/ so cleanup leaves
+them available. The complete demo total measures the scaffold once; retained
+LAN/network evidence has its own disk row. There is no v101 application ISO.
+
+Follow [guest-network-tests.md](guest-network-tests.md) for the owner-controlled
+marker listener and browser/tools matrix. All 27 initial rows are NOT RUN.
+HTTPGET/Delphi/DCOM/databases and F0–F6 application gates remain deferred. Licensed
+media and NT SP6a are owner prerequisites, not downloads or automatic setup here.

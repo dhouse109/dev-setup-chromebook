@@ -451,16 +451,44 @@ ENVEOF
 READY=(); SKIPPED=(); FAILED=(); NOTES=()
 STACK=""; NAME=""; DESC=""; SRC=""; DIR=""; FRESH=0
 
+# v101: optional nested paths keep flat index keys. Reject traversal before any
+# write/clean, including an owner symlink that would redirect a generated target.
+demo_relative_ok() {
+    local part parts
+    [[ "$1" =~ ^[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)*$ ]] || return 1
+    IFS=/ read -ra parts <<< "$1"
+    for part in "${parts[@]}"; do [ "$part" != . ] && [ "$part" != .. ] || return 1; done
+}
+demo_path_ok() {
+    local stack=$1 relative=$2 component path parts
+    [[ "$stack" =~ ^[A-Za-z0-9_-]+$ ]] && demo_relative_ok "$relative" || return 1
+    [ ! -L "$DEMO_ROOT/.index" ] || return 1
+    path="$DEMO_ROOT/$stack"
+    [ ! -L "$path" ] || return 1
+    IFS=/ read -ra parts <<< "$relative"
+    for component in "${parts[@]}"; do
+        path="$path/$component"
+        [ ! -L "$path" ] || return 1
+    done
+}
+
 # begin STACK NAME "DESCRIPTION" SOURCE: announce a demo and set DIR. In demo-clean mode it removes
 # the demo instead and returns 1. A function's last demo uses 'begin ... || return 0'; any earlier
 # one is an 'if begin ...; then ... fi' block, so demo-clean goes on to the next (v81).
 begin() {
-    STACK=$1; NAME=$2; DESC=$3; SRC=$4; DIR="$DEMO_ROOT/$STACK/$NAME"; FRESH=0
+    STACK=$1; NAME=$2; DESC=$3; SRC=$4; FRESH=0
+    DEMO_REL=${5:-$NAME}; RUN_REL=${6:-run-$NAME.sh}
+    if ! [[ "$NAME" =~ ^[A-Za-z0-9_.-]+$ ]] || [ "$NAME" = . ] || [ "$NAME" = .. ] \
+        || ! demo_path_ok "$STACK" "$DEMO_REL" || ! demo_path_ok "$STACK" "$RUN_REL"; then
+        fail "unsafe demo/index/launcher path"; return 1
+    fi
+    DIR="$DEMO_ROOT/$STACK/$DEMO_REL"
     echo; echo "${BLD}== $STACK/$NAME ==${RST}  ${DIM}$DESC${RST}"
     if [ "$CLEAN" = 1 ]; then
-        if [ -e "$DIR" ] || [ -e "$DEMO_ROOT/$STACK/run-$NAME.sh" ]; then
-            rm -rf "$DIR" "$DEMO_ROOT/$STACK/run-$NAME.sh" "$DEMO_ROOT/.index/$STACK--$NAME"
-            rmdir "$DEMO_ROOT/$STACK" 2> /dev/null
+        if [ -e "$DIR" ] || [ -e "$DEMO_ROOT/$STACK/$RUN_REL" ] || [ -e "$DEMO_ROOT/.index/$STACK--$NAME" ]; then
+            printf '  removing: %s\n' "$DIR" "$DEMO_ROOT/$STACK/$RUN_REL" "$DEMO_ROOT/.index/$STACK--$NAME"
+            rm -rf -- "$DIR" "$DEMO_ROOT/$STACK/$RUN_REL" "$DEMO_ROOT/.index/$STACK--$NAME"
+            rmdir "$(dirname "$DEMO_ROOT/$STACK/$RUN_REL")" "$DEMO_ROOT/$STACK" 2> /dev/null
             echo "  removed"
         else
             echo "  not present"
@@ -559,15 +587,18 @@ apt_need() {
 }
 # write_run: the launcher ~/dev-demo/<stack>/run-<name>.sh, body on stdin (runs inside DEMO_DIR)
 write_run() {
-    local f="$DEMO_ROOT/$STACK/run-$NAME.sh"
-    mkdir -p "$DEMO_ROOT/$STACK"
+    local relative=${RUN_REL:-run-$NAME.sh} demo=${DEMO_REL:-$NAME} f
+    demo_path_ok "$STACK" "$relative" && demo_path_ok "$STACK" "$demo" || return 1
+    f="$DEMO_ROOT/$STACK/$relative"
+    mkdir -p "$(dirname "$f")"
     {
         echo '#!/bin/bash'
         echo "# $STACK/$NAME: $DESC"
         echo "# Source: $SRC"
         echo "# Written by dev-demo-chromebook.sh (v$VERSION) and rewritten on every run: copy it before editing."
-        echo 'source "$HOME/dev-demo/.demo-env.sh" || exit 1'
-        echo "DEMO_DIR=\"\$HOME/dev-demo/$STACK/$NAME\""
+        # v101: documentation-only launchers need no credentials, logs or services.
+        if [ "${1:-}" != minimal ]; then echo 'source "$HOME/dev-demo/.demo-env.sh" || exit 1'; fi
+        echo "DEMO_DIR=\"\$HOME/dev-demo/$STACK/$demo\""
         echo 'cd "$DEMO_DIR" 2> /dev/null || { echo "Missing $DEMO_DIR: rerun dev-demo with the matching flag."; exit 1; }'
         echo 'DEMO_ARG="${1:-}"'
         cat
@@ -576,8 +607,8 @@ write_run() {
 }
 # done_demo: register the demo in the index that README.md is built from
 done_demo() {
-    printf '%s\t%s\t%s\n' "$DESC" "run-$NAME.sh" "$SRC" > "$DEMO_ROOT/.index/$STACK--$NAME"
-    echo "  ${GRN}ready${RST}: ~/dev-demo/$STACK/run-$NAME.sh"
+    printf '%s\t%s\t%s\t%s\n' "$DESC" "${RUN_REL:-run-$NAME.sh}" "$SRC" "${DEMO_REL:-$NAME}" > "$DEMO_ROOT/.index/$STACK--$NAME"
+    echo "  ${GRN}ready${RST}: ~/dev-demo/$STACK/${RUN_REL:-run-$NAME.sh}"
     READY+=("$STACK/$NAME")
 }
 note() { NOTES+=("$*"); }
@@ -3862,7 +3893,25 @@ EOF
 # =================================================================
 # INDEX: ~/dev-demo/README.md and a VS Code / Cursor / Windsurf / Antigravity workspace
 # =================================================================
+# v101: read the launcher field before testing it. Three-field records remain
+# valid; a fourth field records a nested demo directory without a slash in its key.
+read_demo_record() {
+    local file=$1 stack=$2 name=$3 line rest
+    [ ! -L "$file" ] && IFS= read -r line < "$file" || return 1
+    case "$line" in *$'\n'*|*$'\r'*) return 1 ;; esac
+    [[ "$line" == *$'\t'* ]] || return 1
+    INDEX_DESC=${line%%$'\t'*}; rest=${line#*$'\t'}
+    INDEX_RUN=${rest%%$'\t'*}
+    if [[ "$rest" == *$'\t'* ]]; then
+        rest=${rest#*$'\t'}; INDEX_SRC=${rest%%$'\t'*}
+        if [[ "$rest" == *$'\t'* ]]; then INDEX_DIR=${rest#*$'\t'}; else INDEX_DIR=$name; fi
+    else INDEX_SRC=""; INDEX_DIR=$name; fi
+    INDEX_DIR=${INDEX_DIR:-$name}
+    demo_path_ok "$stack" "$INDEX_RUN" && demo_path_ok "$stack" "$INDEX_DIR" \
+        && [ -f "$DEMO_ROOT/$stack/$INDEX_RUN" ] && [ -d "$DEMO_ROOT/$stack/$INDEX_DIR" ]
+}
 write_index() {
+    [ ! -L "$DEMO_ROOT/.index" ] || { fail "unsafe index directory"; return 1; }
     local f stack name desc run src last=""
     {
         echo "# dev-demo"
@@ -3877,8 +3926,8 @@ write_index() {
         for f in "$DEMO_ROOT"/.index/*--*; do
             [ -e "$f" ] || continue
             stack=$(basename "$f"); name=${stack#*--}; stack=${stack%%--*}
-            [ -e "$DEMO_ROOT/$stack/run-$name.sh" ] || { rm -f "$f"; continue; }
-            IFS=$'\t' read -r desc run src < "$f"
+            read_demo_record "$f" "$stack" "$name" || { rm -f "$f"; continue; }
+            desc=$INDEX_DESC; run=$INDEX_RUN; src=$INDEX_SRC
             [ "$stack" != "$last" ] && { echo; echo "## $stack"; echo; last=$stack; }
             echo "- **$name**: $desc  "
             echo "  \`~/dev-demo/$stack/$run\`  ${src:+(source: $src)}"
@@ -3891,10 +3940,13 @@ write_index() {
     {
         echo '{'
         echo '  "folders": ['
-        local first=1 d
-        for d in "$DEMO_ROOT"/*/; do
-            d=$(basename "$d")
-            compgen -G "$DEMO_ROOT/$d/run-*.sh" > /dev/null || continue
+        local first=1 d seen=" "
+        for f in "$DEMO_ROOT"/.index/*--*; do
+            [ -f "$f" ] || continue
+            d=$(basename "$f"); name=${d#*--}; d=${d%%--*}
+            read_demo_record "$f" "$d" "$name" || continue
+            [[ "$seen" == *" $d "* ]] && continue
+            seen+="$d "
             [ "$first" = 1 ] || echo ','
             printf '    { "path": "%s" }' "$d"; first=0
         done
@@ -3905,15 +3957,25 @@ write_index() {
     } > "$DEMO_ROOT/dev-demo.code-workspace"
 }
 
+confirm_demo_clean() {
+    local ans
+    echo
+    echo "demo-clean removes the demo folders for the flags above from $DEMO_ROOT."
+    echo "Containers, the kind cluster and DDEV projects keep running: stop them first with their launchers."
+    if has install-retro; then
+        printf 'Advanced-demo targets (owner work inside the scaffold is included):\n  %s\n  %s\n  %s\n' \
+            "$DEMO_ROOT/retro/delphi/advanced-demo" "$DEMO_ROOT/retro/delphi/run-advanced-demo.sh" \
+            "$DEMO_ROOT/.index/retro--advanced-demo"
+    fi
+    read -rp "Remove them? [y/N] " ans
+    [[ "$ans" =~ ^[Yy] ]]
+}
+
 # =================================================================
 # RUN
 # =================================================================
 if [ "$CLEAN" = 1 ]; then
-    echo
-    echo "demo-clean removes the demo folders for the flags above from $DEMO_ROOT."
-    echo "Containers, the kind cluster and DDEV projects keep running: stop them first with their launchers."
-    read -rp "Remove them? [y/N] " ans
-    [[ "$ans" =~ ^[Yy] ]] || { echo "Nothing removed."; exit 0; }
+    confirm_demo_clean || { echo "Nothing removed."; exit 0; }
 else
     write_demo_env
     # shellcheck source=/dev/null
@@ -4258,6 +4320,269 @@ while demo_menu "COM under Wine (DevHello: Greet + Add)" \
 done
 demo_note "ATL/MFC need MSVC (clang-cl + xwin, per project). ActiveX in a browser is dead; an ActiveX control hosted in a container app can work under Wine."
 EOF
+    done_demo
+}
+
+# v101: independent of Watcom and matrix; only documentation is generated.
+demo_retro_advanced() {
+    begin retro advanced-demo "Advanced Delphi demo foundation: steps, read-only LAN status and results; application NOT BUILT" \
+        "bundle docs/plans/v101-dcom-demo.md; follow-up F0–F6" \
+        delphi/advanced-demo delphi/run-advanced-demo.sh || return 0
+    mkdir -p "$DIR" || { fail "cannot create foundation directory"; return 0; }
+    # Atomic replacement protects owner hardlink/symlink targets while refreshing
+    # only bundle-owned documents; work/results are always create-if-absent.
+    retro_foundation_doc() {
+        local name=$1 temporary
+        temporary=$(mktemp "$DIR/.foundation.XXXXXX") || return 1
+        if cat > "$temporary" && chmod 644 "$temporary" && mv -f -- "$temporary" "$DIR/$name"; then return 0; fi
+        rm -f -- "$temporary"; return 1
+    }
+    retro_foundation_doc README.md << 'ADVANCED_README' || { fail "cannot write foundation document"; return 0; }
+# Advanced Delphi demo: v101 foundation
+
+This scaffold provides instructions, read-only local-link status and results guidance.
+The Delphi application is NOT BUILT. HTTPGET, DCOM, databases, compiler back-ports,
+remote mode and packaging are staged follow-ups F0–F6; no pack action exists here.
+
+Read STEPS.md and VERSIONS.md. Keep future owner code in work/. Copy the initial
+results-template.tsv to a named file under the bundle assets/logs/guest-network/
+before recording observations. Every template row starts NOT RUN.
+
+Reruns and demo-refresh replace these bundle-owned README/STEPS/VERSIONS files and
+the launcher. They preserve work/, existing results-template.tsv and owner results.
+Explicit demo-clean includes owner work inside this scaffold after confirmation;
+results kept separately under assets and Windows guest workspaces remain outside it.
+
+Use ../run-advanced-demo.sh steps, status or results. Readiness means the scaffold
+exists, not that a guest/application stage passed. The bundle plans are
+ docs/plans/v101-plan.md and docs/plans/v101-dcom-demo.md.
+ADVANCED_README
+    retro_foundation_doc STEPS.md << 'ADVANCED_STEPS' || { fail "cannot write foundation document"; return 0; }
+# Guest network procedure (v101 foundation)
+
+This is an owner-run procedure using existing guest tools or browsers. The bundle
+does not start the listener, boot guests, change Windows networking or generate a
+Delphi probe. Keep raw addresses, names and results under `assets/logs/guest-network/`;
+public summaries contain counts, results and repo-relative evidence paths only.
+
+## Prepare and record
+
+Record the bundle version, engine versions, date and each guest's two adapter
+settings. Follow the bundle's `docs/guest-lan.md` before adopting the local second
+adapter. Both guests must retain their MAC/model/PCI identity and static IP/WINS
+without new hardware or re-entry. Start at NT 128 MB and Windows 2000 256 MB. Keep
+heavy models/databases stopped and let the owner launch each guest explicitly.
+
+The second local link uses NT 192.168.50.10 and Windows 2000 192.168.50.20, mask
+255.255.255.0, no gateway, WINS 192.168.50.10. Its host UDP endpoints are separate
+from those guest addresses. Check local ping both ways and the existing HADAMIN
+domain behavior, then first-adapter internet. Stop and restore the old configs
+if Windows detects new hardware or loses its adapter settings.
+
+Select the peer laptop, its Tailscale IPv4, short/full names and an external plain
+HTTP target before testing. The peer must use normal tun-mode Tailscale. HTTP to
+another laptop uses the existing user-mode adapter, not a remote second-NIC link.
+Do not add ChromeOS port forwarding. Win31 networking is outside this procedure.
+
+## Controlled HTTP marker
+
+First check that TCP 8765 is free. This listener serves only a fixed marker and
+returns 404 for other paths. The following is an explicit owner command for the
+Linux host; it is not run by setup, dev-test, dev-demo or a launcher:
+
+```bash
+python3 - 127.0.0.1 <<'PY'
+from http.server import BaseHTTPRequestHandler, HTTPServer
+import sys
+
+class Marker(BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path not in ('/', '/marker'):
+            self.send_error(404)
+            return
+        body = b'dev-bundle-v101-network-marker\n'
+        self.send_response(200)
+        self.send_header('Content-Type', 'text/plain')
+        self.send_header('Content-Length', str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+    def log_message(self, *args):
+        pass
+
+class BoundedServer(HTTPServer):
+    def get_request(self):
+        connection, address = super().get_request()
+        connection.settimeout(5)
+        return connection, address
+
+server = BoundedServer((sys.argv[1], 8765), Marker)
+try:
+    server.serve_forever()
+except KeyboardInterrupt:
+    pass
+finally:
+    server.server_close()
+PY
+```
+
+Stop it with Ctrl+C after each binding's checks and confirm the port is free.
+For peer tests, the owner starts the same command on the chosen peer, replacing
+127.0.0.1 with that peer's specific Tailscale IPv4. A wildcard bind requires an
+explicit reachability decision; it is not the default or a persistent service.
+
+## Manual matrix
+
+Record DNS, TCP connect and HTTP observations separately. A marker body and status
+200 establish controlled HTTP success. A browser screenshot is browser evidence,
+not a result from the deferred HTTPGET executable. Record NOT RUN, unsupported or
+FAIL honestly; no template row is pre-filled with success.
+
+| Origin | Target | Path and observation |
+|---|---|---|
+| Wine | `http://127.0.0.1:8765/marker` | Same-host loopback marker |
+| win95 / NT / 2000 first user NIC | `http://10.0.2.2:8765/marker` | Host alias; verify installed DOSBox-X slirp alias rather than assuming it |
+| All four | Peer Tailscale IPv4, port 8765 | Controlled peer marker via first/user adapter |
+| All four | Peer short and full tailnet names | Record name resolution separately from IPv4 reachability; guest DNS need not inherit MagicDNS |
+| All four | Owner-selected plain HTTP internet target | Record status/redirect; an HTTPS redirect is not a plain-HTTP transport failure |
+| Period browsers | HTTP versus HTTPS | Marker HTTP is controlled; report actual legacy TLS errors without promising modern TLS support |
+| NT second NIC → 2000 / reverse | 192.168.50.20 / .10 | Ping both ways, existing domain relationship, unchanged IP/WINS and first-NIC internet |
+
+Use the advanced-demo `results-template.tsv` as a starting point. Its columns are
+date, bundle/engine versions, origin, transport, target category, target, IP/name
+form, DNS/connect/HTTP outcomes, elapsed milliseconds, status and evidence path.
+Copy it to an explicitly chosen file under assets before recording observations;
+the launcher's `results` action only explains this. Guest disks already account
+for their growth; no application ISO or database content is added by this scaffold.
+
+## Deferred Delphi HTTPGET and application work
+
+The staged follow-up specifies one Delphi 3 Winsock HTTPGET executable: accept one
+plain-HTTP URL, bound DNS/connect/read, send a Host header with HTTP/1.0 and connection
+close, display status/body, and return nonzero for failures. Record its version and
+checksum and deploy the identical binary to Wine/win95/NT/2000. No source, compiler
+invocation, executable, TLS shim or browser installer belongs to v101.
+
+Follow-up F0–F6 in `docs/plans/v101-dcom-demo.md` covers prerequisites, DCOM go/no-go,
+the Delphi 7 slice, database swap, back-ports, transports/packaging and cross-laptop
+work. NT SP6a and licensed media remain owner-supplied and owner-installed. Remote
+F6 must measure the Tailscale 1280 MTU against encapsulated Ethernet frames and
+larger transfers; small local pings do not establish remote DCOM or MTU readiness.
+
+## Guest/media and recovery prerequisites
+
+Use winnt40 lan status and win2000 lan status to inspect local settings. With both
+Windows guests stopped and old identity/config backups recorded, lan on opts in;
+lan off removes the managed NIC at the next explicit owner-started boot. Follow
+bundle docs/guest-lan.md for handwritten EXTRA_ARGS adoption and recorded-slot pins.
+Keep old static IP/WINS and no gateway on the second adapter. Any new hardware or
+lost settings requires shutdown and restoration, not accepting driver rebinding.
+
+Bring your own Windows, service-pack, Delphi, InterBase and SQL Server media.
+No licensed downloads occur here. Snapshot NT before the owner installs SP6a;
+NT had no service pack in the Nov 8 lab record, while Windows 2000 had SP4. Apply
+service packs and database configuration only as separately approved owner steps.
+
+Keep NT's Pentium CPU, PS/2 pointer (Ctrl+Alt+G releases capture) and Cirrus display;
+NT's display Test button can hang. There is no VMware mouse driver installation.
+Windows 2000 keeps conservative TCG/no-sound defaults. Audio/driver experiments
+remain separate from this link check; SB16 resources, if used, are 220/IRQ5/DMA1+5
+with an owner-supplied appropriate driver. Read the bundle retro notes before edits.
+
+The scaffold never starts guests/listeners, changes a domain/DCOM, installs a
+service pack/database or pre-fills a PASS. Retain raw evidence under assets and
+publish only sanitized results. No application CD/ISO or pack action in v101.
+ADVANCED_STEPS
+    retro_foundation_doc VERSIONS.md << 'ADVANCED_VERSIONS' || { fail "cannot write foundation document"; return 0; }
+# Agreed version/backend matrix (follow-up target)
+
+| Delphi | Server OS | Primary | Swap | Candidate access layers |
+|---|---|---|---|---|
+| 3 Client/Server | NT 4.0 | SQL Server 6.5 | InterBase | BDE SQL Links |
+| 4 Client/Server | NT 4.0 | InterBase | SQL Server 6.5 | BDE SQL Links |
+| 5 Enterprise | Windows 2000 | SQL Server 2000 | InterBase | ADO / IBX |
+| 6 Enterprise | Windows 2000 | InterBase | SQL Server 2000 | dbExpress / ADO |
+| 7 Enterprise | Windows 2000 | SQL Server 2000 | InterBase | dbExpress or dbGo |
+
+The owner agreed this mapping. Component/driver/runtime compatibility remains a
+working hypothesis until checked against exact licensed help/media and compiled
+in F0–F5. No compiler, database, application server or client is built here.
+One InterBase per guest is a follow-up proposal requiring compatibility checks.
+Oracle is a later extension. Existing retro/matrix remains independent.
+
+F0: lab/media/SP prerequisites. F1: DCOM go/no-go. F2: Delphi 7 vertical slice.
+F3: database swap. F4: back-port 6, 5, 4, 3. F5: transports and later packaging.
+F6: cross-laptop topology/identity/MTU. Use a separately approved plan for code.
+ADVANCED_VERSIONS
+    if [ ! -e "$DIR/results-template.tsv" ] && [ ! -L "$DIR/results-template.tsv" ]; then
+        cat > "$DIR/results-template.tsv" << 'ADVANCED_RESULTS'
+date	bundle_version	engine_version	origin	transport	target_category	target	ip_or_name	dns	connect	http	elapsed_ms	status	evidence
+-	101	-	Wine	HTTP	same-host	http://127.0.0.1:8765/marker	IPv4	NOT RUN	NOT RUN	NOT RUN	-	NOT RUN	-
+-	101	-	Wine	HTTP	peer-marker	OWNER SELECTS	Tailscale IPv4	NOT RUN	NOT RUN	NOT RUN	-	NOT RUN	-
+-	101	-	Wine	HTTP	peer-marker	OWNER SELECTS	short name	NOT RUN	NOT RUN	NOT RUN	-	NOT RUN	-
+-	101	-	Wine	HTTP	peer-marker	OWNER SELECTS	full tailnet name	NOT RUN	NOT RUN	NOT RUN	-	NOT RUN	-
+-	101	-	Wine	HTTP	internet-http	OWNER SELECTS	owner-selected	NOT RUN	NOT RUN	NOT RUN	-	NOT RUN	-
+-	101	-	Wine	browser HTTP/HTTPS	browser-https	OWNER SELECTS	owner-selected	NOT RUN	NOT RUN	NOT RUN	-	NOT RUN	-
+-	101	-	win95	HTTP	same-host	http://10.0.2.2:8765/marker	IPv4	NOT RUN	NOT RUN	NOT RUN	-	NOT RUN	-
+-	101	-	win95	HTTP	peer-marker	OWNER SELECTS	Tailscale IPv4	NOT RUN	NOT RUN	NOT RUN	-	NOT RUN	-
+-	101	-	win95	HTTP	peer-marker	OWNER SELECTS	short name	NOT RUN	NOT RUN	NOT RUN	-	NOT RUN	-
+-	101	-	win95	HTTP	peer-marker	OWNER SELECTS	full tailnet name	NOT RUN	NOT RUN	NOT RUN	-	NOT RUN	-
+-	101	-	win95	HTTP	internet-http	OWNER SELECTS	owner-selected	NOT RUN	NOT RUN	NOT RUN	-	NOT RUN	-
+-	101	-	win95	browser HTTP/HTTPS	browser-https	OWNER SELECTS	owner-selected	NOT RUN	NOT RUN	NOT RUN	-	NOT RUN	-
+-	101	-	winnt40	HTTP	same-host	http://10.0.2.2:8765/marker	IPv4	NOT RUN	NOT RUN	NOT RUN	-	NOT RUN	-
+-	101	-	winnt40	HTTP	peer-marker	OWNER SELECTS	Tailscale IPv4	NOT RUN	NOT RUN	NOT RUN	-	NOT RUN	-
+-	101	-	winnt40	HTTP	peer-marker	OWNER SELECTS	short name	NOT RUN	NOT RUN	NOT RUN	-	NOT RUN	-
+-	101	-	winnt40	HTTP	peer-marker	OWNER SELECTS	full tailnet name	NOT RUN	NOT RUN	NOT RUN	-	NOT RUN	-
+-	101	-	winnt40	HTTP	internet-http	OWNER SELECTS	owner-selected	NOT RUN	NOT RUN	NOT RUN	-	NOT RUN	-
+-	101	-	winnt40	browser HTTP/HTTPS	browser-https	OWNER SELECTS	owner-selected	NOT RUN	NOT RUN	NOT RUN	-	NOT RUN	-
+-	101	-	win2000	HTTP	same-host	http://10.0.2.2:8765/marker	IPv4	NOT RUN	NOT RUN	NOT RUN	-	NOT RUN	-
+-	101	-	win2000	HTTP	peer-marker	OWNER SELECTS	Tailscale IPv4	NOT RUN	NOT RUN	NOT RUN	-	NOT RUN	-
+-	101	-	win2000	HTTP	peer-marker	OWNER SELECTS	short name	NOT RUN	NOT RUN	NOT RUN	-	NOT RUN	-
+-	101	-	win2000	HTTP	peer-marker	OWNER SELECTS	full tailnet name	NOT RUN	NOT RUN	NOT RUN	-	NOT RUN	-
+-	101	-	win2000	HTTP	internet-http	OWNER SELECTS	owner-selected	NOT RUN	NOT RUN	NOT RUN	-	NOT RUN	-
+-	101	-	win2000	browser HTTP/HTTPS	browser-https	OWNER SELECTS	owner-selected	NOT RUN	NOT RUN	NOT RUN	-	NOT RUN	-
+-	101	-	winnt40	ICMP/domain	local-second-NIC	192.168.50.20	IPv4	NOT RUN	NOT RUN	NOT RUN	-	NOT RUN	-
+-	101	-	win2000	ICMP/domain	local-second-NIC	192.168.50.10	IPv4	NOT RUN	NOT RUN	NOT RUN	-	NOT RUN	-
+-	101	-	future HTTPGET	follow-up	deferred	NOT BUILT	NOT RUN	NOT RUN	NOT RUN	NOT RUN	-	NOT RUN	-
+ADVANCED_RESULTS
+    fi
+    if [ ! -L "$DIR/work" ]; then
+        mkdir -p "$DIR/work"
+        if [ ! -e "$DIR/work/README.md" ] && [ ! -L "$DIR/work/README.md" ]; then
+            cat > "$DIR/work/README.md" << 'ADVANCED_WORK'
+# Owner work area
+
+Reserved for the later approved Delphi sources. v101 generates no application code.
+Keep your files here; ordinary reruns and demo-refresh preserve this directory.
+Explicit demo-clean removes the scaffold, including work/, after confirmation.
+Keep completed results/backups separately under the bundle assets directory.
+ADVANCED_WORK
+        fi
+    fi
+    write_run minimal << 'ADVANCED_RUN' || { fail "cannot write foundation launcher"; return 0; }
+# This documentation menu loads no shared demo environment or credentials.
+choice=$DEMO_ARG
+if [ -z "$choice" ]; then
+    PS3="Foundation action (Ctrl-D quits): "
+    select choice in steps status results; do [ -n "$choice" ] && break; done
+fi
+case "$choice" in
+    steps) cat "$DEMO_DIR/STEPS.md" ;;
+    status)
+        helper="$HOME/.local/lib/dev-retro/dev-retro"
+        if [ -x "$helper" ] && grep -q 'RETRO_LAN_V101_PY' "$helper"; then
+            for guest in winnt40 win2000; do "$helper" "$guest" lan status || exit 1; done
+        else
+            echo "v101 guest LAN status is not installed; run setup with install-retro first."
+        fi
+        echo "Foundation docs available. Delphi HTTPGET/DCOM/database/application stages: NOT RUN (follow-up)." ;;
+    results)
+        echo "Copy $DEMO_DIR/results-template.tsv to a named file under bundle assets/logs/guest-network/."
+        echo "Record actual versions, DNS/connect/HTTP outcomes, timings and evidence; retain NOT RUN for untested/deferred rows."
+        echo "This action writes nothing and claims no application result." ;;
+    "") exit 0 ;;
+    *) echo "Choose steps, status or results." >&2; exit 2 ;;
+esac
+ADVANCED_RUN
     done_demo
 }
 
@@ -4678,6 +5003,11 @@ unknown placement is refused. Verify no new hardware and unchanged static IP/WIN
 without re-entry, ping/domain behavior and first-NIC internet. Restore and stop on
 any re-detection. No remote mode, Delphi source or application packaging in v101.
 
+
+The separate v101 advanced-demo scaffold is ../delphi/advanced-demo, with launcher
+../delphi/run-advanced-demo.sh (steps/status/results only). Delphi HTTPGET, DCOM,
+database code and packaging remain follow-ups; existing matrix builds stay here.
+
 EOF
     # v100 (Nov 5–6 2026): distinguish exchange/drive-letter conventions and guest-specific key procedures.
     cat > "$DIR/STEPS-winnt.md" << 'EOF'
@@ -4834,6 +5164,11 @@ Custom PCI layouts need recorded explicit slots for the link and custom devices;
 unknown placement is refused. Verify no new hardware and unchanged static IP/WINS
 without re-entry, ping/domain behavior and first-NIC internet. Restore and stop on
 any re-detection. No remote mode, Delphi source or application packaging in v101.
+
+
+The separate v101 advanced-demo scaffold is ../delphi/advanced-demo, with launcher
+../delphi/run-advanced-demo.sh (steps/status/results only). Delphi HTTPGET, DCOM,
+database code and packaging remain follow-ups; existing matrix builds stay here.
 
 EOF
     FRESH=1
@@ -11489,7 +11824,7 @@ has install-iac       && demo_iac
 has install-media     && demo_media
 has install-lan       && demo_lan
 has install-com       && demo_com
-has install-retro     && demo_retro
+if has install-retro; then demo_retro; demo_retro_advanced; fi
 has install-hermes    && demo_hermes
 has install-openclaw  && demo_openclaw
 has install-laravel   && demo_laravel
