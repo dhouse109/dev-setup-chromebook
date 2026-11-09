@@ -1,10 +1,11 @@
 # v102 Delphi F0/F1 detail
 
-Nov 9, 2026 · **DRAFT — companion to [v102 items 3/4](v102-plan.md)**
+Nov 9, 2026 · **DRAFT — owner decisions recorded; companion to [v102 items 3/4](v102-plan.md)**
 
-Evidence labels follow the main plan. **Hypothesis** applies to every proposed procedure,
-candidate file/API/tool and expected result below. No code, guest changes, compiler runs,
-media listings or licensed-content inspections are part of this planning PR.
+Evidence labels follow the main plan. Recorded owner decisions settle the design; **Hypothesis**
+still applies to unverified Delphi compatibility, implementation details and expected results.
+No code, guest changes, compiler runs, media listings or licensed-content inspections are
+part of this planning PR.
 
 ## F0 lab and prerequisite record
 
@@ -12,7 +13,14 @@ media listings or licensed-content inspections are part of this planning PR.
 
 **Owner-reported:** NT 4.0 SP6a and Delphi 7 Enterprise media are available; the historical
 Windows 2000 installation is SP4. This is availability/version evidence, not a content check,
-an installed Delphi 7 claim or proof of runtime compatibility.
+an installed Delphi 7 claim or proof of runtime compatibility. Delphi 7 has not yet been installed
+under Wine on any owner's machine. Installation problems must be expected, not assumed away.
+
+**Owner-reported — Nov 9 order:** backup → SP6a on NT → Delphi 7 Enterprise under Wine
+(or the Windows 2000 fallback) → DCOM preparation on both guests. Owner backup/SP6a runs in
+parallel with item 1 on the separate regression host; both finish before the item 2 matrix.
+The matrix's NT rows run once on SP6a. Continue with Delphi installation/DCOM preparation
+before F1; a later Wine build failure returns to F0 for the Windows install fallback.
 
 **Hypothesis:** before SP6a or registration, owner shuts down both guests and keeps recoverable
 copies of system disks, guest configs, exchange data, app-CD selection and required account/
@@ -28,6 +36,38 @@ in planning. The owner applies SP6a from supplied media inside Windows, confirms
 reboots as required, and rechecks login/domain, unchanged adapters/IP/WINS and both network
 paths. Stop before F1 on an unrecoverable backup, wrong SP level or broken lab link.
 
+### Delphi 7 installation and guest-lab disk preflight
+
+**Read-only-checked:** setup's `delphi_n_cmd` dispatches `delphi 7 setup` to `dn_setup`
+inside `DEVRETRO_EOF`. This is the actual install subcommand. `dn_setup` selects the supplied
+installer/media through `dn_cdroot`/`dn_installer`, prepares the Wine prefix and invokes the
+installer; it accepts an explicit installer argument if one is later owner-selected. It can
+unpack supplied ISO media and is not a read-only status operation. No helper/media was run here.
+
+**Owner-reported — explicit F0 owner step:** install Delphi 7 Enterprise under Wine on the
+privately designated guest-lab host through **`delphi 7 setup`**, after backup/SP6a and a
+free-space check. The owner runs/controls the installer. No Wine install is authorized now.
+
+**Hypothesis — preflight and bounded attempt:** use `df -B1` on the guest-lab filesystems
+holding the Wine prefix, media staging and assets; use allocated-size `du` on existing prefix/
+guest data without listing media contents. Budget prefix installation, possible ISO extraction,
+compiler outputs/logs and recoverable backups while retaining the agreed recovery/headroom
+reserve; do not use the regression host's free space as evidence for the guest lab. Stop for
+owner sizing if the estimate does not fit. Recheck after installation and before compilation.
+Allow one installer session, suggested ceiling **60 minutes**, then record success/failure
+and the observed blocker. This is an owner-managed budget, not a timeout guaranteed by the
+helper; the owner stops a stalled attempt at the limit and proceeds to the fallback. No
+unbounded reinstall loops, guest deletion or cache/media pruning.
+Installer keys are entered privately; diagnostics retain no keys, credentials or raw registry.
+
+**Owner-reported — first fallback:** if the Wine installation or later Wine build fails,
+record why, return to the F0 toolchain step and install Delphi 7 Enterprise in Windows 2000.
+Prefer dcc32 from a Windows command prompt; the IDE is an equivalent build alternative. Recheck
+DCOM/link settings affected by that install before resuming F1. Windows 2000 Delphi 7 is not
+required in v102 when the Wine route works; F2 expects its IDE/debugger regardless. The
+IDE/TAutoObject/type-library probe route is a documented second fallback and F2 note, not an
+automatic change to the primary no-TLB contract. Record the chosen route and all fallback reasons.
+
 **Hypothesis — generated create-if-missing docs:**
 
 | Scaffold path | Initial record / ownership |
@@ -36,7 +76,8 @@ paths. Stop before F1 on an unrecoverable backup, wrong SP level or broken lab l
 | `advanced-demo/docs/prerequisites.md` | Recovery confirmation, SP levels, LAN/domain/DCOM preparation, tool/build-route decision, headroom and F0 sign-off |
 
 **Hypothesis — media-matrix initial entries:** NT 4.0 + SP6a (client/DC), Windows 2000 SP4
-(server/first local client), Delphi 7 Enterprise (author/build), existing system OLE/Automation
+(server/first local client), Delphi 7 Enterprise under Wine (primary build; Windows 2000 install
+only as fallback in v102), existing system OLE/Automation
 support (owner-verifies). InterBase/SQL Server/other Delphi editions are future F2–F4 inventory
 only, **not required for F0/F1**; no seed data is needed. Mark exact compiler/runtime tool versions
 unknown until the owner verifies them. A later names-only folder inventory needs one explicit
@@ -52,7 +93,8 @@ Public summaries record edition/version facts only; private media paths stay pri
 include execution identity; programmatic security can override registry defaults. These are
 documentation checks, not verification of this lab's dialogs or current settings.
 
-**Hypothesis — owner applies and records in Windows, separately on both machines:**
+**Owner-reported — choices 6/9 approved:** owner applies and records preparation in Windows on
+both guests after the toolchain step. **Hypothesis — exact Windows controls/effective behavior:**
 
 1. Record the current settings and a recovery method before editing. Run the installed
    `dcomcnfg`; confirm **Enable Distributed COM on this computer**. Use the controls present
@@ -79,7 +121,8 @@ documentation checks, not verification of this lab's dialogs or current settings
    interpreting a permissions failure. Do not claim that changing the GUI overrides code.
 
 **Hypothesis:** F0 is done only with owner-confirmed recovery, SP6a and baseline link health,
-required Delphi route/media available, DCOM enable/default/account preparation recorded, and
+Delphi 7 installed through the selected Wine or Windows fallback route, the bounded attempt/
+fallback evidence, DCOM enable/default/account preparation recorded, and
 headroom accepted. Application-specific grants can be finalized only when F1 registers the
 real class; record that dependency explicitly, not a fictitious pre-code AppID acceptance.
 
@@ -87,20 +130,29 @@ real class; record that dependency explicitly, not a fictitious pre-code AppID a
 
 ### Smallest contract and source home
 
-**Hypothesis:** use an out-of-process 32-bit Delphi 7 Automation server and a tiny client,
-with one Automation-compatible method, e.g. `Probe: WideString` (`safecall`). The returned string
-contains fixed marker `dev-bundle-dcom-probe-v102` plus server computer name and server process
-account identity, obtained with APIs verified for NT/2000. It reports the server execution
-identity, not an unverified claim about the caller. Exact names remain local; public evidence
-says “expected remote server/identity matched”. No customer data, provider or MIDAS dependency.
+**Owner-reported — choices 7/8 revised Nov 9:** primary server is an out-of-process Delphi 7
+`TComObject`, registered through `TComObjectFactory`, implementing `IDispatch` by hand:
 
-**Hypothesis:** assign one stable original CLSID/AppID/LIBID/IID/ProgID set and document its
-mapping before registration. Prefer Automation marshaling and simple BSTR-compatible data;
-verify the actual type-library/interface registration required on each OS rather than adding a
-custom proxy DLL or assuming type-library registration alone creates a remote server entry.
-No callbacks/events, database units, service installation or transport selector for this probe.
+- `GetTypeInfoCount` returns 0; the primary probe has **no type library** or type-library resource.
+- `GetIDsOfNames` maps one method name to one DISPID; `Invoke` returns the fixed marker plus
+  the server computer name and process account. The client calls late-bound through IDispatch.
+- The client supplies its own `CoCreateInstance(Ex)` activation: `CLSCTX_LOCAL_SERVER` for
+  local mode and `CLSCTX_REMOTE_SERVER` for remote mode. Do not use `CreateOleObject`, which
+  does not request the selected remote activation.
+- Original per-machine .reg files with matching undo files write AppID, its CLSID link and
+  RemoteServerName. **No type library is registered on either machine** for the primary probe.
 
-**Hypothesis — recommended repo representation:** original quoted source/document heredocs
+**Hypothesis:** choose the one name/DISPID and a stable original CLSID/AppID/ProgID set before
+implementation. Use the system IDispatch interface rather than a custom typed interface; verify
+the applicable system marshaling without inventing a TLB/custom-proxy requirement. Proposed
+method name is `Probe`, returning marker `dev-bundle-dcom-probe-v102` and identity in a BSTR
+VARIANT. Validate unknown-name/unsupported-invocation errors and required IDispatch behavior
+against D7 help. Actual ComServ/factory compatibility remains unconfirmed, as listed below.
+Server identity means computer/process account, not the caller's identity; exact names stay
+private, with a public “expected remote server/identity matched” result. No callbacks/events,
+database units, provider, MIDAS, service installation or transport selector for this probe.
+
+**Owner-reported — source home:** original quoted source/document heredocs
 inside `demo_retro_advanced` (the existing bundle distribution pattern), generated into:
 
 ```text
@@ -112,9 +164,13 @@ advanced-demo/
     ProbeServer.dpr            # original project text
     ProbeObject.pas            # original method/factory implementation
     ProbeClient.dpr            # explicit local/remote modes, result/HRESULT
-    ProbeContract.pas          # original interface/identifier declarations
-    BUILD.md                   # exact verified TLB/resource/build steps
-    REGISTER.md                # separate server/client Windows steps, undo
+    ProbeContract.pas          # original name/DISPID/CLSID/AppID/ProgID constants
+    win2000-server.reg         # original server AppID/CLSID association
+    win2000-server-undo.reg    # matching scoped undo
+    nt-client.reg              # original client AppID/CLSID link/RemoteServerName
+    nt-client-undo.reg         # matching scoped undo
+    BUILD.md                   # Wine-first no-TLB build, Windows fallback reasons
+    REGISTER.md                # server/client Windows-only import/undo steps
     results-template.tsv       # NOT RUN, copied to assets before use
   work/                        # owner experiments, preserved
 ```
@@ -126,100 +182,113 @@ symlinks/types and cover partial trees. Existing bundle README/STEPS/VERSIONS re
 can stay; point them to the preserved F0/F1 records. Generated readiness never implies build
 success. No compile/register/transfer action is added to setup, dev-test or the menu.
 
-**Hypothesis — alternatives:** owner-only `work/` reduces initial bundle scope but leaves the
-probe unreproducible in the release; recommend repo-tracked original text. Separate tracked
-source files under a new repo directory could improve review, but would need an archive-safe
-copy path and installed-dev-test fixtures independent of repository-only assets. Prefer the
-existing heredoc pattern for this small probe; revisit a separate repository only with growth.
-Any owner-authored IDE changes returned to the repo must be original editable text, reviewed
+**Owner-reported:** keep `work/` for experiments; original sources remain repo-tracked heredocs,
+not owner-only work or separate source files. **Hypothesis:** any owner-authored changes
+returned to the repo must be original editable text, reviewed
 for credentials/paths/vendor material. Compiled EXE/TLB/DCU/RES and DLLs remain local artifacts.
 
-### IDE versus Wine compiler, and the type-library boundary
+### Wine-first build, Windows fallback and unverified Delphi 7 behavior
 
 **Read-only-checked:** setup's `dn_build` locates installed `dcc32.exe`, changes to the project
 directory, passes options and `.dpr`, and returns the compiler's pipeline status. Invocation is
 `delphi 7 build PROJECT.dpr [dcc32 options]`; it does not explicitly generate/register a TLB.
 This source check proves the wrapper's behavior, not an installed Delphi 7 toolchain.
 
-**Read-only-checked:** modern Embarcadero
+**Owner-reported — primary build:** use `delphi 7 build` under Wine on the privately designated
+guest-lab host. During the later build stage Codex may run each build command with per-command
+approval and iterate on compiler errors, preserving original source revisions and diagnostics.
+Example later commands are `delphi 7 build ProbeServer.dpr` and `delphi 7 build ProbeClient.dpr`
+from the generated probe directory. Compiling under Wine does not include running either EXE,
+`/regserver`, registry imports or activation there. All probe registration/activation/DCOM tests
+take place in Windows guests. No TLB generator, registration or resource is part of this route.
+
+**Owner-reported — first fallback:** if the Wine install/build fails, install Delphi 7
+Enterprise in Windows 2000 within F0 and prefer dcc32 from a Windows command prompt, using the
+same original no-TLB sources/configuration. The IDE is an equivalent way to build. Record
+failure phase, why fallback was taken, compiler/version/options and source/output checksums.
+The probe's local activation still occurs on Windows 2000 before remote NT tests.
+
+**Owner-reported — second fallback/F2 note:** document the IDE/`TAutoObject`/type-library
+route as the second fallback, not the primary F1 design. If needed, record a separate route,
+its reason and any changed registration/runtime requirements before owner testing; never
+label its result as proof of the no-TLB route. No type library is registered for the primary
+probe on either machine. In F2 the Windows 2000 Delphi 7 IDE/debugger is expected regardless;
+it is not a v102 installation requirement unless Wine install/build fails. Modern
 [type-library documentation](https://docwiki.embarcadero.com/RADStudio/Sydney/en/Type_Libraries)
-distinguishes TLB creation from Pascal compilation and TLB import, and describes IDE generation
-and IDL compilers. Its RIDL/GenTLB tooling is modern; this is **not proof of Delphi 7 tools or
-switches**. The owner must verify exact legacy help/tool availability later.
+is background for that fallback, not evidence about D7's exact tools/ComServ behavior.
 
-**Hypothesis — recommendation:** first author the original object/interface and create its type
-library in the Delphi 7 IDE inside Windows 2000, then build server/client there and prove local
-activation. Record compiler version, options, identifiers, resource inclusion and original
-editable contract. Leave IDE-generated binary TLB/RES local; the build instructions must allow
-the owner to regenerate them from the documented original interface. Do not copy licensed
-sample projects or vendor units into the repo.
+**Hypothesis — required D7 source/help verification, each pending owner confirmation:**
 
-**Hypothesis — command-line alternative:** once the necessary original Pascal, compiler config
-and locally generated TLB/resource inputs exist, test the same project with `delphi 7 build`
-under Wine, then run the result in Windows. Rebuilding an EXE from an existing TLB is distinct
-from creating that TLB without an IDE. `tlibimp` imports an existing library; registration tools
-register it. Neither is evidence that `dcc32` produces it from Pascal.
+| Point | Later verification / evidence; currently hypothesis |
+|---|---|
+| ComServ can host this EXE without a TLB resource | Read exact D7 ComServ initialization/type-library access and matching help; identify any mandatory TLB lookup and prove the original EXE's local startup/activation without adding a hidden resource |
+| `TComObjectFactory` registration behavior | Read exact factory/ComServ `/regserver` path and help; record its ProgID/CLSID/LocalServer32 and other writes, including whether it attempts type-library work; verify only inside Windows |
+| Separate AppID registration | Determine whether that D7 factory writes an AppID and its CLSID link; reconcile with the original per-machine .reg files, writing the required AppID/link explicitly without contradictory duplicate ownership |
 
-**Hypothesis — fully IDE-free alternative:** investigate an owner-supplied compatible IDL
-compiler or an original small Pascal tool using `CreateTypeLib`/`ICreateTypeLib`, compiled with
-the licensed D7 command-line compiler. Prove it produces the intended library and marshaling
-metadata on these OSes before adoption. Neither tool availability nor implementation is
-established here. Do not add a new SDK download or silently copy a TLB from vendor media.
-If this route needs material extra work, retain the IDE route; return to the owner if neither
-route can reproduce the library within F1 scope.
-
-**Hypothesis — answer to the no-IDE question:** registration need not use an IDE; a Delphi COM
-EXE can provide a `/regserver` route, subject to verifying this exact D7 project. TLB creation
-without an IDE is technically a separate route to investigate, **not a proven capability of
-the existing Wine wrapper**. Do not promise a clean no-IDE build until its TLB/resource steps
-are tested. No compiler is invoked in this planning task.
+**Hypothesis:** keep all three points labelled hypotheses until the owner confirms the
+matching source/help and Windows evidence; successful compilation alone does not settle them.
+This task performs no licensed source/help or media-content inspection. During the later build,
+use owner-provided installed D7 source/help for that verification; do not copy vendor units/help
+into the repo or substitute modern RAD Studio behavior. Keep original registration/undo files
+consistent with observed factory writes and preserve unrelated application/system keys.
 
 ### Transfer without F5 packaging
 
 **Read-only-checked:** the helper already has `exch_put`, app-CD support and guest-stopped
 guards; `nt_cmd run` can transfer and launch, so it is not a harmless file-copy/status action.
-**Hypothesis:** prefer existing stopped-guest **put/get exchange** operations under explicit
-owner approval, with the real exchange drive letter confirmed in Windows. Never mount/write
-system disks from Linux or write exchange while a guest is running. Transfer only original
-source plus the required local build outputs; record source revision and output checksums.
+**Owner-reported — transfer path:** through exchange, with each guest stopped, put the server
+EXE and its original server .reg/undo files into Windows 2000; put the client EXE and its
+original client .reg/undo files into NT. Record source revision and output checksums. No
+vendor DLL/media or type library travels with the primary probe.
+Also stage the client EXE in Windows 2000 to perform the required local activation before
+testing it remotely from NT; it needs no remote-client .reg settings for that local mode.
 
-**Hypothesis — alternative:** a manually created app CD through existing tooling, with an
-allowlisted folder containing only original probe source/local probe builds. Store staging and
-the local ISO under established assets/guest-workspace locations; `<guest> cd` takes an ISO,
-not a folder. Do not sweep install-media directories, DLL collections or database fixtures into
-it. No automatic pack command/menu, ISO generator feature, runtime bundling, installer or F5
-release kit. Proprietary components stay owner-supplied and out of public artifacts.
+**Owner-reported — Windows build fallback:** deliver the original source/configuration and
+registration files to Windows 2000 through stopped-guest exchange, build there, then take the
+Windows 2000 → Linux → NT hop for the client EXE/registration files. Shut down the source guest
+before extraction and the destination guest before insertion. Preserve the same source/output
+checksum record across that hop. Registration/activation remains inside the Windows guests.
+
+**Hypothesis:** confirm the real exchange drive letter and exact per-machine destinations in
+Windows. Never mount/write system disks from Linux or write exchange while a guest is running.
+Use existing put/get operations only after approval. No app-CD path is selected for F1; F5
+packaging remains deferred. Do not add pack/menu/ISO generation, runtime bundling or an installer.
+Proprietary components stay owner-supplied and out of public artifacts.
 
 ### Per-machine registration and activation sequence
 
-**Hypothesis — Windows-only procedure to verify against actual generated project/help:**
+**Owner-reported:** original per-machine .reg files and matching undo supply AppID, CLSID link
+and RemoteServerName; no type library is registered in the primary probe. All steps below are
+Windows-only. **Hypothesis — verify exact behavior against D7 source/help and owner evidence:**
 
 1. On **Windows 2000**, place the server in a stable owner-selected local directory. Record
    identifiers and backing files; register the server there (candidate `ProbeServer.exe
    /regserver`, with matching unregister instructions). Verify the actual ProgID → CLSID →
-   AppID association, LocalServer32 path and interface/type-library entries. Apply F0's
+   AppID association and LocalServer32 path against the factory's observed writes. Import the
+   original server .reg file to establish/reconcile its AppID and CLSID link; preserve the
+   matching undo and baseline. Confirm no type library was registered. Apply F0's
    per-application launch/access/location/identity settings to this real application.
 2. Still on **Windows 2000**, run client local mode, allowing only local-server activation.
    Stop a prior interactive server to distinguish activation from attachment to an existing
    instance. Record activation, method result and server identity; repeat once after shutdown
    of that probe server. No remote configuration is used to manufacture a local pass.
-3. On **NT 4.0 SP6a**, supply only the client and verified registration/type information it
-   needs. Register the actual interfaces/type library and class/AppID association separately
-   from the remote EXE's location. A candidate owner-run registration-only invocation of the
-   server on NT is acceptable only if verified to exit without launching the application;
-   prefer minimal documented client-side entries to installing an active server there.
-   Never use `regsvr32` on an EXE or treat TLB registration as full server registration.
-4. On NT's matching AppID set **RemoteServerName** to the Windows 2000 server's managed-link
-   identity. Prefer the documented second-NIC IPv4 for the first test, then its verified
+3. On **NT 4.0 SP6a**, supply the client EXE and original client .reg/undo files. Import only
+   its class/AppID association and remote activation settings; do not put/register a server
+   EXE, custom interface or type library there. System IDispatch support is the candidate
+   marshaling path to verify. Never use `regsvr32` on an EXE.
+4. The original NT .reg file sets **RemoteServerName** under the matching AppID to Windows
+   2000's managed-link identity. Prefer the documented second-NIC IPv4 first, then its verified
    Windows name if needed. Record name resolution and actual endpoint; ensure the first-NIC
    route cannot be mistaken for the intended managed-link result. If RPC advertises another
    interface and changes the path, record/investigate it within budget, not call it a pass.
-5. Client remote mode should request **remote-server activation only** and use that AppID
-   configuration without an explicit machine override. Verify the remote marker/identity and
-   that no local server instance satisfies the call. As a separate diagnostic alternative,
-   use explicit remote activation (e.g. `CreateRemoteComObject`/`CoCreateInstanceEx`) with
-   the same target; label it distinctly and never infer that it validates RemoteServerName.
-6. Document undo: unregister only the probe, restore its backed-up application settings,
+5. Client remote mode calls its own `CoCreateInstance(Ex)` with **`CLSCTX_REMOTE_SERVER`**
+   and IID_IDispatch, then GetIDsOfNames/Invoke. Use the AppID configuration without an explicit
+   machine override first, verifying RemoteServerName, the remote marker/identity and absence
+   of local fallback. Local mode uses **`CLSCTX_LOCAL_SERVER`**. `CreateOleObject` is excluded.
+   A separate `CoCreateInstanceEx` diagnostic with explicit COSERVERINFO target is labelled
+   distinctly and cannot validate RemoteServerName. Neither route consults/registers a TLB.
+6. Document undo: use each matching original per-machine undo file for the probe-owned keys,
+   unregister only the probe's factory entries where applicable, restore backed-up application settings,
    retain domain/other COM registrations and original raw evidence. Registration performed
    in Wine affects Wine, not either Windows guest. Credentials are entered only in Windows.
 
@@ -227,18 +296,18 @@ release kit. Proprietary components stay owner-supplied and out of public artifa
 [RemoteServerName reference](https://learn.microsoft.com/en-us/windows/win32/com/remoteservername)
 places the setting under the client's AppID; an explicit `COSERVERINFO` target overrides it.
 **Hypothesis:** therefore a successful explicit-target call alone cannot verify this registry
-route. Actual D7 registration switches, marshaling dependencies and NT execution remain
-unverified; BUILD/REGISTER instructions must be corrected from owner evidence before a GO.
+route. Actual D7 factory/ComServ behavior, registration switches, system IDispatch marshaling
+and NT execution remain hypotheses until source/help verification and owner confirmation;
+BUILD/REGISTER and matching .reg/undo files must reflect that evidence before a GO.
 
 ### TCG measurements, outcome and bounded diagnosis
 
 **Owner-reported:** v101 found no Windows 2000 KVM fix; keep its TCG/no-sound baseline.
-**Hypothesis:** start at existing guest allocations. For the required two-guest TCG timing,
-recommend a separately approved temporary NT TCG override if its current selection is different;
-restore the original config afterward. This is one workload measurement, not an NT accelerator
-comparison or default change. No memory/SMP tuning or audio retest. Record the actual accelerator
-for each guest; an NT-auto/KVM run cannot fill the both-TCG evidence cell. If the required run
-is not approved or cannot be completed, record the gap and leave the timing gate pending.
+**Owner-reported — revised timing:** measure the demo's **real configuration**: NT uses its
+configured accelerator and Windows 2000 uses TCG. Record each guest's actual accelerator in
+private evidence. No temporary NT TCG override, accelerator comparison or default change.
+**Hypothesis:** start at existing allocations; no memory/SMP tuning or audio retest. If a
+measurement cannot be completed, record the gap rather than inventing a timing result.
 
 **Hypothesis — measurement protocol:** with heavy models/databases stopped by the owner,
 record Windows 2000 alone and then both guests running: time to usable desktop/logon, one
@@ -257,8 +326,8 @@ versions, attempted settings, timeout/timings and repo-relative evidence referen
 explicit-target call with an unresolved configured route is a qualified finding, not an
 unqualified GO. A missing prerequisite stops F1 before the test and leaves its gate pending.
 
-**Hypothesis — one bounded diagnosis after initial NO-GO:** one owner-approved session, at
-most **60 minutes and three single-variable trials**. Work from the observed phase: local COM
+**Owner-reported — choice 10 approved:** one bounded diagnosis after initial NO-GO, at
+most **60 minutes and three single-variable trials**. **Hypothesis:** work from the observed phase: local COM
 registration, remote naming/endpoint reachability, authenticated permissions/identity or actual
 runtime dependency. Restore the baseline between trials, retain the original failure and record
 each result. Stop earlier for lost NIC settings, unsafe recovery, low headroom or scope growth.
@@ -274,6 +343,9 @@ sources/docs/results, symlink refusal, unchanged launcher actions and confirmed-
 Validate source/output allowlists and that generation/steps/status/results never invokes a
 compiler, guest engine, listener, transfer or registration tool. Retain v101's LAN identity/
 status/argv coverage; account for evidence bytes without double counting guests/demo content.
+Check the generated primary manifest contains original per-machine .reg/undo files and no
+type-library resource dependency or vendor binaries. Portable checks do not claim that ComServ works
+without a TLB, factory registration is correct, or a live IDispatch call succeeds.
 
 **Hypothesis:** fake fixtures establish lifecycle/ownership boundaries, not Delphi compilation,
 COM ABI or DCOM security. Real owner F0/F1 results stay under `assets/logs/delphi-probe/`, with

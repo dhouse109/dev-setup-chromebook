@@ -1,11 +1,11 @@
 # dev-setup-chromebook v102 plan
 
-Nov 9, 2026 · **DRAFT — owner choices pending; planning only**
+Nov 9, 2026 · **DRAFT — owner decisions recorded Nov 9; planning only**
 
 **Read-only-checked:** baseline is released `v101`, commit
 `68113ff633e19005707394b375f25dd505cfccee`, the merge of PR #17. After fetching,
-`origin/main` and `v101^{commit}` matched; a live origin query found neither
-`plan/v102` nor `release/v102`. This plan branch starts at that commit.
+`origin/main` and `v101^{commit}` matched; the initial live origin query found neither
+`plan/v102` nor `release/v102`. This plan branch started at that commit and is now PR #18.
 
 Evidence labels apply throughout, including the companion:
 
@@ -14,10 +14,11 @@ Evidence labels apply throughout, including the companion:
 - **Read-only-checked:** repository source/history or linked primary documentation actually
   read during planning. A documented capability is not a successful lab run.
 - **Hypothesis:** proposed design, recommendation, budget, expected behavior or unverified
-  compatibility. All future-tense implementation/validation instructions and owner-choice
-  recommendations below have this label; they are not approved or completed work.
+  compatibility. Future-tense implementation/validation instructions retain this label unless
+  explicitly recorded as an owner decision. Approval of a design does not prove it works or
+  authorize its execution during this planning task.
 
-**Owner-reported scope:** five items only. This commit adds plan documents; implementation,
+**Owner-reported scope:** five items only. This PR changes plan documents; implementation,
 version bumps, real script runs, guest changes and media-content inspection are excluded.
 The v101 plan documents remain unchanged release history. Detailed F0/F1 design is in
 [v102-delphi-f0-f1.md](v102-delphi-f0-f1.md).
@@ -30,8 +31,8 @@ The v101 plan documents remain unchanged release history. Detailed F0/F1 design 
 |---|---|---|
 | 1 | Released-v101 six-flag baseline | Early owner-run init → setup → init → test, saved logs, disk preflight and a fix ledger |
 | 2 | Guest network matrix | Settled endpoints/origins; owner-recorded HTTP/DNS/local-link results, sanitized summary |
-| 3 | F0 prerequisites | Recoverable owner backup, NT SP6a, Windows DCOM preparation, preserved scaffold docs |
-| 4 | F1 DCOM go/no-go | One-method Delphi 7 probe, local then NT → 2000 activation, TCG timings, recorded GO or NO-GO |
+| 3 | F0 prerequisites | Backup → NT SP6a → Delphi 7 Wine install or Windows fallback → DCOM preparation; preserved docs |
+| 4 | F1 DCOM go/no-go | No-TLB IDispatch probe, Wine build first, local then NT → 2000 activation, real-configuration timings, GO/NO-GO |
 | 5 | Evidence-driven fixes | Initially empty; only reproducible findings from items 1 and 2 |
 
 ## Recorded owner decisions and implementation evidence still needed
@@ -41,21 +42,35 @@ The v101 plan documents remain unchanged release history. Detailed F0/F1 design 
 - The six flags are `install-all install-db-server install-lan-share install-models
   install-ollama-containers install-retro`. Run the released-v101 baseline before
   v102 script changes. The owner runs commands in his terminal; Codex reads saved assets logs.
-- Protect the existing guest lab's disk headroom: recommend the separate regression laptop
-  identified in the Nov 9 request. Keep actual machine identities in private run notes.
+- Protect the existing guest lab's disk headroom: use the approved separate regression laptop.
+  Keep actual machine identities in private run notes. Its item 1 baseline runs in parallel
+  with the owner's guest-lab F0 backup/SP6a steps; both precede item 2, whose NT rows run on SP6a.
 - v101 acceptance was targeted: PASS 159, FAIL 0, WARN 0, SKIP 0 for
   `install-retro install-agentic install-node`. LAN adapter identity, ping/domain,
   first-NIC internet and scaffold menu hand checks passed. This did not run the
   guest network matrix or full six-flag regression.
-- F0 starts with owner-controlled recovery, then NT 4.0 SP6a. Windows 2000 SP4 and
-  NT without a service pack are the historical owner-reported state, to be reconfirmed.
+- F0 order is backup → NT 4.0 SP6a → Delphi 7 Enterprise under Wine (or Windows 2000
+  fallback) → DCOM preparation on both guests. Delphi 7 has not been installed under Wine
+  on any owner's machine. Preflight guest-lab free space and bound the installer attempt.
+  Windows 2000 SP4/NT without a service pack remain historical state, not a new check.
 - F1 is a minimal Delphi 7 object/client, no database or MIDAS provider. Local Windows
   2000 activation precedes NT client → Windows 2000 server on the managed second NIC.
+- Primary F1 uses `TComObject`/`TComObjectFactory` with hand-written `IDispatch` and no type
+  library; original per-machine .reg/undo files supply AppID/CLSID links/RemoteServerName.
+  Build first with `delphi 7 build` under Wine on the guest-lab host. During the later build
+  Codex may execute each approved build command and iterate on compiler errors. Registration,
+  activation and DCOM tests occur only in Windows guests, never Wine.
+- If Wine install/build fails, install Delphi 7 Enterprise in Windows 2000 within F0 and build
+  there, preferring command-prompt dcc32 (IDE equivalent). Record why. The IDE/TAutoObject/TLB
+  route is a documented second fallback and F2 note. F2 expects the Windows 2000 IDE/debugger
+  regardless; v102 requires that installation only if the Wine route fails.
+- Time the real configuration: NT uses its configured accelerator, Windows 2000 uses TCG;
+  record each actual selection. No temporary NT TCG override or NT accelerator comparison.
 - A recorded F1 decision is the release requirement; DCOM success is not. One bounded
   diagnosis is allowed after NO-GO; sockets fallback is a v103 decision.
 - Keep the agreed advanced-demo home. F2–F6 and the other deferrals below are outside v102.
 
-**Read-only-checked:** these limits agree with
+**Read-only-checked:** the historical evidence and carried-forward limits are recorded in
 [v101 owner acceptance](v101-plan.md#owner-acceptance--nov-9-2026-targeted-run),
 [the F0–F6 roadmap](v101-dcom-demo.md#follow-up-work-packages-f0f6-and-acceptance-gates),
 the v101 entries in all four CHANGELOG sections and
@@ -63,8 +78,12 @@ the v101 entries in all four CHANGELOG sections and
 its budget without a Windows 2000 fix; audio was not retested. Those are recorded owner
 findings, not new measurements. No F0/F1 pass is inherited from scaffold readiness.
 
-**Hypothesis — choices awaiting owner review:** numbered choices 1–10 below form the PR's
-decision list. Approval of this draft's scope would not approve executing real commands.
+**Owner-reported — Nov 9 decisions:** choices 1, 2, 4, 5, 6, 9 and 10 are approved as
+recommended, subject to the revised stage order and real-configuration timing below. Choice 3
+selects `http://neverssl.com`, recording redirects separately; no owner-hosted internet marker.
+Choices 7/8 adopt the no-TLB Wine-first build, original heredocs and stopped-guest exchange path
+specified in item 4 and the companion. These choices are settled; exact peer identifiers and
+individual run approvals remain operational inputs, not reopened design decisions.
 
 ## Shared implementation and validation contract
 
@@ -80,7 +99,9 @@ decision list. Approval of this draft's scope would not approve executing real c
 - Setup remains unattended/idempotent. No automatic guest boot, DCOM configuration, domain
   changes, service-pack application or registration from Linux. Every real script, guest,
   listener, compiler or transfer run requires owner approval. Prior v101 approvals are not
-  permission for new v102 experiments. No sudo, heavy service starts or host-guard bypasses.
+  permission for new v102 experiments. The later Codex Wine-build scope still requires
+  per-command approval; it authorizes no Wine registration/activation/DCOM testing. No sudo,
+  heavy service starts or host-guard bypasses during planning.
 - Licensed media, vendor DLLs, seed data and credentials never enter the repo or public
   artifacts. Do not open media contents in this task. Before any later names-only inventory
   of install-media folders, ask once for that inventory scope; publish only edition/version
@@ -131,9 +152,9 @@ heavy workloads stopped by the owner, preflight allocated/free disk using `df -B
 existing stacks/guest workspaces/assets/model stores, the last disk TSV and `docker system df`.
 Do not enumerate licensed-media contents. Estimate missing downloads, unpacking/build space,
 model/container growth and retained logs; do not treat `install-all` alone as these six flags.
-Recommend remaining free space **at least estimated peak additional allocation + 10 GiB reserve**
-before starting. This is a proposed run budget, not proof the full stack fits or a new installer
-threshold. If estimates are unknown or space insufficient, stop for owner sizing; no pruning,
+Require remaining free space **at least estimated peak additional allocation + 10 GiB reserve**
+before starting under approved choice 1. This is a run budget, not proof the full stack fits
+or a new installer threshold. If estimates are unknown or space insufficient, stop for owner sizing; no pruning,
 guest moves, cache deletion or silent host substitution. Recheck after setup and before test.
 
 **Hypothesis — commands for later individual owner approval, not execution now:**
@@ -164,9 +185,9 @@ finding exists. Keep demo outside the four-command regression.
 
 ### Owner choices
 
-**Hypothesis — choice 1:** approve early released-v101 baseline on the requested separate
-regression host, with the peak-space budget/reserve above; alternative is owner-selected sizing
-or timing, without consuming guest-lab headroom. This is not permission to run it now.
+**Owner-reported — choice 1 approved Nov 9:** early released-v101 baseline on the privately
+selected separate regression host with the peak-space budget/reserve above. Run it in parallel
+with owner F0 backup/SP6a on the guest lab; both finish before the matrix. No run starts now.
 
 ## 2. Execute the guest network matrix
 
@@ -179,37 +200,38 @@ The historical ping/domain acceptance is not an HTTP/DNS matrix result.
 
 ### Approach and endpoint choices
 
-**Hypothesis — choice 2:** retain TCP **8765**, `/marker`, and the v101 marker body for direct
-comparison. Check port availability first; if occupied, stop and select another port explicitly,
+**Owner-reported — choice 2 approved Nov 9:** retain TCP **8765**, `/marker`, and the v101
+marker body for direct comparison. Check port availability first; if occupied, stop and select another port explicitly,
 updating all private run URLs. Same-host bind is `127.0.0.1`: Wine uses loopback; NT/2000 use
 the existing user-NIC host alias, and win95's installed slirp alias must be verified. If alias
 reachability fails, record it; do not silently switch to `0.0.0.0`. Peer marker binds only the
 peer's specific Tailscale IPv4. No persistent listener or ChromeOS port forwarding. Stop each
 listener and confirm the port is free when finished.
 
-**Hypothesis — choice 3:** use a **public plain-HTTP marker endpoint controlled by the owner**,
-preferably port 80, HTTP/1.0-compatible, fixed text and no mandatory HTTPS redirect. Owner supplies
-the exact URL privately and verifies it from Linux immediately before/after the guest checks.
-Alternative: an explicitly accepted third-party HTTP endpoint with weaker control, recording
-redirects separately. Do not mistake the peer tailnet marker for the internet test or assume
-an example public site is controlled. No public endpoint is provisioned by this plan.
+**Owner-reported — choice 3 settled Nov 9:** use **`http://neverssl.com`** for the internet
+category, recording any redirect separately. No owner-hosted marker site. **Hypothesis:**
+observe status/body/redirect from Linux immediately before/after guest checks; availability and
+legacy-client compatibility remain untested here. The peer tailnet marker stays a separate
+controlled target and is not the internet result.
 
-**Hypothesis — choice 4:** use one available peer laptop with normal tun-mode Tailscale and the
-temporary marker. Owner records its IPv4, short name and full tailnet name privately before
+**Owner-reported — choice 4 approved Nov 9:** use one available peer laptop with normal tun-mode
+Tailscale and the temporary marker. Owner records its IPv4, short name and full tailnet name privately before
 running. Test all three against the same peer/port/path. Public docs use target categories and
 resolution results; actual names/addresses stay in assets. Guest DNS may fail while IPv4 passes.
 This is first/user-NIC HTTP to a peer, not a remote guest second-NIC transport.
 
-**Hypothesis — choice 5:** schedule Wine, win95, NT and 2000 using only their already available
-HTTP tools/browsers. For each origin run same-host, peer IPv4, peer short/full name, internet HTTP
+**Owner-reported — choice 5 approved Nov 9:** schedule Wine, win95, NT and 2000 using only
+their already available HTTP tools/browsers. For each origin run same-host, peer IPv4, peer short/full name, internet HTTP
 and a bounded HTTPS comparison. Mark an origin/category **unsupported with reason** only if
 the required existing tool/capability is absent; install no browser/tool just for the matrix.
 An available path that fails is FAIL, not unsupported. No time to run is NOT RUN. Keep Win31
 outside the matrix and HTTPGET's placeholder NOT RUN/deferred. The owner confirms this origin
 inventory before starting; unsupported cells must be explicitly accepted at release.
 
-**Hypothesis:** copy the template to a named assets results file; record actual tool/engine,
-DNS, connect, HTTP status/body/redirect, elapsed time, outcome and evidence separately. Do not
+**Owner-reported — stage order:** complete the item 1 baseline and guest-lab backup/SP6a before
+the matrix; run the NT rows once on SP6a, not an initial pre-SP6a matrix followed by a routine
+post-SP6a repeat. **Hypothesis:** copy the template to a named assets results file; record actual
+tool/engine, DNS, connect, HTTP status/body/redirect, elapsed time, outcome and evidence separately. Do not
 invent TCP observations a browser cannot expose; use “not observed”. HTTPS results describe
 legacy TLS only, not an HTTP failure. Recheck local second-NIC ping/domain and adapter settings
 without re-adoption; new hardware/lost settings stops the run for recovery. Owner records raw
@@ -218,12 +240,12 @@ results; Codex prepares only a sanitized summary. Gaps and failures feed item 5.
 ### Files/functions, dev-test coverage, docs and owner choices
 
 **Read-only-checked:** procedure text is also embedded in `demo_retro_advanced`'s STEPS heredoc.
-**Hypothesis:** update that copy and `docs/guest-network-tests.md` together after choices settle;
+**Hypothesis:** update that copy and `docs/guest-network-tests.md` together to reflect settled choices;
 extend results guidance without replacing existing owner templates/results. Reconcile all 27
 rows with observations or explicit unsupported/deferred dispositions. Update demo/checklist links
 at build time. Retain isolated LAN/scaffold checks; dev-test never requires a peer, public
-endpoint, browser, guest or live network matrix. Disk row is already present. Owner choices
-2–5 settle port/bind, internet endpoint, peer/name forms and eligible origins before any run.
+endpoint, browser, guest or live network matrix. Disk row is already present. Choices 2–5 are
+settled; record the actual peer/name forms and existing-tool inventory privately before a run.
 
 ## 3. F0 lab prerequisites
 
@@ -231,9 +253,15 @@ endpoint, browser, guest or live network matrix. Disk row is already present. Ow
 
 **Owner-reported:** NT SP6a is supplied and should precede application work; Windows 2000 SP4 is
 the recorded baseline. **Read-only-checked:** v101 provides foundation docs, not completed F0.
-**Hypothesis:** owner shuts down guests, makes a recoverable system/config/exchange backup,
-then installs SP6a in Windows and confirms version/domain/local NIC health. A system-disk
-snapshot alone is insufficient. Document DCOM preparation on both operating systems: Enable
+**Owner-reported — F0 order:** owner-controlled backup → SP6a on NT → Delphi 7 Enterprise
+Wine install (or Windows 2000 fallback) → DCOM preparation on both guests. The first two
+steps run in parallel with item 1, before the item 2 matrix. **Read-only-checked:** the
+existing install command is `delphi 7 setup`, dispatched by `delphi_n_cmd` to `dn_setup`
+inside `DEVRETRO_EOF`. **Hypothesis:** check guest-lab free space
+for Wine prefix, possible media staging, compiler outputs, logs and retained recovery reserve;
+attempt the installation within a bounded session, then take the recorded Windows fallback
+if installation or compilation fails. Confirm version/domain/local NIC health after SP6a.
+A system-disk snapshot alone is insufficient. Document DCOM preparation on both systems: Enable
 DCOM, authentication/impersonation, and HADAMIN account launch/access permissions; owner applies
 it only in Windows. [Companion F0](v102-delphi-f0-f1.md#f0-lab-and-prerequisite-record) gives the
 backup boundary, settings, media table and stop conditions.
@@ -249,10 +277,12 @@ scratch even when no actual demo/guest/media exists. Keep normal disk accounting
 
 ### Owner choices
 
-**Hypothesis — choice 6:** approve the recovery scope and Windows-only DCOM preparation, starting
-with Connect authentication/Identify impersonation and per-application HADAMIN account grants,
+**Owner-reported — choice 6 approved Nov 9:** recovery scope and Windows-only DCOM preparation,
+starting with Connect authentication/Identify impersonation and per-application HADAMIN account grants,
 with no blanket anonymous/Everyone access. Exact account and recovery location stay private.
 F0 completion requires owner confirmation; a generated document is not its completion.
+The later owner install step is explicitly `delphi 7 setup`, after free-space review; no
+installation or media-content inspection occurs during this planning revision.
 
 ## 4. F1 DCOM go/no-go
 
@@ -261,22 +291,34 @@ F0 completion requires owner confirmation; a generated document is not its compl
 **Read-only-checked:** no application sources exist in the v101 scaffold; `dn_build` in setup's
 helper invokes `dcc32.exe` under Wine from the project directory, passing extra compiler options
 and preserving producer status. It has no explicit type-library generation or guest-registration
-step. **Hypothesis:** a Delphi 7 out-of-process Automation object exposes one method returning
-fixed text plus the server computer/process identity. Prove local Windows 2000 activation, then
-NT → 2000 over the managed second NIC. No database, provider, MIDAS DLL requirement or new flag.
+step. **Owner-reported — revised design:** an out-of-process Delphi 7 `TComObject`, registered
+through `TComObjectFactory`, implements `IDispatch` by hand without a type library.
+`GetTypeInfoCount` returns 0; `GetIDsOfNames` maps one name to one DISPID; `Invoke` returns
+the fixed marker plus server computer name/process account. The client calls late-bound through
+its own `CoCreateInstance(Ex)`: local mode uses `CLSCTX_LOCAL_SERVER`, remote mode uses
+`CLSCTX_REMOTE_SERVER`. `CreateOleObject` is not the selected activation path. These are approved
+design choices; Delphi 7/ComServ compatibility remains a hypothesis until verified and confirmed.
 
-**Hypothesis:** prefer initial authoring/type-library creation and first build in Delphi 7's
-Windows 2000 IDE; evaluate Wine `delphi 7 build` as an alternative once original sources and a
-locally generated type library exist. `dcc32` alone is not evidenced to create that library.
-Keep original editable text repo-tracked and create-if-missing in `advanced-demo/delphi7/probe`;
-owner experimentation goes in `work/`. Prefer stopped-guest exchange transfers; an allowlisted
-manual source/application CD is an alternative, without an F5 `pack` command or menu.
+**Owner-reported — build/source/transfer:** primary build is `delphi 7 build` under Wine on
+the privately designated guest-lab host, with per-command approval for Codex builds/compiler-error
+iterations during the build stage. Original quoted heredocs in `demo_retro_advanced` generate
+create-if-missing text in `advanced-demo/delphi7/probe`; experiments belong in `work/`.
+Put server EXE/server .reg and undo files into Windows 2000, and client EXE/client .reg and undo
+files into NT via exchange with each guest stopped; record source revision/output checksums.
+Also stage the client EXE in Windows 2000 for the required local activation test.
+If Wine install/build fails, install D7 Enterprise in Windows 2000 within F0 and prefer dcc32
+there (IDE equivalent), recording why; add the Windows 2000 → Linux → NT transfer hop.
+The IDE/TAutoObject/type-library route is a documented second fallback and F2 note, not the
+primary probe. No database/provider/MIDAS requirement, new flag or F5 packaging.
 
-**Hypothesis:** registration is per machine in Windows, independent of where compilation ran.
-Record server CLSID/AppID/ProgID/type-library associations, then client interface/type-library
-and remote activation configuration. Explicit remote target and RemoteServerName are different
-activation routes; demonstrate the selected route without letting local fallback mask failure.
-Measure both guests' TCG responsiveness and record a GO or NO-GO with evidence. The
+**Owner-reported — registration:** original per-machine .reg files and matching undo files write
+the AppID, its CLSID link and client RemoteServerName. No type library is registered on either
+machine in the primary probe. All registration, activation and DCOM testing occur in Windows.
+**Hypothesis:** verify against D7 source/help, then obtain owner confirmation: ComServ operation
+without a TLB resource, exact `TComObjectFactory` `/regserver` writes, and whether it supplies an
+AppID or the separate file must do so. Distinguish configured RemoteServerName activation from
+an explicit target override; no local fallback. Record GO/NO-GO and responsiveness with NT on
+its configured accelerator and Windows 2000 on TCG, naming each actual accelerator privately. The
 [companion F1](v102-delphi-f0-f1.md#f1-object-build-and-deployment-choices) specifies alternatives,
 registration boundaries, timing and one bounded diagnosis.
 
@@ -294,14 +336,13 @@ includes local probe evidence once and guest/demo content in existing rows.
 
 ### Owner choices
 
-**Hypothesis — choice 7:** initial D7 IDE build on Windows 2000; Wine command-line alternative
-only after verifying type-library/resource prerequisites. **Choice 8:** repo-tracked original
-text generated into `delphi7/probe`, preserving edits, with `work/` for experiments; exchange
-transfer first, manual app CD only if needed. **Choice 9:** Windows-only per-machine registration,
-Connect/Identify baseline and an explicitly recorded server execution identity, as detailed in
-the companion. **Choice 10:** accept GO/NO-GO and TCG evidence as the F1 gate, one diagnostic
-session of at most 60 minutes/three single-variable trials after initial NO-GO; sockets waits
-for v103. These budgets are proposals pending owner agreement.
+**Owner-reported — choices 7/8 revised and settled Nov 9:** no-TLB manual IDispatch, Wine-first
+build, Windows dcc32/IDE build fallback, IDE/TAutoObject/TLB second fallback, preserved heredocs
+and stopped-guest exchange transfers as above. **Choice 9 approved:** Windows-only per-machine
+registration, Connect/Identify and recorded server identity, using original .reg/undo files for
+the revised design. **Choice 10 approved:** GO/NO-GO evidence and usability judgment, with one
+diagnostic session of at most 60 minutes/three single-variable trials after initial NO-GO;
+sockets waits for v103. Timing now measures the real NT-configured/Windows-2000-TCG setup.
 
 ## 5. Fixes from items 1 and 2
 
@@ -332,7 +373,7 @@ to an empty placeholder.
 
 | Deferred | Reason |
 |---|---|
-| F2–F4 (Delphi 7 database slice/swap, back-ports) | Wait for F1 decision; avoid adding database/runtime compatibility to the probe |
+| F2–F4 (Delphi 7 database slice/swap, back-ports) | Wait for F1 decision; F2 expects the Windows 2000 Delphi 7 IDE/debugger regardless of v102 Wine success; IDE/TAutoObject/TLB is also a second-fallback note |
 | F5 packaging and transport bridges | Source/runtime manifest and core application must exist first; manual F1 transfer is not a packaging feature |
 | F6 remote second NIC / Tailscale MTU | Separate topology, endpoint identity and size-sensitive transport proof required |
 | Delphi HTTPGET | Separate compiler/deployment/protocol work; item 2 uses available tools only |
@@ -351,15 +392,21 @@ controlled mitigation. No MTU registry edits, remote link or TCP-MSS “fix” i
 
 **Hypothesis — one reviewable commit per stage, with Codex trailer:**
 
-1. **Evidence first (1/2):** released-v101 preflight/baseline early; settle matrix choices,
-   owner runs matrix and records sanitized evidence. No v102 script changes before baseline.
-2. **Triage (5):** populate only evidenced entries; obtain scope decisions for substantive fixes.
+1. **Parallel prerequisites (1/3):** owner runs the released-v101 preflight/baseline on the
+   approved regression host while owner backup → NT SP6a proceeds on the guest lab. Both complete before item 2;
+   no v102 script changes before the baseline. Keep the two evidence sets separate.
+2. **Matrix and triage (2/5):** run NT rows once on SP6a under the settled choices, recording
+   actual peer/name forms privately; collect sanitized results and only evidenced fix entries.
+   Continue F0 in order with the free-space-checked, bounded `delphi 7 setup` Wine install
+   (or Windows 2000 fallback), then Windows-only DCOM preparation. Obtain substantive fix scope.
 3. **F0 scaffold (3):** first script change bumps all-four/README/CHANGELOG to 102. Add preserved
    prerequisites/media docs, portable lifecycle checks, docs and disk-row accounting. Owner
-   completes recovery/SP6a/DCOM preparation before F1; stop if prerequisites are missing.
+   records the ordered recovery/SP6a/Delphi install/DCOM work before F1; stop for missing prerequisites.
 4. **F1 probe (4):** original source/build/registration instructions and preservation fixtures;
-   owner local build/activation, remote activation, TCG measurements and GO/NO-GO record.
-   One bounded diagnosis if needed; no transition into F2 or sockets.
+   Codex may run individually approved Wine builds and iterate compiler errors. If Wine fails,
+   complete the Windows 2000 installation/build fallback within F0 and record why. Owner handles
+   all guest registration, local then remote activation, real-configuration measurements and
+   GO/NO-GO. One bounded diagnosis if needed; no transition into F2 or sockets.
 5. **Evidenced fixes (5):** targeted changes and regressions, or record no fixes if no findings.
    A blocking baseline defect can be fixed earlier after its evidence/approval, with the same
    first-script version-bump rule. Revalidate any affected earlier evidence.
@@ -370,12 +417,19 @@ controlled mitigation. No MTU registry edits, remote link or TCP-MSS “fix” i
 
 **Hypothesis — proposed release gate, separate from planning approval:**
 
-1. Settle choices 1–10, merge the plan and authorize individual real runs. Execute item 1 early
-   at released v101 and item 2 under the settled procedure. Save logs before fixing anything.
+1. Use settled choices 1–10; merge the plan and authorize individual real runs. Run item 1 at
+   released v101 in parallel with the owner's guest-lab backup/SP6a. After both finish, execute
+   item 2 with NT rows once on SP6a. Save logs before fixing anything. Complete the remaining
+   F0 order: Delphi Wine install/free-space check or Windows fallback, then DCOM preparation.
 2. Build on `release/v102`, preserve edits/results and pass static/portable checks. A build
    without owner runtime evidence is **built, not yet confirmed run on a Chromebook**.
-3. Complete F0 owner backup/SP6a/settings record; execute F1 local then remote tests. Record
+3. Complete the ordered F0 recovery/SP6a/Delphi install/settings record; check the no-TLB D7
+   hypotheses against installed source/help, retaining hypothesis labels until owner confirmation.
+   Build primarily under Wine with per-command approval;
+   record any fallback and transfer hop. Execute F1 registration/local then remote tests only
+   inside Windows. Measure NT's configured accelerator with Windows 2000 TCG, without overrides. Record
    GO or NO-GO, artifacts/identifiers, HRESULT/failure phase, timings and bounded diagnosis.
+   Record owner confirmation of the Delphi behavior against the source/help and Windows evidence.
    Success is not required; missing prerequisites are not silently called a tested NO-GO.
 4. On the candidate v102 repeat the full six-flag init → setup → init → test sequence on the
    regression host after renewed preflight/approval. Gate is **FAIL 0**, normal prompt return,
@@ -388,8 +442,9 @@ controlled mitigation. No MTU registry edits, remote link or TCP-MSS “fix” i
    shared flags/init/setup/test change requires the full six-flag rerun, not a narrow substitute.
    Run the applicable init → setup → init → test sequence for changed installed behavior;
    owner-run dev-demo install-retro separately checks create/refresh preservation and menu.
-6. Re-run failed/changed matrix paths plus same-host HTTP, local ping/domain and first-NIC
-   health after relevant fixes/SP6a. Re-run F1 if later changes affect its sources/registration/
+6. SP6a precedes the initial matrix; no routine second matrix is required merely for SP6a.
+   After relevant later fixes/changes, re-run failed/affected matrix paths plus same-host HTTP,
+   local ping/domain and first-NIC health. Re-run F1 if later changes affect its sources/registration/
    transport. Record every required matrix row as observed or owner-accepted unsupported;
    only deliberately deferred Win31/HTTPGET work stays outside acceptance.
 7. Release requires clean regression, matrix recorded, **F0 done**, and **F1 decision recorded**.
@@ -402,4 +457,5 @@ controlled mitigation. No MTU registry edits, remote link or TCP-MSS “fix” i
 current function definitions were read at the baseline above. Public technical references and
 their modern-documentation limits are linked in the companion. No media inventory was needed;
 no install-media folder listing or contents inspection took place. No setup/init/test/demo,
-guest, compiler, listener or transfer was run during planning. Plan choices remain DRAFT.
+guest, compiler, listener or transfer was run during planning. The document remains DRAFT with
+the Nov 9 choices settled; technical hypotheses and real-run evidence remain unconfirmed.
