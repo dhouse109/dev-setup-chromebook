@@ -29,6 +29,12 @@ in the scripts. They are coarser than the rest, and a version with no surviving 
 
 The installer: it sets up each stack the flags name. Newest version first.
 
+- **v101** (owner accepted Nov 9, 2026, targeted run):
+  - Source archives use a regular shared-rules import and CI checks. NT defaults to Pentium with an independent once-only review; quote-aware comment handling lets untouched v100 templates migrate while real shell constructs stay protected; audio auto prefers available native PipeWire, with explicit backend overrides. Valid owner renderers are informational.
+  - Inspector diagnostics no longer claim a persistent offline cache. Devclean retains npm clearing and explains the online-use requirement in report and successful cleanup. Owner confirmed cleanup caused the historical ENOTCACHED by removing registry metadata.
+  - Local-only NT/2000 LAN status/on/off, conservative atomic LAN-key edits, reciprocal port/MAC checks, no-write status and pre-launch validation. Second NIC stays at the proven suffix position; ambiguous custom devices require recorded explicit PCI placement. Existing first NIC, setup exchange gate and app CD stay intact.
+  - Network protocol/docs separate existing-browser evidence from deferred Delphi HTTPGET and application stages. Owner LAN adoption/identity, ping/domain and first-NIC internet hand checks passed; the guest network matrix and full six-flag regression remain NOT RUN.
+
 - **v100** (owner accepted Nov 7, 2026, with known issues):
   - NuGet downloads and builds use IPv4 without changing system networking.
   - Win95 boots use image disks, avoiding the shared-folder boot hang.
@@ -132,6 +138,14 @@ The installer: it sets up each stack the flags name. Newest version first.
 
 The test script: it checks that what setup installed works. Newest version first.
 
+- **v101** (owner accepted Nov 9, 2026, targeted run):
+  - Save QEMU smoke-test diagnostics before waits, correlate QMP replies and bound owned-child cleanup. Errors remain FAIL. Isolated checks cover exact v100 NT templates in LF/CRLF, once-only CPU preservation, real shell refusal, audio policy and renderer diagnostics. Renderer hints describe both windowed and full-screen profiles.
+  - Verify the exact global Inspector release and declared CLI with matching Node/npm prefix, producer exit 0 and result 5; replace bare offline npx. Metadata cache key presence is INFO only. Shared isolated fake-program fixtures cover cleanup, missing/malformed/mismatched installs and misleading producer output.
+  - Shared isolated LAN fixtures cover no-write status, exact handwritten/adopted argv for both guests, pinned device identity, config preservation/refusals, collisions and setup exchange withholding. Existing workspace disk rows include LAN config once; owner adoption checks confirmed unchanged PCI identity/IP/WINS with no new hardware.
+  - Isolated scaffold fixtures verify nested/default launchers, old/new indexes, read-only actions, path refusals, owner-data preservation and explicit clean targets. Demo totals include scaffold once; retained LAN/network evidence has one row.
+  - Owner-run install-retro install-agentic install-node: PASS 159, FAIL 0, WARN 0, SKIP 0, normal prompt return. Acceptance is targeted; the guest network matrix and full six-flag regression remain NOT RUN.
+  - Targeted-run correction (Nov 8 2026, owner approved within v101): export SCRIPT_DIR beside ASSETS so the scaffold check's child shell can find dev-demo. The portable regression now executes the production path setup and check wrapper without an inherited SCRIPT_DIR.
+
 - **v100** (owner accepted Nov 7, 2026, with known issues):
   - .NET checks use IPv4; the connectivity probe reports a warning if unreachable.
   - Isolated checks cover Win95 boot arguments and guest-config upgrades without starting guests.
@@ -205,6 +219,12 @@ The test script: it checks that what setup installed works. Newest version first
 
 The init script: logins, keys and config from secrets.env. Newest version first.
 
+- **v101** (owner accepted Nov 9, 2026, targeted run):
+  - Report the new retro CPU/audio capabilities without claiming guest acceptance.
+  - Inspector checklist records the approved global CLI contract and confirmed cleanup cause; no new keys or login steps.
+  - Checklist adds stopped-guest LAN adoption, backups, static IP/WINS and no-new-hardware acceptance. No new flag, secret or automatic guest configuration.
+  - Checklist adds the fixed-marker network matrix and owner scaffold lifecycle checks, with explicit listener/guest runs and deferred application gates.
+
 - **v100** (owner accepted Nov 7, 2026, with known issues):
   - Retro messages report selected acceleration instead of promising KVM use.
   - NT/2000 guidance explains when to enable the exchange disk.
@@ -260,6 +280,14 @@ The init script: logins, keys and config from secrets.env. Newest version first.
 ## dev-demo-chromebook
 
 The optional demo script: hands-on demos in ~/dev-demo, outside the test loop. Newest version first.
+
+- **v101** (owner accepted Nov 9, 2026, targeted run):
+  - Refresh qualified NT CPU/pointer, SB16/PipeWire, display-profile and OLEnterprise normal-core instructions.
+  - Owner confirmed normal-core boots and persistence with OLEnterprise enabled (Nov 9 2026). Name RunServices' Object Factory value and objfact.exe in docs/STEPS; optional disabling exports the key before deleting only that value. Owner retains it for possible later transport work.
+  - FastMCP Inspector instructions explain online use after npm cleanup and the boundary of v101 global-CLI verification.
+  - Generated NT/Delphi instructions describe local LAN adoption and recorded PCI placement; all Windows networking and guest launches remain owner-controlled.
+  - Independent retro/delphi/advanced-demo foundation, with steps/status/results only and 27 NOT RUN template rows. Compatible relative-path lifecycle/index handles nested launcher paths; rerun/refresh preserve work/results, while confirmed clean lists its targets. Minimal launcher reads no credentials or demo environment. No Delphi source, pack or ISO.
+  - Owner ran dev-demo install-retro and passed steps/status/results hand checks: foundation instructions, both guests' LAN status without launch, and template-copy guidance only. No pack/ISO option.
 
 - **v100** (owner accepted Nov 7, 2026, with known issues):
   - .NET and PowerShell demo downloads and runners use IPv4; existing projects are preserved.

@@ -16,6 +16,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: no tracked symlinks
+        run: python3 tests/check_release_archive.py --index
+      - name: source archive contents and modes
+        run: python3 tests/check_release_archive.py --ref HEAD
+      - name: v101 offline regressions
+        run: python3 tests/test_v101.py
       - name: bash -n
         run: |
           for f in dev-*-chromebook*.sh; do

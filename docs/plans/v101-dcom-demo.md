@@ -17,6 +17,17 @@ plan before the build starts.
 This planning commit changes neither scripts nor installed tools/guests. Real commands still need
 individual owner approval; licensed media is supplied by the owner, never downloaded by the bundle.
 
+**Build record (v101 stages 5–7):** the local command, adoption fixtures, nested
+scaffold and manual network procedure are implemented on release/v101. The owner
+accepted the targeted run on Nov 9, 2026 (159 PASS, 0 FAIL, 0 WARN, 0 SKIP) and
+confirmed guest LAN adoption/identity, ping/domain and first-NIC internet checks.
+The owner also ran dev-demo install-retro and passed the scaffold's steps/status/results
+hand checks, including no guest launch from status and no pack/ISO option.
+The main plan records the exact acceptance scope and checks carried forward.
+The scaffold provides 27 NOT RUN rows and generates no application, pack or ISO.
+Owner code/results survive rerun/refresh; explicit confirmed clean includes work
+inside the scaffold. This build record does not advance any F0–F6 application gate.
+
 ### What v101 supplies
 
 The owner approved **9A local-only** and **9B without pack** in the review of `936737b`. v101 will
@@ -185,7 +196,11 @@ CD carries an InterBase of its year).
 - **DCOM through Tailscale:** DCOM uses dynamic ports and endpoint identities. A raw guest link
   avoids per-RPC NAT mappings, but naming, advertised endpoints and permissions still need separate
   tests in F6. Local ping/domain success alone does not establish remote DCOM.
-- **TCG speed:** two guests on software emulation will be slow; F2 measures it.
+- **TCG speed:** plan the later two-guest demo stages for TCG. The owner's v101 3A
+  investigation exhausted one session/six variants without finding a Windows 2000 KVM fix;
+  irqchip-off was refused and split did not work. Keep Windows 2000 TCG/SOUND=none;
+  audio was not retested. Measure responsiveness from F0/F1 and record the two-guest workload
+  in F2 before promising an interactive demo. Do not budget on an eventual KVM fix.
 
 ## Where the demo's code lives (owner decision, Nov 8)
 

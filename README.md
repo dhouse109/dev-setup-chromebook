@@ -29,8 +29,12 @@ All four take the same flags, so `install-web install-node` means the same thing
 
 Since v94, releases are a tag plus a GitHub Release with GitHub-generated source zip/tar archives
 only. The old release kit was last used for v93 and is retired.
+Retro v101 adds once-only NT CPU review, native-first audio selection and documented display/core profiles; owner LAN adoption and display/core hand checks passed.
+The v101 candidate uses a regular `CLAUDE.md` import so ChromeOS Files can extract it. Archive
+integrity, modes and contents are checked by `tests/check_release_archive.py`. The owner confirmed
+Files extraction of both the stage 6 candidate and GitHub-generated branch zip, plus the Claude import.
 
-> **Current version: v100.** Retro setup reviews guest defaults once per config and records `# v100: defaults reviewed`; new configs start marked and later owner choices are preserved. Owner accepted Nov 7, 2026 with the recorded known issues. [CHANGELOG.md](CHANGELOG.md) has the full history.
+> **Current version: v101.** Owner accepted Nov 9, 2026 (targeted run): `install-retro install-agentic install-node`, PASS 159, FAIL 0, WARN 0, SKIP 0, normal prompt return. The guest network matrix and full six-flag regression remain NOT RUN; see the [acceptance record](docs/plans/v101-plan.md#owner-acceptance--nov-9-2026-targeted-run) for scope and carried-forward checks. [CHANGELOG.md](CHANGELOG.md) has the full history.
 
 v99 implements the [final plan](docs/plans/v99-plan.md): bounded bulk-install retries, stage/EXIT
 reports and focused Playwright, password, model-hint and package-permission fixes. The owner accepted
@@ -161,7 +165,7 @@ heavy engines run one at a time, because Linux gets about 6.4 GB of an 8 GB Chro
 | `install-oracle-full` | Oracle's full image instead of Lite |
 | `install-ldap` / `install-ldap-full` | lldap in Docker / OpenLDAP + lldap |
 | `install-lan` / `install-lan-share` | your laptops as one network (Tailscale, an address book, shared services) |
-| `install-retro` | DOS and Windows 3.1 / 95 / NT 4.0 / 2000 guests (DOSBox-X, QEMU; v100 fixes win95 boot/renderer, defaults DOSBox-X host key to Ctrl+Shift, uses TCG for win2000, and defers NT/2000 exchange until `exchange enable`; includes genisoimage, actionable font retry/status and `delphi N colors` with default/owner-supplied schemes only; `win95 net on/off` manages slirp NE2000), Open Watcom, Delphi 1–7 under Wine (`delphi N build` compiles a Delphi 3–7 project with dcc32, `delphi N vscode` sets it up for VS Code, Cursor and Devin); pulls in `install-com` (COM development under Wine) |
+| `install-retro` | DOS and Windows 3.1 / 95 / NT 4.0 / 2000 guests (DOSBox-X, QEMU; v100 fixes win95 boot/renderer, defaults DOSBox-X host key to Ctrl+Shift, uses TCG for win2000, and defers NT/2000 exchange until `exchange enable`; includes genisoimage, actionable font retry/status and `delphi N colors` with default/owner-supplied schemes only; `win95 net on/off` manages slirp NE2000), Open Watcom, Delphi 1–7 under Wine (`delphi N build` compiles a Delphi 3–7 project with dcc32, `delphi N vscode` sets it up for VS Code, Cursor and Devin); pulls in `install-com` (COM development under Wine); v101 adds local-only `winnt40/win2000 lan status/on/off`, default off |
 | `install-models` | curated local models for Ollama (several GB) |
 | `install-ollama-containers` | lets Docker containers reach Ollama |
 | `install-hermes` / `install-openclaw` | personal agents |
@@ -175,8 +179,18 @@ heavy engines run one at a time, because Linux gets about 6.4 GB of an 8 GB Chro
 | `install-ansible-core` | Ansible without the community collections |
 
 Retro guest hand checks and the qualified Delphi 1/3 install, wheel, recovery and file-transfer findings
-are in [docs/dev-demo.md](docs/dev-demo.md) and the generated STEPS files. Inspector remains under
-its separate investigation gate in [the v100 plan](docs/plans/v100-plan.md); no v100 acceptance is claimed.
+are in [docs/dev-demo.md](docs/dev-demo.md) and the generated STEPS files. v101 verifies the exact installed global MCP Inspector with its matching Node and a real tool call.
+The owner confirmed that `devclean --run` removed npm registry metadata before the historical
+ENOTCACHED failure. Cache key presence is INFO only: after npm cleanup, npx tools such as
+Inspector need one online use before offline resolution. Full offline npx/FastMCP UI operation
+and Python dependencies are not a v101 guarantee; use the installed global CLI for the verified path.
+
+See [local guest LAN and identity-preserving adoption](docs/guest-lan.md) before replacing handwritten second-NIC arguments, then use the [manual guest-network matrix](docs/guest-network-tests.md).
+`dev-demo install-retro` supplies the documentation-only `retro/delphi/advanced-demo`
+scaffold with `steps`, `status` and `results`; it needs no Watcom to generate. Delphi
+application code, HTTPGET, DCOM/database integration, remote mode and pack are follow-ups.
+Owner LAN adoption and display/core checks passed in the accepted targeted run. The published
+guest network matrix and full six-flag regression remain NOT RUN; see the acceptance record.
 
 ## Requirements
 

@@ -1,5 +1,5 @@
 #!/bin/bash
-# dev-setup-chromebook - Version 100
+# dev-setup-chromebook - Version 101
 # Version history: CHANGELOG.md, next to this script in the bundle
 # (one section per script, newest version first).
 
@@ -406,7 +406,7 @@ stage_exit() {   # Reporting must not replace the original failure/signal if the
         for name in "${STAGE_SKIPS[@]}"; do printf 'skip\tskipped\t\t%s\n' "$name"; done
     } > "$report" && cp "$report" "$ASSETS/setup-stages.tsv"
     echo '================================================================='
-    echo 'Setup stage summary (Version 100)'
+    echo 'Setup stage summary (Version 101)'
     for name in "${STAGE_ORDER[@]}"; do
         state=${STAGE_STATE[$name]}
         printf '  %-26s %s%s\n' "$name" "$state" "${STAGE_REASON[$name]:+: ${STAGE_REASON[$name]}}"
@@ -426,8 +426,8 @@ stage_exit() {   # Reporting must not replace the original failure/signal if the
     [ -z "$rerun" ] || printf 'Rerun: %q %s\n' "$SCRIPT_DIR/dev-setup-chromebook.sh" "$rerun"
     echo "Stage report: $report"
     if [ "$rc" = 0 ]; then
-        if [ "$failed" = 0 ] && [ "$pending" = 0 ]; then echo 'Setup Version 100 complete!'
-        else STAGE_EXIT_RC=1; echo 'Setup Version 100 complete with failures; see stages above.'; fi
+        if [ "$failed" = 0 ] && [ "$pending" = 0 ]; then echo 'Setup Version 101 complete!'
+        else STAGE_EXIT_RC=1; echo 'Setup Version 101 complete with failures; see stages above.'; fi
     fi
     echo '================================================================='
     return 0
@@ -529,7 +529,7 @@ stage_expect install-hermes install-hermes
 stage_expect install-openclaw install-openclaw
 stage_expect finalize
 
-echo "Starting comprehensive Chromebook Linux provisioning (Version 100)..."
+echo "Starting comprehensive Chromebook Linux provisioning (Version 101)..."
 
 stage network
 mkdir -p "$ASSETS/logs" "$ASSETS/downloads"
@@ -1406,6 +1406,7 @@ size_of() {
 details() {   # the lines under a category in the report: each old extension version, and the one installed
     local n inst x out b
     case "$1" in
+        npm) echo "      After npm cache cleanup, npx tools such as the MCP Inspector need one online use to work offline again." ;;
         ddev-images)
             out=$(gone_ddev_images) || return 0
             while IFS=$'\t' read -r _ b n; do
@@ -1590,7 +1591,10 @@ for c in "${CATS[@]}"; do
     f1=$(free_bytes)
     case $rc in
         0) echo "done, freed $(human $(( f1 > f0 ? f1 - f0 : 0 ))) (measured $(human "$b"))"
-           grep '^removed ' <<< "$out" | sed 's/^/    /' ;;
+           grep '^removed ' <<< "$out" | sed 's/^/    /'
+           if [ "$c" = npm ]; then
+               echo "    npm cache cleaned: npx tools such as the MCP Inspector need one online use to work offline again."
+           fi ;;
         3) echo "left: $(busy "$c") (close it, then devclean --run again)" ;;
         *) echo "failed (devclean goes on):"; printf '%s\n' "$out" | tail -n 3 | sed 's/^/    /' ;;
     esac
@@ -8177,9 +8181,12 @@ EOF_ENV
     else
         echo "NOTICE: 'uv tool install fastmcp-slim --with fastmcp' failed (is PyPI reachable?); rerun setup with install-agentic."
     fi
-    # The MCP Inspector (Node): installed globally as 'mcp-inspector' and left in npm's cache, so 'npx
-    # @modelcontextprotocol/inspector' and 'fastmcp dev inspector' start without downloading it first. It
-    # needs Node: with install-node (install-all has it), otherwise a NOTICE.
+    # The MCP Inspector (Node) is installed globally as 'mcp-inspector'. npx and
+    # fastmcp dev inspector also resolve disposable registry metadata; after npm
+    # cleanup they need online use before offline resolution. Requires install-node.
+    # v101 (Nov 8 2026): owner confirmed devclean --run preceded ENOTCACHED.
+    # npm can reuse the global CLI while still needing registry metadata first;
+    # successful probes do not establish an independent/persistent npx install.
     if command -v npm > /dev/null 2>&1; then
         if net_retry "bulk packages" npm install -g --allow-scripts=esbuild @modelcontextprotocol/inspector@latest; then
             # v99 (Nov 1 2026: warm-up claimed success after ENOTCACHED): execute the real
@@ -8205,9 +8212,9 @@ PY
                 [ "$rc" = 0 ] && tr -d ' \n' < "$INSPECTOR_LOG.$2" | grep -q '"result":5'
             }
             if inspector_cache_call --yes online && inspector_cache_call --offline offline; then
-                echo "MCP Inspector: installed globally; npx cache verified by an offline tools/call (result 5)."
+                echo "MCP Inspector: installed globally; current online/offline npx diagnostics returned 5. Registry metadata is disposable; this is not a persistent offline-cache guarantee."
             else
-                echo "NOTICE: MCP Inspector installed globally; npx cache warm-up/offline call FAILED (see $INSPECTOR_LOG); rerun install-agentic online."
+                echo "NOTICE: MCP Inspector installed globally; npx diagnostic FAILED (see $INSPECTOR_LOG). After npm cleanup, use npx Inspector online once before trying offline again. Dev-test verifies the global CLI directly."
             fi
         else
             stage_failed "bulk packages" "$?"; break
@@ -10134,6 +10141,7 @@ EOF_DBX
 #   debugger stays on: 'delphi N help' notes what was found with each version.
 # retro:
 #   retro                    the guests: installed or not, running or stopped (Delphi 3-7 once set up)
+#   winnt40|win2000 lan [status|on|off]  local-only second PCnet; default off; static IP/WINS stay manual
 #   retro sizes              the disk sizes in effect (RETRO_EXCHANGE_MB, RETRO_WIN95_DISK_MB) and each disk's
 #   retro run [--in win31|win95|winnt40|win2000|wine|dos] FILE
 #                            run one program; without --in the engine is picked from the file's header:
@@ -10148,7 +10156,7 @@ SELF=$(readlink -f "$0")
 # v100 (Nov 5 2026): setup records the bundle assets path; font logs never depend on caller cwd.
 RETRO_ASSETS=$(cat "${SELF%/*}/assets-path" 2> /dev/null || true)
 STATE="$HOME/.local/state/dev-retro"
-mkdir -p "$STATE"
+# v101: LAN status dispatch precedes all state/workspace creation.
 export MTOOLS_SKIP_CHECK=1
 EXCH_OFF=32256                     # the exchange disk's partition starts at sector 63
 SECRETS="$HOME/.config/dev-init/secrets.env"
@@ -10163,7 +10171,8 @@ die()  { echo "$*" >&2; exit 1; }
 # A launcher icon starts this with no terminal (its entry sets DEV_RETRO_LAUNCHER=1): output then goes to a
 # log, and messages also to a window. Scripts calling it (dev-test, dev-demo) keep their output.
 INTERACTIVE=1
-if [ "${DEV_RETRO_LAUNCHER:-0}" = 1 ] && [ ! -t 1 ]; then
+if [ "${DEV_RETRO_LAUNCHER:-0}" = 1 ] && [ ! -t 1 ] && [ "${2:-}" != lan ]; then
+    mkdir -p "$STATE"
     INTERACTIVE=0
     exec >> "$STATE/launcher.log" 2>&1
     echo "--- $(date '+%F %T') $(basename "$0") $*"
@@ -10300,7 +10309,7 @@ for section, key, _, _ in settings:
         ambiguous = True
     if op == 'read':
         if ambiguous or not found: sys.exit(1)
-        print(found[0][2]); sys.exit(0)
+        print(re.split(r'\s*[#;]', found[0][2], maxsplit=1)[0].strip()); sys.exit(0)
 nl = '\r\n' if b'\r\n' in raw else '\n'
 if not ambiguous:
     for section, key, value, legacy in settings:
@@ -10351,6 +10360,7 @@ dosbox_defaults() {   # migrate only existing files; setup and lazy helper paths
 config_defaults() {
     local g
     for g in win31 win95 dos; do dosbox_defaults "$g" || return; done
+    qemu_defaults winnt40
     qemu_defaults win2000
 }
 # v100 (Nov 5 2026): observations only; never migrate an owner's configs during dev-test.
@@ -10368,7 +10378,12 @@ dosbox_config_status() {
             if [ "$actual" != ctrlshift ]; then echo "$g: hostkey=$actual; recommend [dosbox] hostkey=ctrlshift (owner value kept)"; rc=1; fi
             if [ "$g" = win95 ]; then
                 actual=$(ini_setting read "$f" sdl output) || actual=missing
-                if [ "$actual" != surface ]; then echo "win95: output=$actual; recommend [sdl] output=surface with the guest off"; rc=1; fi
+                # v101 (Nov 8 2026): a recognized renderer is an owner preference, not a failure.
+                case "$actual" in
+                    default|surface|ttf|opengl|openglnb|openglpp|openglhq)
+                        echo "win95: output=$actual (owner profile; surface for windowed redraw, OpenGL for stretching)" ;;
+                    *) echo "win95: output=$actual is missing/ambiguous or unrecognized; verify installed-build support"; rc=1 ;;
+                esac
                 if awk 'BEGIN { a=0; found=0 } /^[[:space:]]*\[/ { a=(tolower($0) ~ /^[[:space:]]*\[autoexec\]/) } a && tolower($0) ~ /^[[:space:]]*mount[[:space:]]+[a-z][[:space:]]/ { found=1 } END { exit !found }' "$f"; then
                     echo "win95: folder mount in autoexec; review before boot c: (left unchanged)"; rc=1
                 fi
@@ -10978,13 +10993,297 @@ win95_snapshot() {   # win95_snapshot save|restore|list|delete [NAME] [--yes]
 # =================================================================================================
 # winnt40, win2000 (QEMU)
 # =================================================================================================
+# v101: local-only second PCnet. Status/edits parse literals without sourcing config.
+lan_config() {
+    local operation=$1; shift
+    python3 - "$GUEST" "$operation" "$WS" "$@" << 'RETRO_LAN_V101_PY'
+"""v101 local second-PCnet link: literal config editing, no shell evaluation."""
+import os
+from pathlib import Path
+import re
+import shlex
+import stat
+import subprocess
+import sys
+import tempfile
+
+KEYS = ('LAN_ENABLED', 'LAN_LOCAL_PORT', 'LAN_PEER_PORT', 'LAN_MAC', 'LAN_PCI_ADDR', 'LAN_PCI_BUS')
+
+
+def defaults(guest):
+    nt = guest == 'winnt40'
+    return dict(LAN_ENABLED='0', LAN_LOCAL_PORT='10001' if nt else '10002',
+                LAN_PEER_PORT='10002' if nt else '10001',
+                LAN_MAC='52:54:00:50:00:10' if nt else '52:54:00:50:00:20',
+                LAN_PCI_ADDR='', LAN_PCI_BUS='')
+
+
+def active_part(line):
+    # Same shell-word/comment handling as the v101 NT-default review. Semicolons
+    # and substitutions inside trailing comments must not make v100 templates ambiguous.
+    quote = None
+    escaped = False
+    word_start = True
+    for index, char in enumerate(line):
+        if escaped:
+            escaped = False
+            word_start = False
+            continue
+        if char == '\\' and quote != "'":
+            escaped = True
+            continue
+        if quote:
+            if char == quote:
+                quote = None
+            elif quote == '"' and char in '$`':
+                raise ValueError('shell substitution requires manual config review')
+            continue
+        if char == '#' and word_start:
+            return line[:index], line[index:]
+        if char in "'\"":
+            quote = char
+        elif char in '$`;&|<>(){}':
+            raise ValueError('complex shell requires manual config review')
+        word_start = char.isspace()
+    if quote or escaped:
+        raise ValueError('unfinished quote/continuation requires manual config review')
+    return line, ''
+
+
+def read_config(path, guest, missing=True):
+    values = defaults(guest)
+    values['EXTRA_ARGS'] = ''
+    if path.is_symlink():
+        raise ValueError('config symlink refused')
+    try:
+        info = path.stat()
+    except FileNotFoundError:
+        if missing:
+            return values, {}, b'', None
+        raise ValueError('config missing; run bundle setup first')
+    if not stat.S_ISREG(info.st_mode):
+        raise ValueError('config must be a regular file')
+    data = path.read_bytes()
+    records = {}
+    for index, line in enumerate(data.decode('latin1').splitlines(keepends=True)):
+        active, comment = active_part(line.rstrip('\r\n'))
+        if not active.strip():
+            continue
+        match = re.fullmatch(r'\s*(?:export\s+)?([A-Za-z_][A-Za-z_0-9]*)=(.*)', active)
+        if not match:
+            raise ValueError('nonliteral config line requires manual review')
+        key, raw = match.groups()
+        parts = shlex.split(raw, posix=True)
+        if len(parts) > 1:
+            raise ValueError('nonliteral assignment requires manual review')
+        value = parts[0] if parts else ''
+        if key.startswith('LAN_') and key not in KEYS:
+            raise ValueError('unsupported LAN key: ' + key)
+        if key in (*KEYS, 'EXTRA_ARGS'):
+            if key in records:
+                raise ValueError('duplicate key: ' + key)
+            values[key] = value
+            records[key] = (index, active, comment)
+    return values, records, data, info
+
+
+def pci_address(value):
+    if not re.fullmatch(r'(?:0x)?[0-9a-fA-F]{1,2}(?:\.[0-7])?', value):
+        raise ValueError('invalid recorded PCI address')
+    slot, _, function = value.removeprefix('0x').partition('.')
+    if int(slot, 16) > 31:
+        raise ValueError('invalid recorded PCI slot')
+    return int(slot, 16), int(function or '0')
+
+
+def validate(values):
+    if values['LAN_ENABLED'] not in ('0', '1'):
+        raise ValueError('LAN_ENABLED must be 0 or 1')
+    for key in ('LAN_LOCAL_PORT', 'LAN_PEER_PORT'):
+        if not re.fullmatch(r'[1-9][0-9]{3,4}', values[key]) or not 1024 <= int(values[key]) <= 65535:
+            raise ValueError(key + ' must be 1024–65535')
+    if values['LAN_LOCAL_PORT'] == values['LAN_PEER_PORT']:
+        raise ValueError('local and peer ports must differ')
+    mac = values['LAN_MAC']
+    if (not re.fullmatch(r'[0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5}', mac)
+            or int(mac[:2], 16) & 1 or mac.lower() == '00:00:00:00:00:00'):
+        raise ValueError('LAN_MAC must be a nonzero unicast MAC')
+    if values['LAN_PCI_ADDR']:
+        pci_address(values['LAN_PCI_ADDR'])
+    if values['LAN_PCI_BUS']:
+        if not values['LAN_PCI_ADDR'] or not re.fullmatch(r'[A-Za-z_][A-Za-z_0-9.-]{0,63}', values['LAN_PCI_BUS']):
+            raise ValueError('PCI bus needs a recorded address and literal bus name')
+
+
+def extra_devices(values):
+    extra = values['EXTRA_ARGS']
+    if any(char in extra for char in "'\"\\*?[]"):
+        raise ValueError('ambiguous EXTRA_ARGS; review literal argument/device order before adoption')
+    words = extra.split()
+    for index, word in enumerate(words):
+        flag = word.split('=', 1)[0]
+        if flag in ('-nic', '-net', '-netdev'):
+            raise ValueError('manual networking in EXTRA_ARGS; record adapter identity and remove only the known link manually before lan on')
+        if flag in ('-machine', '-M', '-nodefaults', '-readconfig', '-usb', '-usbdevice', '-soundhw', '-drive'):
+            raise ValueError('ambiguous device layout; recorded PCI placement and manual review required')
+        if flag != '-device':
+            continue
+        spec = word.partition('=')[2] if '=' in word else (words[index+1] if index+1 < len(words) else '')
+        model, *options = spec.split(',')
+        pairs = [option.split('=', 1) for option in options if '=' in option]
+        if len({pair[0] for pair in pairs}) != len(pairs):
+            raise ValueError('duplicate device properties require manual review')
+        properties = dict(pairs)
+        if ('netdev' in properties or model in ('pcnet', 'e1000', 'rtl8139', 'ne2k_pci')
+                or 'net' in model.lower()):
+            raise ValueError('network-device override conflicts with managed LAN')
+        # No original position can be inferred after owner text is removed. For
+        # custom PCI devices accept only recorded explicit placement for all of
+        # them and the LAN NIC; never guess an auto-assigned slot or reorder it.
+        if not values['LAN_PCI_ADDR'] or 'addr' not in properties:
+            raise ValueError('custom device layout needs recorded explicit PCI addresses; unknown slots refused')
+        address = pci_address(properties['addr'])
+        bus = properties.get('bus', 'pci.0')
+        if address == pci_address(values['LAN_PCI_ADDR']) and bus == (values['LAN_PCI_BUS'] or 'pci.0'):
+            raise ValueError('recorded PCI address collides with EXTRA_ARGS device')
+
+
+def pair_and_port(home, guest, values):
+    peer = 'win2000' if guest == 'winnt40' else 'winnt40'
+    other, _, _, _ = read_config(home / peer / 'config', peer)
+    validate(other)
+    if (values['LAN_LOCAL_PORT'] != other['LAN_PEER_PORT']
+            or values['LAN_PEER_PORT'] != other['LAN_LOCAL_PORT']):
+        raise ValueError('local pair ports are not reciprocal; review both configs')
+    if values['LAN_MAC'].lower() == other['LAN_MAC'].lower():
+        raise ValueError('local pair MAC collision')
+    result = subprocess.run(['ss', '-H', '-lun', 'sport = :' + values['LAN_LOCAL_PORT']],
+                            text=True, capture_output=True, timeout=5)
+    if result.returncode:
+        raise ValueError('cannot inspect local UDP port; no settings changed')
+    if result.stdout.strip():
+        raise ValueError('local UDP port occupied; stop its owner yourself, no alternate port selected')
+
+
+def argv(values):
+    endpoint = 'udp=127.0.0.1:%s,localaddr=127.0.0.1:%s' % (values['LAN_PEER_PORT'], values['LAN_LOCAL_PORT'])
+    if values['LAN_PCI_ADDR']:
+        device = 'pcnet,netdev=retro-lan,mac=%s,addr=%s' % (values['LAN_MAC'], values['LAN_PCI_ADDR'])
+        if values['LAN_PCI_BUS']:
+            device += ',bus=' + values['LAN_PCI_BUS']
+        return ['-netdev', 'socket,id=retro-lan,' + endpoint, '-device', device]
+    return ['-nic', 'socket,model=pcnet,mac=%s,%s' % (values['LAN_MAC'], endpoint)]
+
+
+def edit(path, values, records, data, info, enabled):
+    if values['LAN_ENABLED'] == enabled and (enabled == '0' or all(key in records for key in KEYS[:4])):
+        return False
+    lines = data.decode('latin1').splitlines(keepends=True)
+    eol = '\r\n' if b'\r\n' in data else '\n'
+    if 'LAN_ENABLED' in records:
+        index, active, comment = records['LAN_ENABLED']
+        old = lines[index]
+        ending = '\r\n' if old.endswith('\r\n') else '\n' if old.endswith('\n') else ''
+        left, right = active.split('=', 1)
+        leading = right[:len(right)-len(right.lstrip())]
+        trailing = right[len(right.rstrip()):]
+        lines[index] = left + '=' + leading + enabled + trailing + comment + ending
+    else:
+        if lines and not lines[-1].endswith('\n'):
+            lines[-1] += eol
+        lines.append('# v101: local-only second PCnet; guest static IP/WINS stay manual' + eol)
+        lines.append('LAN_ENABLED=' + enabled + eol)
+    for key in KEYS[1:4]:
+        if key not in records:
+            if lines and not lines[-1].endswith('\n'):
+                lines[-1] += eol
+            lines.append(key + '=' + values[key] + eol)
+    updated = ''.join(lines).encode('latin1')
+    descriptor, temporary = tempfile.mkstemp(prefix='.lan-', dir=path.parent)
+    try:
+        with os.fdopen(descriptor, 'wb') as output:
+            output.write(updated)
+            output.flush()
+            os.fsync(output.fileno())
+        os.chmod(temporary, stat.S_IMODE(info.st_mode))
+        current = path.lstat()
+        if (path.is_symlink() or (current.st_dev, current.st_ino, current.st_mtime_ns) !=
+                (info.st_dev, info.st_ino, info.st_mtime_ns) or path.read_bytes() != data):
+            raise ValueError('config changed during review; retry after manual inspection')
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+    return True
+
+
+def main():
+    guest, operation, workspace, *effective = sys.argv[1:]
+    path = Path(workspace) / 'config'
+    if operation not in ('status', 'on', 'off', 'args'):
+        raise ValueError('usage: lan [status|on|off]; local-only, no remote options')
+    # Off/missing legacy configs keep their trusted launch behavior unchanged.
+    if operation == 'args' and effective and effective[0] == '0':
+        data = path.read_text(encoding='latin1') if path.is_file() else ''
+        if not re.search(r'^\s*(?:export\s+)?LAN_', data, re.M):
+            return
+    values, records, data, info = read_config(path, guest, operation in ('status', 'args'))
+    validate(values)
+    if operation == 'status':
+        print('%s LAN: %s; local-only second pcnet; 127.0.0.1:%s -> 127.0.0.1:%s; MAC %s' %
+              (guest, 'on' if values['LAN_ENABLED'] == '1' else 'off', values['LAN_LOCAL_PORT'],
+               values['LAN_PEER_PORT'], values['LAN_MAC']))
+        print('Placement: ' + ('recorded PCI ' + values['LAN_PCI_ADDR'] + ' bus ' + (values['LAN_PCI_BUS'] or 'pci.0')
+                               if values['LAN_PCI_ADDR'] else 'after helper devices and preceding EXTRA_ARGS; adopt only a proven suffix layout'))
+        if any(word.split('=', 1)[0] in ('-nic', '-net', '-netdev') for word in values['EXTRA_ARGS'].split()):
+            print('Manual network arguments present: record adapter identity and full argv before removing only the known stanza yourself.')
+        print('Guest IP/WINS/domain are unchanged; no peer, socket or guest probe was run.')
+        return
+    if operation == 'args':
+        expected = [values[key] for key in KEYS] + [values['EXTRA_ARGS']]
+        if effective != expected:
+            raise ValueError('effective LAN values differ from literal config; manual review required')
+    enabled = '1' if operation == 'on' else '0' if operation == 'off' else values['LAN_ENABLED']
+    if enabled == '1':
+        extra_devices(values)
+        pair_and_port(path.parent.parent, guest, values)
+    if operation == 'args':
+        if enabled == '1':
+            print('\n'.join(argv(values)))
+        return
+    changed = edit(path, values, records, data, info, enabled)
+    print('%s LAN %s (%s); no guest launched and no guest settings changed' %
+          (guest, operation, 'config updated' if changed else 'already set; no write'))
+
+
+if __name__ == '__main__':
+    try:
+        main()
+    except (OSError, ValueError, subprocess.TimeoutExpired) as error:
+        print('LAN manual review: %s' % error, file=sys.stderr)
+        raise SystemExit(1)
+RETRO_LAN_V101_PY
+}
+lan_prepare() {
+    local output
+    LAN_ARGS=()
+    output=$(lan_config args "$LAN_ENABLED" "$LAN_LOCAL_PORT" "$LAN_PEER_PORT" "$LAN_MAC" "$LAN_PCI_ADDR" "$LAN_PCI_BUS" "$EXTRA_ARGS") || return 1
+    if [ -n "$output" ]; then mapfile -t LAN_ARGS <<< "$output"; fi
+}
 qemu_config() {   # qemu_config [GUEST]: defaults, then the guest's config file (written once by dev-setup; edit freely)
     # v100 (Nov 5 2026): nested-KVM boot stalls, tablet scaling and noisy AC97 affect win2000 only.
     case "${1:-$GUEST}" in
-        winnt40) MEM=128; HPET=off; DISK_GB=4; SOUND=sb16; MOUSE=ps2; ACCEL=auto; DISPLAY_OPTS="gtk,zoom-to-fit=on" ;;
-        win2000) MEM=256; HPET=on; DISK_GB=8; SOUND=none; MOUSE=tablet; ACCEL=tcg; DISPLAY_OPTS="gtk,zoom-to-fit=off" ;;
+        winnt40) CPU=pentium; MEM=128; HPET=off; DISK_GB=4; SOUND=sb16; MOUSE=ps2; ACCEL=auto; DISPLAY_OPTS="gtk,zoom-to-fit=on" ;;
+        win2000) CPU=pentium3; MEM=256; HPET=on; DISK_GB=8; SOUND=none; MOUSE=tablet; ACCEL=tcg; DISPLAY_OPTS="gtk,zoom-to-fit=off" ;;
     esac
-    CPU=pentium3; MACHINE=pc; DISK_FORMAT=qcow2; VIDEO=cirrus; NIC=pcnet; EXTRA_ARGS=""
+    AUDIO_BACKEND=auto
+    LAN_ENABLED=0; LAN_PCI_ADDR=""; LAN_PCI_BUS=""
+    if [ "${1:-$GUEST}" = winnt40 ]; then
+        LAN_LOCAL_PORT=10001; LAN_PEER_PORT=10002; LAN_MAC=52:54:00:50:00:10
+    else
+        LAN_LOCAL_PORT=10002; LAN_PEER_PORT=10001; LAN_MAC=52:54:00:50:00:20
+    fi
+    MACHINE=pc; DISK_FORMAT=qcow2; VIDEO=cirrus; NIC=pcnet; EXTRA_ARGS=""
     # shellcheck disable=SC1091
     [ -f "$WS/config" ] && . "$WS/config"
     DISK="$WS/disk.qcow2"; [ "$DISK_FORMAT" = raw ] && DISK="$WS/disk.img"
@@ -11022,10 +11321,97 @@ pick_accel() {
 accel_status() {
     qemu_config "$GUEST"
     pick_accel
-    echo "$GUEST: $ACCEL_NOTE; display=$DISPLAY_OPTS; sound=$SOUND"
+    audio_args || return 1
+    echo "$GUEST: $ACCEL_NOTE; display=$DISPLAY_OPTS; sound=$SOUND; audio=$AUDIO_NOTE"
+}
+# v101 (Nov 8 2026: NT hal.dll STOP on Pentium III): review NT's CPU once, independently of v100.
+qemu_nt_defaults() {
+    if running winnt40; then echo 'NOTE: winnt40 CPU review deferred until stopped.' >&2; return 0; fi
+    python3 - "$HOME/winnt40/config" << 'NT_CPU_DEFAULTS_PY'
+import os, re, stat, sys, tempfile
+from pathlib import Path
+p = Path(sys.argv[1])
+if p.is_symlink():
+    print('NOTE: winnt40/config: symlink preserved; review CPU manually.', file=sys.stderr)
+    sys.exit(0)
+if not p.is_file(): sys.exit(0)
+raw = p.read_bytes()
+lines = raw.decode('latin-1').splitlines(keepends=True)
+marker = '# v101: NT CPU reviewed'
+if any(line.rstrip('\r\n') == marker for line in lines): sys.exit(0)
+# v101 (Nov 8 2026 review): generated VIDEO/MOUSE/ACCEL comments contain shell punctuation.
+# Analyze code without trailing comments; retain the original lines for exact matching/writes.
+def without_comment(line):
+    quote, escaped, word_start = None, False, True
+    for i, char in enumerate(line):
+        if escaped:
+            escaped, word_start = False, False
+            continue
+        if char == '\\' and quote != "'":
+            escaped, word_start = True, False
+            continue
+        if quote:
+            if char == quote: quote = None
+            continue
+        if char == '#' and word_start: return line[:i]
+        if char in ("'", '"'):
+            quote, word_start = char, False
+        else:
+            word_start = char.isspace()
+    return line
+
+def complex_shell(line):
+    quote, escaped = None, False
+    for i, char in enumerate(line):
+        if escaped:
+            if char in '\r\n': return True
+            escaped = False
+            continue
+        if quote == "'":
+            if char == quote: quote = None
+            continue
+        if char == '\\':
+            escaped = True
+            continue
+        if char == '`' or line[i:i+2] == '$(': return True
+        if quote:
+            if char == quote: quote = None
+        elif char in ("'", '"'):
+            quote = char
+        elif char in ';&|<>':
+            return True
+    return escaped or quote is not None
+
+# As in v100 qemu_defaults, keep line endings and match the untouched template on original bytes.
+active = [code for line in lines if (code := without_comment(line)).strip()]
+assignment = re.compile(r'^\s*(?:export\s+)?[A-Za-z_][A-Za-z_0-9]*=')
+complex_config = any(not assignment.match(line) or complex_shell(line) for line in active)
+count = sum(len(re.findall(r'\bCPU\s*=', line)) for line in active)
+ambiguous = complex_config or count > 1
+nl = '\r\n' if b'\r\n' in raw else '\n'
+legacy = 'CPU=pentium3            # pentium if setup blue-screens on this model'
+if ambiguous:
+    print('NOTE: winnt40/config: complex or duplicate CPU; preserved for manual review.', file=sys.stderr)
+else:
+    for i, line in enumerate(lines):
+        old = line.rstrip('\r\n')
+        if old.rstrip(' ') == legacy:
+            lines[i] = 'CPU=pentium            # v101: NT Setup hal.dll STOP workaround' + line[len(old):]
+    if not count:
+        if lines and not lines[-1].endswith(('\r', '\n')): lines[-1] += nl
+        lines.append('CPU=pentium' + nl)
+lines.insert(0, marker + nl)
+fd, temp = tempfile.mkstemp(prefix='.config.', dir=p.parent)
+try:
+    with os.fdopen(fd, 'wb') as f: f.write(''.join(lines).encode('latin-1'))
+    os.chmod(temp, stat.S_IMODE(p.stat().st_mode)); os.replace(temp, p)
+finally:
+    if os.path.exists(temp): os.unlink(temp)
+NT_CPU_DEFAULTS_PY
 }
 # v100 (Nov 5 2026): never source configs merely to add absent defaults. Ambiguous shell is left for review.
 qemu_defaults() {
+    if [ "$1" = winnt40 ]; then qemu_nt_defaults; return; fi
     [ "$1" = win2000 ] || return 0
     if running "$1"; then echo "NOTE: win2000 config defaults deferred until stopped." >&2; return 0; fi
     python3 - "$HOME/win2000/config" << 'QEMU_DEFAULTS_PY'
@@ -11130,7 +11516,13 @@ qemu_preferences() {   # observational only; never applies defaults
     if [ "$GUEST" = win2000 ]; then
         [ "$ACCEL" = tcg ] || { echo 'win2000: recommend ACCEL=tcg for boot stalls (owner value kept)'; rc=1; }
         [[ "$DISPLAY_OPTS" == *zoom-to-fit=off* ]] || { echo 'win2000: recommend zoom-to-fit=off for tablet alignment'; rc=1; }
-        [ "$SOUND" = none ] || { echo 'win2000: recommend SOUND=none to avoid audio errors'; rc=1; }
+
+    fi
+    # v101: selected sound is informational; an unavailable explicit backend is actionable.
+    if audio_args; then echo "$GUEST: audio=$AUDIO_NOTE"
+    else echo "$GUEST: configured audio unavailable (owner value kept)"; rc=1; fi
+    if [ "$GUEST" = winnt40 ] && [ "$CPU" = pentium3 ]; then
+        echo 'winnt40: CPU=pentium3 caused hal.dll STOP; recommend CPU=pentium (owner value kept)'; rc=1
     fi
     echo "$GUEST: exchange $(exchange_gate state)"
     if [ -f "$DISK" ] && ! exchange_gate check; then
@@ -11139,14 +11531,31 @@ qemu_preferences() {   # observational only; never applies defaults
     return "$rc"
 }
 
-audio_args() {   # the sound card on PulseAudio (PipeWire's pulse server too), found by its socket; else silent
-    case "$SOUND" in none|"") return 0 ;; esac
-    if [ -S "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/pulse/native" ] || { command -v pactl > /dev/null 2>&1 && pactl info > /dev/null 2>&1; }; then
-        echo "-audiodev pa,id=snd0 -device $SOUND,audiodev=snd0"
-    else
-        echo "No PulseAudio socket here: the guest's $SOUND card is silent." >&2
-        echo "-audiodev none,id=snd0 -device $SOUND,audiodev=snd0"
-    fi
+# v101 (Nov 8 2026): capability/socket checks do not start audio services or retry a running guest.
+audio_has() { qemu-system-i386 -audiodev help 2>/dev/null | grep -Fx "$1" >/dev/null; }
+audio_socket() { [ -S "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/$1" ]; }
+audio_args() {
+    AUDIO_ARGS=(); AUDIO_SELECTED=none; AUDIO_NOTE='sound disabled'
+    case "$SOUND" in none|"") return 0 ;; sb16|AC97) ;; *) echo "Unsupported SOUND=$SOUND; use sb16, AC97 or none." >&2; return 1 ;; esac
+    local want=${AUDIO_BACKEND:-auto} backend=""
+    case "$want" in
+        auto)
+            if audio_has pipewire && audio_socket pipewire-0; then backend=pipewire
+            elif audio_has pa && audio_socket pulse/native; then backend=pa
+            elif audio_has none; then backend=none
+            else echo 'QEMU has no usable audio backend.' >&2; return 1; fi ;;
+        pipewire|pa)
+            audio_has "$want" || { echo "Requested AUDIO_BACKEND=$want is not offered by QEMU." >&2; return 1; }
+            if [ "$want" = pipewire ]; then audio_socket pipewire-0
+            else audio_socket pulse/native; fi || { echo "Requested AUDIO_BACKEND=$want has no local runtime socket; use auto or none." >&2; return 1; }
+            backend=$want ;;
+        none) audio_has none || return 1; backend=none ;;
+        *) echo "Invalid AUDIO_BACKEND=$want; use auto, pipewire, pa or none." >&2; return 1 ;;
+    esac
+    AUDIO_SELECTED=$backend
+    AUDIO_NOTE="$backend ($want); card=$SOUND"
+    [ "$backend" != none ] || AUDIO_NOTE="silent backend ($want); card=$SOUND"
+    AUDIO_ARGS=(-audiodev "$backend,id=snd0" -device "$SOUND,audiodev=snd0")
 }
 qmp() {   # qmp JSON: one command on the guest's QMP socket; prints the result, exit 1 on an error
     local sock="$WS/.qmp.sock"
@@ -11180,6 +11589,7 @@ hmp() { qmp "$(python3 -c 'import json,sys; print(json.dumps({"execute": "human-
 qq() { printf '%s' "${1//,/,,}"; }   # a path inside a QEMU option value: commas doubled ("NT 4.0, SP6.iso")
 qemu_launch() {   # qemu_launch BOOT(c|d|a) [CD] [FLOPPY]
     local boot=$1 cd=${2:-} fd=${3:-} sp args app
+    lan_prepare || return 1
     args=(-name "$TITLE (dev-retro)" -machine "$MACHINE,hpet=$HPET" -cpu "$CPU" -m "$MEM" -smp 1
           -rtc base=localtime -vga "$VIDEO" -display "$DISPLAY_OPTS"
           -qmp "unix:$(qq "$WS/.qmp.sock"),server=on,wait=off" -pidfile "$WS/.pid"
@@ -11212,11 +11622,14 @@ qemu_launch() {   # qemu_launch BOOT(c|d|a) [CD] [FLOPPY]
     case "$boot" in d|a) args+=(-boot "once=$boot") ;; *) args+=(-boot c) ;; esac
     pick_accel
     args+=("${ACCEL_ARGS[@]}")
-    # shellcheck disable=SC2207
-    args+=($(audio_args))
+    audio_args || return 1
+    args+=("${AUDIO_ARGS[@]}")
     # shellcheck disable=SC2206
     [ -n "$EXTRA_ARGS" ] && args+=($EXTRA_ARGS)
-    echo "$TITLE on QEMU: $ACCEL_NOTE; $MEM MB, CPU $CPU, ${DISK##*/}."
+    # v101 (Nov 8 2026): the handwritten second NIC was after USB/audio/EXTRA_ARGS.
+    # Preserve that suffix position; custom device layouts require recorded pins.
+    args+=("${LAN_ARGS[@]}")
+    echo "$TITLE on QEMU: $ACCEL_NOTE; $MEM MB, CPU $CPU, ${DISK##*/}; audio=$AUDIO_NOTE."
     [ "$MOUSE" = ps2 ] && echo "The mouse is captured on click: Ctrl+Alt+G releases it."
     echo "Ctrl+Alt+Del for the login: '$GUEST keys ctrl-alt-del' (ChromeOS keeps the real one)."
     rm -f "$WS/.qmp.sock"
@@ -11228,6 +11641,9 @@ nt_cmd() {
     local mode=${1:-boot} raw=0 fromcd=0 iso fd f a QEMU_SETUP=0
     qemu_defaults "$GUEST"
     qemu_config
+    case "$mode" in
+        boot|run|setup) need_stopped "$GUEST"; lan_prepare || return 1 ;;
+    esac
     case "$mode" in
         boot)
             installed "$GUEST" || { tell "$TITLE is not installed yet: put your CD's .iso in $WS/install, then '$GUEST setup'."; exit 1; }
@@ -12456,6 +12872,17 @@ retro_cmd() {
 # anything runs, so dev-setup rewriting this file while a guest is up cannot break the running copy.
 main() {
     GUEST=${1:-}; [ $# -gt 0 ] && shift
+    # v101: no writes, shell config evaluation or networking before LAN status.
+    case "$GUEST" in
+        winnt40|win2000)
+            if [ "${1:-}" = lan ]; then
+                guest_info "$GUEST"
+                [ "$#" -le 2 ] || die "usage: $GUEST lan [status|on|off]; local-only"
+                case "${2:-status}" in on|off) need_stopped "$GUEST" ;; esac
+                lan_config "${2:-status}"; return $?
+            fi ;;
+    esac
+    mkdir -p "$STATE"
     case "$GUEST" in
         retro) retro_cmd "$@"; exit ;;
         delphi) delphi_n_cmd "$@"; exit ;;
@@ -12550,28 +12977,40 @@ RETRO_COLOR_DEFAULT
     for RETRO_G in winnt40 win2000; do
         [ -f ~/"$RETRO_G"/config ] && continue
         if [ "$RETRO_G" = winnt40 ]; then
+            R_CPU=pentium; R_CPU_MARKER='# v101: NT CPU reviewed'
+            R_LAN_LOCAL=10001; R_LAN_PEER=10002; R_LAN_MAC=52:54:00:50:00:10
             R_MEM=128; R_HPET=off; R_DISK=4; R_SOUND=sb16; R_MOUSE=ps2; R_ACCEL=auto; R_DISPLAY=gtk,zoom-to-fit=on
         else
+            R_CPU=pentium3; R_CPU_MARKER=""
+            R_LAN_LOCAL=10002; R_LAN_PEER=10001; R_LAN_MAC=52:54:00:50:00:20
             R_MEM=256; R_HPET=on; R_DISK=8; R_SOUND=none; R_MOUSE=tablet; R_ACCEL=tcg; R_DISPLAY=gtk,zoom-to-fit=off
         fi
         cat > ~/"$RETRO_G"/config << EOF_RCFG
 # ~/$RETRO_G/config - written by dev-setup (install-retro) once; edit freely, setup leaves it alone.
 # v100: defaults reviewed
+$R_CPU_MARKER
 # Read by '$RETRO_G' each time it starts QEMU.
 MEM=$R_MEM                # MB
-CPU=pentium3            # pentium if setup blue-screens on this model
+CPU=$R_CPU            # v101: Pentium for NT hal.dll STOP; Windows 2000 stays Pentium III
 MACHINE=pc
 HPET=$R_HPET               # on cuts Windows 2000's idle CPU use
 DISK_GB=$R_DISK              # the size '$RETRO_G setup' creates (NT 4.0 setup cannot format over 4 GB)
 DISK_FORMAT=qcow2       # qcow2 (snapshots), or raw: '$RETRO_G setup --raw' (NT 4.0's old qcow2 boot bug)
 VIDEO=cirrus            # both ship a Cirrus driver; skip NT 4.0's display "Test" button, which can hang
 NIC=pcnet               # AMD PCnet, user-mode networking; none turns it off
-SOUND=$R_SOUND             # sb16, AC97 or none (drivers on the install CDs)
+SOUND=$R_SOUND             # sb16, AC97 or none (owner supplies any required driver)
+AUDIO_BACKEND=auto      # v101: pipewire when available, then pa, then silent; explicit overrides supported
 MOUSE=$R_MOUSE             # ps2 (captured; Ctrl+Alt+G releases it) or tablet (USB: Windows 2000)
 # v100 (Nov 5 2026): win2000 uses TCG for nested-KVM stalls, unscaled tablet and no noisy AC97.
 ACCEL=$R_ACCEL              # auto (KVM when usable), kvm or tcg; explicit owner values stay
 DISPLAY_OPTS="$R_DISPLAY"
 EXTRA_ARGS=""           # more QEMU options, e.g. "-smp 2"
+# v101: local-only second PCnet; '<guest> lan on' opts in while stopped.
+LAN_ENABLED=0
+LAN_LOCAL_PORT=$R_LAN_LOCAL
+LAN_PEER_PORT=$R_LAN_PEER
+LAN_MAC=$R_LAN_MAC
+# For custom device layouts only: LAN_PCI_ADDR and optional LAN_PCI_BUS use recorded original slots.
 EOF_RCFG
     done
     # v100 (Nov 5 2026): migrate existing configs after generating new ones; running guests defer.

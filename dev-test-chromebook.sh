@@ -1,5 +1,5 @@
 #!/bin/bash
-# dev-test-chromebook - Version 100
+# dev-test-chromebook - Version 101
 # Version history: CHANGELOG.md, next to this script in the bundle
 # (one section per script, newest version first).
 #
@@ -429,6 +429,8 @@ LAST=pass
 # v65: logs live in ./assets/logs next to the scripts, not in the home directory.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2> /dev/null && pwd || true)"
 [ -n "$SCRIPT_DIR" ] || SCRIPT_DIR="$PWD"
+# v101 (Nov 8 2026): child checks need the bundle path for sibling-script fixtures.
+export SCRIPT_DIR
 export ASSETS="$SCRIPT_DIR/assets"
 # v98: read the installer's single pin for ODBC and CLI/Python checks (Oct 30 2026: hold at 1.x).
 export DUCKDB_VERSION
@@ -523,7 +525,7 @@ info()  { printf '  %-62s %s\n' "$1" "${DIM}INFO${RST} $2"; echo "--- $1: INFO $
 # v92: a check that cannot run because an earlier one already failed for the same cause (counted as SKIP).
 skipped() { printf '  %-62s %s\n' "$1" "${DIM}SKIP${RST} $2"; SKIP=$((SKIP + 1)); LAST=skip; echo "--- $1: SKIP $2" >> "$LOG"; }
 
-echo "Testing Chromebook Linux provisioning (Version 100)... log: $LOG"
+echo "Testing Chromebook Linux provisioning (Version 101)... log: $LOG"
 [ "$QUICK" = 1 ] && echo "(quick mode: slow functional tests will be skipped)"
 
 # v68: say so when dev-init has not applied the secrets file yet. Filling in secrets.env logs
@@ -4562,9 +4564,9 @@ EOF
     # v54: unloads any Ollama model first (RAM), logs free memory, and on failure prints
     # the client's step trail and the server log tail instead of timing out silently.
     slow  "Temporal: dev server + worker + Pydantic workflow round-trip" 'for p in $(ss -ltnpH "sport = :17233" 2> /dev/null | grep -oE "pid=[0-9]+" | cut -d= -f2 | sort -u); do kill "$p" 2> /dev/null; done; if command -v ollama > /dev/null; then for m in $(ollama ps 2> /dev/null | tail -n +2 | awk "{print \$1}"); do ollama stop "$m" > /dev/null 2>&1; done; fi; free -h | head -2; temporal server start-dev --headless --port 17233 --log-level warn > temporal-server.log 2>&1 & pid=$!; trap "kill $pid 2> /dev/null" EXIT; for _ in $(seq 1 30); do temporal operator cluster health --address localhost:17233 > /dev/null 2>&1 && break; kill -0 $pid 2> /dev/null || break; sleep 1; done; ~/.agentic-env/bin/python temporal_smoke.py > temporal-client.log 2>&1; rc=$?; cat temporal-client.log; if [ $rc -ne 0 ] || ! grep -q "temporal ok" temporal-client.log; then echo "--- server log tail:"; tail -20 temporal-server.log; exit 1; fi' 180
-    # v89: MCP tooling. A two-line FastMCP server; FastMCP's own client calls its tool, then the MCP
-    # Inspector's CLI mode does, once as 'mcp-inspector' and once through npx with no network (the copy
-    # setup left in npm's cache, which 'fastmcp dev inspector' uses too).
+    # v101 (Nov 8 2026): owner confirmed devclean removed npm registry metadata.
+    # Verify the exact global package with its matching Node; offline npx is not
+    # an installed-component contract. Cache key presence is INFO only.
     cat > "$WORK/mcp_server.py" << 'EOF'
 from fastmcp import FastMCP
 
@@ -4580,11 +4582,226 @@ EOF
     hint  "rerun setup with install-agentic: v89 installs it with 'uv tool install fastmcp-slim --with fastmcp'"
     check "fastmcp: list and call a tool on a local server"    'fastmcp list mcp_server.py 2>&1 | grep -q "add(" && r=$(fastmcp call mcp_server.py add a=2 b=3 --json 2>&1); echo "$r" | tr -d " \n" | grep -o "\"result\":5" || { echo "$r" | tail -n 5; exit 1; }' 180
     if has install-node; then
-        check "MCP Inspector (mcp-inspector, global npm)"      'command -v mcp-inspector && npm ls -g --depth=0 @modelcontextprotocol/inspector | grep -o "inspector@[0-9.]*"'
-        hint  "rerun setup with install-agentic (it needs install-node for the Inspector)"
-        check "Inspector CLI calls the tool through fastmcp run" 'r=$(mcp-inspector --cli fastmcp run mcp_server.py --method tools/call --tool-name add --tool-arg a=2 --tool-arg b=3 2>&1); echo "$r" | tr -d " \n" | grep -o "\"result\":5" || { echo "$r" | tail -n 5; exit 1; }' 180
-        warn  "npx Inspector calls the tool offline (the copy fastmcp dev uses)" 'r=$(npx --offline @modelcontextprotocol/inspector --cli fastmcp run mcp_server.py --method tools/call --tool-name add --tool-arg a=2 --tool-arg b=3 2>&1); rc=$?; printf "%s\nnpx offline exit=%s\n" "$r" "$rc"; [ "$rc" = 0 ] && printf "%s" "$r" | tr -d " \n" | grep -q "\"result\":5"' 180
-        hint  "a newer Inspector release than the cached one makes npx want the network: rerun setup with install-agentic"
+        cat > "$WORK/inspector-check.py" << 'INSPECTOR_CHECK_V101_PY'
+"""v101: verify one installed global Inspector; metadata cache is informational."""
+import json
+import os
+from pathlib import Path
+import re
+import shutil
+import subprocess
+import sys
+from urllib.parse import unquote, urlsplit
+
+
+def run(argv, seconds=20):
+    return subprocess.run(argv, text=True, stdout=subprocess.PIPE,
+                          stderr=subprocess.STDOUT, timeout=seconds)
+
+
+def metadata():
+    # Key presence is a prerequisite, not proof of intact content or Python dependencies.
+    try:
+        result = run(['npm', 'cache', 'ls', '@modelcontextprotocol/inspector'])
+        if result.returncode:
+            print('unknown (npm cache ls exit %s); one online use may be needed' % result.returncode)
+            return
+        present = any(unquote(urlsplit(key.split('make-fetch-happen:request-cache:', 1)[-1]).path)
+                      .rstrip('/').endswith('/@modelcontextprotocol/inspector')
+                      for key in result.stdout.splitlines())
+        if present:
+            print('present (key only): registry metadata for offline npx/FastMCP is available now; dependencies/content not verified')
+        else:
+            print('absent: npx/FastMCP Inspector needs one online use before offline resolution')
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        print('unknown (metadata query unavailable); one online use may be needed')
+
+
+def verify(server):
+    node = shutil.which('node')
+    npm = shutil.which('npm')
+    cli = shutil.which('mcp-inspector')
+    if not node or not npm or not cli:
+        raise ValueError('global Inspector, Node or npm command missing')
+    result = run([npm, 'prefix', '-g'])
+    if result.returncode or not Path(result.stdout.strip()).is_absolute():
+        raise ValueError('cannot read global npm prefix')
+    prefix = Path(result.stdout.strip()).resolve()
+    runtime = run([node, '-p', 'process.execPath'])
+    if runtime.returncode or not Path(runtime.stdout.strip()).is_absolute():
+        raise ValueError('cannot identify active Node executable')
+    expected_node = prefix / 'bin/node'
+    expected_npm = prefix / 'bin/npm'
+    if (not expected_node.is_file() or not expected_npm.is_file()
+            or Path(node).resolve() != expected_node.resolve()
+            or Path(runtime.stdout.strip()).resolve() != expected_node.resolve()
+            or Path(npm).resolve() != expected_npm.resolve()):
+        raise ValueError('Node/npm/global-prefix mismatch; rerun install-agentic install-node together')
+    package = prefix / 'lib/node_modules/@modelcontextprotocol/inspector'
+    data = json.loads((package / 'package.json').read_text())
+    version = data.get('version', '')
+    if (data.get('name') != '@modelcontextprotocol/inspector'
+            or not isinstance(version, str)
+            or not re.fullmatch(r'\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?', version)):
+        raise ValueError('malformed global Inspector release metadata')
+    entry = data.get('bin', {})
+    entry = entry.get('mcp-inspector') if isinstance(entry, dict) else entry
+    if (not isinstance(entry, str) or not entry or Path(entry).is_absolute()
+            or '..' in Path(entry).parts):
+        raise ValueError('malformed global Inspector CLI declaration')
+    declared = (package / entry).resolve()
+    if (not declared.is_relative_to(package.resolve()) or not declared.is_file()
+            or Path(cli).resolve() != declared):
+        raise ValueError('global Inspector package/bin mismatch')
+    print('Inspector global release %s; matching Node/npm prefix; declared CLI verified' % version, flush=True)
+    # Nov 8 2026 owner confirmation: devclean removed registry metadata before the
+    # historical ENOTCACHED. Direct installed execution requires no npm resolution.
+    result = run([str(expected_node.resolve()), str(declared), '--cli', 'fastmcp', 'run', server,
+                  '--method', 'tools/call', '--tool-name', 'add', '--tool-arg', 'a=2', '--tool-arg', 'b=3'], 120)
+    print(result.stdout, end='' if result.stdout.endswith('\n') else '\n')
+    print('Inspector producer exit=%s' % result.returncode)
+    return 0 if result.returncode == 0 and re.search(r'"result"\s*:\s*5\s*[,}]', result.stdout) else 1
+
+
+if __name__ == '__main__':
+    try:
+        if sys.argv[1:] == ['metadata']:
+            metadata()
+            raise SystemExit(0)
+        if len(sys.argv) != 3 or sys.argv[1] != 'call':
+            raise ValueError('usage: inspector-check.py metadata | call SERVER')
+        raise SystemExit(verify(sys.argv[2]))
+    except (OSError, ValueError, subprocess.TimeoutExpired) as error:
+        print('Inspector check failed: %s' % error)
+        raise SystemExit(1)
+INSPECTOR_CHECK_V101_PY
+        check "Global Inspector exact release/Node and tool call" 'python3 "$WORK/inspector-check.py" call mcp_server.py' 180
+        hint "rerun setup with install-agentic install-node; the active Node/npm, global prefix and declared Inspector CLI must match"
+        info "Inspector registry metadata in npm cache" "$(python3 "$WORK/inspector-check.py" metadata)"
+        cat > "$WORK/inspector-fixtures.py" << 'INSPECTOR_FIXTURES_V101_PY'
+"""Isolated fake-program contracts; never resolve an npm package or use the real cache."""
+import json
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import tempfile
+
+CHECK = Path(os.environ['INSPECTOR_CHECK'])
+CLEAN = Path(os.environ['DEVCLEAN_HELPER'])
+
+
+with tempfile.TemporaryDirectory(prefix='inspector-fixture-', dir=os.environ['WORK']) as tmp:
+    home = Path(tmp)
+    prefix = home / 'node'
+    bindir = prefix / 'bin'
+    bindir.mkdir(parents=True)
+    package = prefix / 'lib/node_modules/@modelcontextprotocol/inspector'
+    package.mkdir(parents=True)
+    cache = home / '.npm/_cacache'
+    cache.mkdir(parents=True)
+    metadata = {'name': '@modelcontextprotocol/inspector', 'version': '9.8.7',
+                'bin': {'mcp-inspector': 'cli.py'}}
+    def package_json(data=metadata):
+        (package / 'package.json').write_text(json.dumps(data))
+    package_json()
+    def fake(path, body):
+        path.write_text('#!/usr/bin/python3\n' + body + '\n')
+        path.chmod(0o755)
+    fake(bindir / 'node', '''import os,subprocess,sys
+from pathlib import Path
+if sys.argv[1:]==['-p','process.execPath']:
+ print(os.environ.get('FIX_RUNTIME',str(Path(__file__).resolve())))
+else:
+ raise SystemExit(subprocess.run(['/usr/bin/python3',*sys.argv[1:]]).returncode)
+''')
+    fake(package / 'cli.py', '''import json,os,sys
+from pathlib import Path
+Path(os.environ['HOME'],'called').write_text(json.dumps(sys.argv[1:]))
+print(os.environ.get('FIX_OUTPUT','{"result":5}'))
+raise SystemExit(int(os.environ.get('FIX_EXIT','0')))
+''')
+    (bindir / 'mcp-inspector').symlink_to(package / 'cli.py')
+    fake(bindir / 'npm', '''import os,shutil,sys
+from pathlib import Path
+h=Path(os.environ['HOME']); c=h/'.npm/_cacache'
+a=sys.argv[1:]
+if a==['prefix','-g']: print(os.environ.get('FIX_PREFIX',str(h/'node')))
+elif a==['cache','ls','@modelcontextprotocol/inspector']:
+ if os.environ.get('FIX_META_ERROR'): raise SystemExit(17)
+ if (c/'packument').exists(): print('make-fetch-happen:request-cache:https://registry.fixture.invalid/@modelcontextprotocol%2finspector')
+ if (c/'tarball').exists(): print('make-fetch-happen:request-cache:https://registry.fixture.invalid/@modelcontextprotocol/inspector/-/inspector-9.8.7.tgz')
+elif a==['cache','clean','--force']:
+ if c.exists(): shutil.rmtree(c)
+else: raise SystemExit('unexpected npm invocation')
+''')
+    fake(bindir / 'npx', "raise SystemExit('npx must not be called by global verification')")
+    fake(bindir / 'sync', 'pass')
+    env = dict(HOME=str(home), PATH=str(bindir) + ':/usr/bin:/bin', LC_ALL='C.UTF-8',
+               DEVCLEAN_ONLY='npm', WORK=str(home))
+    count = 0
+    def call(success=True, extra=None):
+        global count
+        result = subprocess.run(['/usr/bin/python3', str(CHECK), 'call', 'mcp_server.py'],
+                                env=dict(env, **(extra or {})), cwd=home,
+                                capture_output=True, text=True, timeout=10)
+        assert (result.returncode == 0) == success, result.stdout + result.stderr
+        if success:
+            assert 'global release 9.8.7' in result.stdout and 'producer exit=0' in result.stdout
+            args = json.loads((home / 'called').read_text())
+            assert args == ['--cli', 'fastmcp', 'run', 'mcp_server.py', '--method', 'tools/call',
+                            '--tool-name', 'add', '--tool-arg', 'a=2', '--tool-arg', 'b=3']
+        count += 1
+        return result
+    def meta(expected, extra=None):
+        global count
+        result = subprocess.run(['/usr/bin/python3', str(CHECK), 'metadata'], env=dict(env, **(extra or {})),
+                                capture_output=True, text=True, timeout=10)
+        assert result.returncode == 0 and expected in result.stdout, result.stdout + result.stderr
+        assert 'registry.fixture.invalid' not in result.stdout
+        count += 1
+    call()
+    meta('absent')
+    (cache / 'tarball').touch()
+    meta('absent')  # A tarball alone is not registry metadata.
+    (cache / 'packument').touch()
+    meta('present (key only)')
+    before = sorted(p.relative_to(home).as_posix() for p in cache.rglob('*'))
+    report = subprocess.run(['bash', str(CLEAN)], env=env, capture_output=True, text=True, timeout=15)
+    assert report.returncode == 0 and 'need one online use to work offline again' in report.stdout, report.stdout + report.stderr
+    assert before == sorted(p.relative_to(home).as_posix() for p in cache.rglob('*'))
+    count += 1
+    clean = subprocess.run(['bash', str(CLEAN), '--run'], env=env, capture_output=True, text=True, timeout=15)
+    assert clean.returncode == 0 and 'need one online use to work offline again' in clean.stdout, clean.stdout + clean.stderr
+    assert not cache.exists() and (package / 'package.json').exists()
+    count += 1
+    meta('absent')
+    call()  # Cleanup must not break installed global execution.
+    call(False, {'FIX_EXIT': '23'})  # Misleading result 5 with a failed producer.
+    call(False, {'FIX_OUTPUT': '{"result":4}'})
+    call(False, {'FIX_PREFIX': str(home / 'other-node')})
+    call(False, {'FIX_RUNTIME': '/fixture/other-node'})
+    (package / 'package.json').unlink()
+    call(False)
+    (package / 'package.json').write_text('{')
+    call(False)
+    package_json(dict(metadata, version='not-a-release'))
+    call(False)
+    package_json(dict(metadata, bin={'mcp-inspector': '../escape.py'}))
+    call(False)
+    package_json()
+    (bindir / 'mcp-inspector').unlink()
+    call(False)
+    fake(bindir / 'mcp-inspector', 'pass')
+    call(False)  # An unrelated CLI on PATH cannot stand in for this package.
+    (bindir / 'mcp-inspector').unlink()
+    (bindir / 'mcp-inspector').symlink_to(package / 'cli.py')
+    meta('unknown', {'FIX_META_ERROR': '1'})
+    assert not (home / '.npm/_npx').exists()
+    print('Inspector/global/cache contracts: %s isolated checks passed' % count)
+INSPECTOR_FIXTURES_V101_PY
+        check "Inspector global/cache contracts (isolated fake programs)" 'INSPECTOR_CHECK="$WORK/inspector-check.py" DEVCLEAN_HELPER="$HOME/.local/bin/devclean" python3 "$WORK/inspector-fixtures.py"' 90
+
     else
         info  "MCP Inspector" "not installed: it is a Node app (rerun setup with install-agentic install-node)"
     fi
@@ -5655,8 +5872,8 @@ RETRO_NET_CHECK_PY
     info "win95 network configuration" "$(~/.local/lib/dev-retro/dev-retro win95 net status)"
     warn "win95 networking: no edited blocks or resource conflicts" '~/.local/lib/dev-retro/dev-retro win95 net check'
     # v100 (Nov 5 2026): config preferences warn; fixture failures are bundle regressions.
-    warn "DOSBox-X host key, win95 renderer and custom boot mounts" '~/.local/lib/dev-retro/dev-retro retro config-status'
-    hint "With guests stopped, choose [dosbox] hostkey=ctrlshift and win95 [sdl] output=surface; explicit choices are preserved. Review folder mounts in win95 autoexec."
+    warn "DOSBox-X host key, valid renderer and custom boot mounts" '~/.local/lib/dev-retro/dev-retro retro config-status'
+    hint "With guests stopped, review [dosbox] hostkey and win95 autoexec folder mounts. Windowed redraw uses surface; full-screen stretching uses OpenGL. Valid renderer choices are informational and preserved."
     cat > "$WORK/retro-config-check.py" << 'RETRO_CONFIG_CHECK_PY'
 import os, subprocess, tempfile
 from pathlib import Path
@@ -5750,7 +5967,8 @@ with tempfile.TemporaryDirectory(prefix='retro-args-', dir=os.environ['WORK']) a
     engine.write_text("#!/bin/sh\nprintf '%s\\0' \"$@\" >> \"$WORK/args\"; printf '\\0' >> \"$WORK/args\"\ncase \"$*\" in *imgmake*) touch \"$HOME/win95/hdd.img\" ;; esac\n")
     engine.chmod(0o755)
     stub = """
-GUEST=win95; guest_info win95; mkdir -p "$WS/install/apps"
+# v101: this definitions-only fixture bypasses main, which now creates non-LAN state lazily.
+GUEST=win95; guest_info win95; mkdir -p "$STATE" "$WS/install/apps"
 installed() { [ "$SIM_INSTALLED" = 1 ]; }
 exch_create() { :; }; exch_mount_size() { echo 512,63,16,100; }; exch_put() { :; }
 disk_guard() { :; }; win95_setting() { SET_VAL=512; SET_SRC=fixture; }
@@ -5833,7 +6051,7 @@ with tempfile.TemporaryDirectory(prefix='qemu-fixture-', dir=os.environ['WORK'])
         p = bindir / name; p.write_text(body); p.chmod(0o755)
     for engine in ('dosbox-x', 'wine', 'wineboot', 'wineserver'):
         executable(engine, '#!/bin/sh\nexit 97\n')
-    executable('qemu-system-i386', '#!/usr/bin/python3\nimport json,os,sys\nfrom pathlib import Path\nPath(os.environ["WORK"]+"/args.json").write_text(json.dumps(sys.argv[1:]))\n')
+    executable('qemu-system-i386', '#!/usr/bin/python3\nimport json,os,sys\nfrom pathlib import Path\nif sys.argv[1:]==["-audiodev","help"]: print("none"); raise SystemExit(0)\nPath(os.environ["WORK"]+"/args.json").write_text(json.dumps(sys.argv[1:]))\n')
     executable('qemu-img', '#!/bin/sh\n[ "$1" = create ] || exit 97\ntouch "$5"\n')
     executable('pactl', '#!/bin/sh\nexit 1\n')
     executable('mcopy', '#!/bin/sh\ntouch "$WORK/copied"\n')
@@ -5971,6 +6189,500 @@ EXTRA_ARGS=""           # more QEMU options, e.g. "-smp 2"
 print('QEMU fixtures: once-only v99 upgrade/marker, restored values/deleted keys on launch, edited values/comments/duplicates/running preservation, defaults, overrides, gate/identity, fresh/resumed/CD/floppy/raw setup, run/put guards and 9 acceleration cases PASS')
 RETRO_QEMU_CHECK_PY
     check "QEMU defaults, exchange completion and acceleration (isolated)" 'RETRO_HELPER="$HOME/.local/lib/dev-retro/dev-retro" python3 "$WORK/retro-qemu-check.py"' 180
+    # v101: the same isolated source fixture runs in portable regressions and against the installed helper.
+    cat > "$WORK/retro-v101-check.py" << 'RETRO_DEFAULTS_V101_PY'
+"""v101 defaults/audio/preferences: isolated HOME, fake engines, no guest or real settings."""
+import os
+from pathlib import Path
+import subprocess
+import tempfile
+
+original = Path(os.environ['RETRO_HELPER']).read_text()
+definitions = original.rsplit('main "$@"; exit $?', 1)[0]
+
+# Exact EOF_RCFG winnt40 output generated by v100 (3de837e); comments are regression inputs.
+V100_NT_CONFIG = rb"""# ~/winnt40/config - written by dev-setup (install-retro) once; edit freely, setup leaves it alone.
+# v100: defaults reviewed
+# Read by 'winnt40' each time it starts QEMU.
+MEM=128                # MB
+CPU=pentium3            # pentium if setup blue-screens on this model
+MACHINE=pc
+HPET=off               # on cuts Windows 2000's idle CPU use
+DISK_GB=4              # the size 'winnt40 setup' creates (NT 4.0 setup cannot format over 4 GB)
+DISK_FORMAT=qcow2       # qcow2 (snapshots), or raw: 'winnt40 setup --raw' (NT 4.0's old qcow2 boot bug)
+VIDEO=cirrus            # both ship a Cirrus driver; skip NT 4.0's display "Test" button, which can hang
+NIC=pcnet               # AMD PCnet, user-mode networking; none turns it off
+SOUND=sb16             # sb16, AC97 or none (drivers on the install CDs)
+MOUSE=ps2             # ps2 (captured; Ctrl+Alt+G releases it) or tablet (USB: Windows 2000)
+# v100 (Nov 5 2026): win2000 uses TCG for nested-KVM stalls, unscaled tablet and no noisy AC97.
+ACCEL=auto              # auto (KVM when usable), kvm or tcg; explicit owner values stay
+DISPLAY_OPTS="gtk,zoom-to-fit=on"
+EXTRA_ARGS=""           # more QEMU options, e.g. "-smp 2"
+"""
+with tempfile.TemporaryDirectory(prefix='retro-v101-', dir=os.environ['WORK']) as tmp:
+    root = Path(tmp); home = root / 'home'; home.mkdir(); bindir = root / 'bin'; bindir.mkdir()
+    for name in ('qemu-system-i386', 'qemu-img', 'wine', 'wineboot', 'wineserver', 'dosbox-x'):
+        p = bindir / name; p.write_text('#!/bin/sh\nexit 97\n'); p.chmod(0o755)
+    helper = root / 'definitions.sh'; helper.write_text(definitions)
+    env = dict(HOME=str(home), PATH=str(bindir)+':/usr/bin:/bin', LC_ALL='C.UTF-8')
+    def call(code, ok=True):
+        r = subprocess.run(['bash','--noprofile','--norc','-c','. "$1"; '+code, '_', str(helper)], env=env, text=True, capture_output=True, timeout=15)
+        assert (r.returncode == 0) == ok, r.stdout+r.stderr
+        return r
+    config = home / 'winnt40/config'; config.parent.mkdir()
+    legacy = b'CPU=pentium3            # pentium if setup blue-screens on this model'
+    marker = b'# v101: NT CPU reviewed'
+    # The real setup template contains semicolons in trailing comments, not shell operators.
+    for newline in (b'\n', b'\r\n'):
+        untouched = V100_NT_CONFIG.replace(b'\n', newline)
+        config.write_bytes(untouched); config.chmod(0o640)
+        call('running() { return 1; }; qemu_defaults winnt40')
+        upgraded = config.read_bytes()
+        expected = marker + newline + untouched.replace(legacy, b'CPU=pentium            # v101: NT Setup hal.dll STOP workaround')
+        assert upgraded == expected, 'exact v100 NT template must upgrade in LF and CRLF'
+        before = (config.stat().st_ino, config.stat().st_mtime_ns)
+        call('running() { return 1; }; qemu_defaults winnt40')
+        assert config.read_bytes() == expected and (config.stat().st_ino, config.stat().st_mtime_ns) == before
+        assert config.stat().st_mode & 0o777 == 0o640
+    refused = (
+        b'MEM=$(touch SHOULD_NOT_EXIST)\n',
+        b'MEM=`touch SHOULD_NOT_EXIST`\n',
+        b'MEM="$(touch SHOULD_NOT_EXIST)"\n',
+        b'if true; then MEM=128; fi\n',
+        b'MEM=128 | cat\n',
+        b'MEM=128; true\n',
+        b'MEM=128 \\\n',
+    )
+    for extra in refused:
+        before = legacy+b'\n'+extra
+        config.write_bytes(before); call('running() { return 1; }; qemu_defaults winnt40')
+        assert config.read_bytes() == marker+b'\n'+before, 'real shell constructs must stay unchanged'
+        assert not (root/'SHOULD_NOT_EXIST').exists()
+    for extra in (
+        b'MEM=128 # CPU=duplicate ; | $(touch SHOULD_NOT_EXIST) `ignored`\n',
+        b"EXTRA_ARGS='literal # ; | $(not-a-substitution)' # trailing ; |\n",
+        b'EXTRA_ARGS="literal # ; |" # trailing `comment`\n',
+    ):
+        before = legacy+b'\n'+extra
+        config.write_bytes(before); call('running() { return 1; }; qemu_defaults winnt40')
+        assert b'CPU=pentium ' in config.read_bytes() and extra in config.read_bytes()
+    config.write_bytes(b'# v100: defaults reviewed\r\n'+legacy+b'  \r\nMEM=128\r\n')
+    config.chmod(0o640)
+    call('running() { return 1; }; qemu_defaults winnt40')
+    upgraded = config.read_bytes()
+    assert b'CPU=pentium ' in upgraded and b'\r\n' in upgraded and upgraded.count(marker) == 1
+    assert config.stat().st_mode & 0o777 == 0o640
+    for chosen in (marker+b'\n'+legacy+b'\n', marker+b'\nMEM=160\n'):
+        config.write_bytes(chosen); call('running() { return 1; }; qemu_defaults winnt40')
+        assert config.read_bytes() == chosen
+    for chosen in (b'CPU=pentium3 # owner\n', b'CPU=pentium3\nCPU=pentium\n', b'if true; then CPU=pentium3; fi\n'):
+        config.write_bytes(chosen); call('running() { return 1; }; qemu_defaults winnt40')
+        assert config.read_bytes() == marker+b'\n'+chosen
+    config.write_bytes(b'MEM=128\n'); call('running() { return 1; }; qemu_defaults winnt40')
+    assert b'CPU=pentium\n' in config.read_bytes()
+    config.write_bytes(legacy+b'\n'); call('running() { return 0; }; qemu_defaults winnt40')
+    assert config.read_bytes() == legacy+b'\n'
+    target = root/'target'; target.write_bytes(legacy+b'\n'); config.unlink(); config.symlink_to(target)
+    call('running() { return 1; }; qemu_defaults winnt40'); assert target.read_bytes() == legacy+b'\n'
+    config.unlink()
+    r = call('GUEST=winnt40; guest_info "$GUEST"; qemu_config; echo "$CPU $ACCEL $AUDIO_BACKEND"')
+    assert 'pentium auto auto' in r.stdout
+    r = call('GUEST=win2000; guest_info "$GUEST"; qemu_config; echo "$CPU $ACCEL $SOUND"')
+    assert 'pentium3 tcg none' in r.stdout
+    # Capabilities and sockets are stubs; no real audio client or engine starts.
+    stubs = '''
+audio_has() { case " $DRIVERS " in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
+audio_socket() { case " $SOCKETS " in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
+SOUND=sb16; AUDIO_BACKEND=auto
+'''
+    for drivers, sockets, selected in (('pipewire pa none','pipewire-0 pulse/native','pipewire'), ('pa none','pulse/native','pa'), ('pipewire pa none','','none')):
+        r = call(stubs+f'DRIVERS="{drivers}"; SOCKETS="{sockets}"; audio_args || exit; echo "$AUDIO_SELECTED"; printf "[%s]" "${{AUDIO_ARGS[@]}}"')
+        assert r.stdout.startswith(selected+'\n') and r.stdout.count('[\x2daudiodev]') == 1 and '[sb16,audiodev=snd0]' in r.stdout
+    call(stubs+'DRIVERS=none; SOCKETS=""; AUDIO_BACKEND=pipewire; audio_args', ok=False)
+    call(stubs+'DRIVERS=pipewire; SOCKETS=""; AUDIO_BACKEND=pipewire; audio_args', ok=False)
+    r = call(stubs+'DRIVERS=""; SOCKETS=""; SOUND=none; audio_args; echo "${#AUDIO_ARGS[@]}"')
+    assert r.stdout.strip() == '0'
+    ws = home/'win95'; ws.mkdir()
+    for filename in ('setup.conf','boot.conf'):
+        (ws/filename).write_text('# v100: defaults reviewed\n[dosbox]\nhostkey=ctrlshift\n[sdl]\noutput=opengl\n')
+    before = (ws/'boot.conf').read_bytes()
+    r = call('dosbox_config_status'); assert 'owner profile' in r.stdout
+    assert (ws/'boot.conf').read_bytes() == before
+    for value in ('output=bogus\n', 'output=surface\noutput=opengl\n', ''):
+        (ws/'boot.conf').write_text('# v100: defaults reviewed\n[dosbox]\nhostkey=ctrlshift\n[sdl]\n'+value)
+        call('dosbox_config_status', ok=False)
+print('v101 retro: exact v100 LF/CRLF template, comment/quote safety, NT once-only preservation, fallback separation, audio policy/argv, renderer diagnostics PASS')
+RETRO_DEFAULTS_V101_PY
+    cat > "$WORK/retro-scaffold-v101.py" << 'RETRO_SCAFFOLD_V101_PY'
+"""Extracted scaffold/lifecycle fixtures; isolated HOME, no installed demo required."""
+import csv
+import io
+import json
+import os
+from pathlib import Path
+import subprocess
+import tempfile
+
+SOURCE = Path(os.environ['DEMO_SOURCE']).read_text()
+helpers = SOURCE[SOURCE.index('READY=(); SKIPPED=();'):SOURCE.index('\ndemo_base() {')]
+index = SOURCE[SOURCE.index('read_demo_record() {'):SOURCE.index('# RUN\n', SOURCE.index('read_demo_record() {'))]
+advanced = SOURCE[SOURCE.index('demo_retro_advanced() {'):SOURCE.index('\ndemo_retro() {')]
+assert 'if has install-retro; then demo_retro; demo_retro_advanced; fi' in SOURCE
+assert 'need wcl' not in advanced
+with tempfile.TemporaryDirectory(prefix='advanced-fixture-', dir=os.environ['WORK']) as tmp:
+    root = Path(tmp)
+    home = root / 'home'
+    home.mkdir()
+    demos = home / 'dev-demo'
+    (demos / '.index').mkdir(parents=True)
+    bindir = root / 'bin'
+    bindir.mkdir()
+    for name in ('sudo','curl','git','uv','qemu-system-i386','qemu-img','wine','genisoimage','docker','wcl'):
+        p = bindir / name
+        p.write_text('#!/bin/sh\necho unexpected-engine-or-installer >&2\nexit 97\n')
+        p.chmod(0o755)
+    env = dict(HOME=str(home), WORK=str(root), PATH=str(bindir)+':/usr/bin:/bin', LC_ALL='C.UTF-8')
+    prelude = '''DEMO_ROOT="$HOME/dev-demo"; CACHE="$WORK/cache"
+VERSION=101; CLEAN=0; REFRESH=0
+GRN=; YEL=; RED=; BLD=; DIM=; RST=
+has() { [ "$1" = install-retro ]; }
+'''
+    definitions = prelude + helpers + '\n' + index + '\n' + advanced
+    count = 0
+    def shell(code, good=True, stdin=''):
+        global count
+        script = root / 'fixture.sh'
+        script.write_text(definitions + '\n' + code)
+        result = subprocess.run(['bash', str(script)], env=env, cwd=root,
+                                input=stdin, capture_output=True, text=True, timeout=20)
+        assert (result.returncode == 0) == good, result.stdout + result.stderr
+        count += 1
+        return result
+    def launch(action, good=True):
+        global count
+        result = subprocess.run(['bash', str(demos/'retro/delphi/run-advanced-demo.sh'), action],
+                                env=env, cwd=root, input='', capture_output=True, text=True, timeout=10)
+        assert (result.returncode == 0) == good, result.stdout + result.stderr
+        count += 1
+        return result
+    def snapshot(path):
+        paths = [path] + list(path.rglob('*')) if path.exists() else []
+        return [(str(p.relative_to(home)), p.lstat().st_ino, p.lstat().st_size,
+                 p.lstat().st_mtime_ns, p.lstat().st_mode) for p in sorted(paths)]
+    shell('demo_retro_advanced\nwrite_index')
+    folder = demos / 'retro/delphi/advanced-demo'
+    launcher = demos / 'retro/delphi/run-advanced-demo.sh'
+    expected = {'README.md','STEPS.md','VERSIONS.md','results-template.tsv','work','work/README.md'}
+    assert {str(p.relative_to(folder)) for p in folder.rglob('*')} == expected
+    assert launcher.stat().st_mode & 0o111
+    subprocess.run(['bash','-n',str(launcher)],check=True)
+    record = (demos / '.index/retro--advanced-demo').read_text().rstrip('\n').split('\t')
+    assert record[1]=='delphi/run-advanced-demo.sh' and record[3]=='delphi/advanced-demo'
+    assert 'retro/delphi/run-advanced-demo.sh' in (demos/'README.md').read_text()
+    assert json.loads((demos/'dev-demo.code-workspace').read_text())['folders']==[{'path':'retro'}]
+    generated_bytes=launcher.stat().st_size+sum(p.stat().st_size for p in folder.rglob('*') if p.is_file())
+    assert generated_bytes < 100000
+    assert not any(p.suffix in ('.pas','.dpr','.dfm','.sql','.exe','.dll','.iso','.py') for p in folder.rglob('*'))
+    rows=list(csv.DictReader(io.StringIO((folder/'results-template.tsv').read_text()),delimiter='\t'))
+    assert len(rows)==27 and all(row['status']=='NOT RUN' for row in rows)
+    assert all(row[field]=='NOT RUN' for row in rows for field in ('dns','connect','http'))
+    # A shared demo environment would read keys/make logs: this minimal launcher
+    # must never source it for any action.
+    (demos/'.demo-env.sh').write_text('touch "$HOME/ENV_WAS_READ"\n')
+    before=snapshot(home)
+    assert 'Controlled HTTP marker' in launch('steps').stdout
+    assert 'not installed' in launch('status').stdout
+    assert 'writes nothing' in launch('results').stdout
+    launch('pack',False)
+    assert snapshot(home)==before
+    helper=home/'.local/lib/dev-retro/dev-retro'
+    helper.parent.mkdir(parents=True)
+    helper.write_text('#!/bin/sh\ntouch "$HOME/OLD_HELPER_WAS_CALLED"\n')
+    helper.chmod(0o755)
+    launch('status')
+    assert not (home/'OLD_HELPER_WAS_CALLED').exists()
+    helper.write_text('''#!/bin/sh
+# RETRO_LAN_V101_PY capability marker in this fake only.
+[ "$2 $3" = 'lan status' ] || exit 97
+printf '%s\\n' "$*" >> "$WORK/helper-calls"
+echo "$1 LAN off (fixture)"
+''')
+    before=snapshot(home)
+    assert 'NOT RUN' in launch('status').stdout
+    assert (root/'helper-calls').read_text().splitlines()==['winnt40 lan status','win2000 lan status']
+    assert snapshot(home)==before and not (home/'ENV_WAS_READ').exists()
+    # Existing three-field records and default launchers remain compatible.
+    shell('''begin base old old-description old-source
+mkdir -p "$DIR"
+write_run <<'BODY'
+echo legacy-body
+BODY
+done_demo
+mv "$DEMO_ROOT/base/run-old.sh" "$DEMO_ROOT/base/run-moved.sh"
+printf 'old-description\\trun-moved.sh\\t\\n' > "$DEMO_ROOT/.index/base--old"
+begin retro matrix matrix-description matrix-source
+mkdir -p "$DIR"
+write_run <<'BODY'
+echo matrix-body
+BODY
+done_demo
+write_index
+''')
+    legacy=subprocess.run(['bash',str(demos/'base/run-moved.sh')],env=env,cwd=root,capture_output=True,text=True,timeout=10)
+    assert legacy.returncode==0 and 'legacy-body' in legacy.stdout
+    assert (home/'ENV_WAS_READ').exists()
+    (home/'ENV_WAS_READ').unlink()
+    assert 'base/run-moved.sh' in (demos/'README.md').read_text()
+    assert 'retro/delphi/run-advanced-demo.sh' in (demos/'README.md').read_text()
+    assert {row['path'] for row in json.loads((demos/'dev-demo.code-workspace').read_text())['folders']}=={'base','retro'}
+    # Ordinary rerun and refresh replace bundle docs, preserving all owner work/results.
+    (folder/'work/owner.pas').write_text('owner future source placeholder')
+    (folder/'results.tsv').write_text('owner observations')
+    (folder/'results-template.tsv').write_text('owner template modifications')
+    protected=snapshot(folder/'work')+snapshot(folder/'results.tsv')+snapshot(folder/'results-template.tsv')
+    for setting in ('REFRESH=0','REFRESH=1'):
+        (folder/'README.md').write_text('replace bundle-owned README')
+        shell(setting+'\ndemo_retro_advanced\nwrite_index')
+        assert protected==snapshot(folder/'work')+snapshot(folder/'results.tsv')+snapshot(folder/'results-template.tsv')
+        assert 'v101 foundation' in (folder/'README.md').read_text()
+    # Unsafe relative paths cannot write/clean outside a demo's scope.
+    for relative in ('../escape','/absolute','delphi/../../escape','delphi//escape','./escape'):
+        shell('begin retro bad desc src '+repr(relative)+' run-bad.sh',False)
+    outside=root/'outside';outside.mkdir()
+    (demos/'retro/link').symlink_to(outside,target_is_directory=True)
+    shell('begin retro bad desc src link/escape run-bad.sh',False)
+    assert not list(outside.iterdir())
+    (demos/'.index/retro--bad').write_text('bad\t../outside.sh\tsrc\t../outside\n')
+    shell('write_index')
+    assert not (demos/'.index/retro--bad').exists()
+    # Confirm targets before deletion; cancellation preserves everything.
+    before=snapshot(folder)
+    refused=shell('confirm_demo_clean',False,stdin='n\n')
+    for target in (folder,launcher,demos/'.index/retro--advanced-demo'):
+        assert str(target) in refused.stdout
+    assert snapshot(folder)==before
+    (home/'winnt40').mkdir();(home/'winnt40/config').write_text('guest stays')
+    (root/'retained-results.tsv').write_text('outside scaffold stays')
+    shell('confirm_demo_clean || exit 1\nCLEAN=1\ndemo_retro_advanced\nwrite_index',stdin='y\n')
+    assert not folder.exists() and not launcher.exists() and not (demos/'.index/retro--advanced-demo').exists()
+    assert (demos/'retro/matrix').is_dir() and (demos/'retro/run-matrix.sh').is_file()
+    assert (home/'winnt40/config').read_text()=='guest stays'
+    assert (root/'retained-results.tsv').is_file()
+    print('Advanced scaffold/lifecycle contracts: %s isolated actions passed; generated text %s bytes' % (count,generated_bytes))
+RETRO_SCAFFOLD_V101_PY
+    check "Advanced-demo scaffold/lifecycle contracts (isolated)" 'DEMO_SOURCE="$SCRIPT_DIR/dev-demo-chromebook.sh" python3 "$WORK/retro-scaffold-v101.py"' 90
+    cat > "$WORK/retro-lan-v101.py" << 'RETRO_LAN_FIXTURES_V101_PY'
+"""v101 local LAN fixtures: isolated HOME and fake engines/port inspection only."""
+import json
+import os
+from pathlib import Path
+import subprocess
+import tempfile
+
+HELPER = Path(os.environ['RETRO_HELPER'])
+with tempfile.TemporaryDirectory(prefix='retro-lan-', dir=os.environ['WORK']) as tmp:
+    root = Path(tmp)
+    home = root / 'home'
+    home.mkdir()
+    bindir = root / 'bin'
+    bindir.mkdir()
+    def fake(name, text):
+        path = bindir / name
+        path.write_text('#!/usr/bin/python3\n' + text + '\n')
+        path.chmod(0o755)
+    fake('qemu-system-i386', '''import json,os,sys
+from pathlib import Path
+if os.environ.get('FIX_STATUS'): raise SystemExit('status must not call QEMU')
+if sys.argv[1:]==['-audiodev','help']: print('none'); raise SystemExit(0)
+Path(os.environ['WORK'],'argv.json').write_text(json.dumps(sys.argv[1:]))
+''')
+    fake('ss', "import os\nif os.environ.get('FIX_STATUS'): raise SystemExit('status must not inspect ports')\nprint('occupied' if os.environ.get('FIX_OCCUPIED') else '')")
+    for name in ('qemu-img', 'dosbox-x', 'wine', 'ping', 'curl'):
+        fake(name, "raise SystemExit('unexpected engine/network path')")
+    env = dict(HOME=str(home), WORK=str(root), PATH=str(bindir)+':/usr/bin:/bin', LC_ALL='C.UTF-8')
+    definitions = HELPER.read_text().rsplit('main "$@"; exit $?', 1)[0]
+    count = 0
+    def tree():
+        return sorted((str(p.relative_to(home)), p.lstat().st_size, p.lstat().st_mtime_ns)
+                      for p in home.rglob('*'))
+    def command(guest, operation='status', good=True, more=None, extra=()):
+        global count
+        result = subprocess.run(['bash', str(HELPER), guest, 'lan', operation, *extra],
+                                env=dict(env, **dict({'FIX_STATUS': '1'} if operation == 'status' else {}, **(more or {}))), cwd=root, capture_output=True, text=True, timeout=10)
+        assert (result.returncode == 0) == good, result.stdout + result.stderr
+        count += 1
+        return result
+    def config(guest, extra='', settings='', ending='\n'):
+        workspace = home / guest
+        workspace.mkdir(exist_ok=True)
+        content = ("# v100: defaults reviewed\n# v101: NT CPU reviewed\nCPU=pentium\n"
+                   "VIDEO=cirrus # semicolon ; stays a comment\nMOUSE=" + ('ps2' if guest=='winnt40' else 'tablet') +
+                   "\nSOUND=" + ('sb16' if guest=='winnt40' else 'none') + "\nEXTRA_ARGS='" + extra + "'\n" + settings)
+        path = workspace / 'config'
+        path.write_bytes(content.replace('\n', ending).encode())
+        path.chmod(0o640)
+        return path
+    def launch(guest, setup=False, good=True, more=None):
+        global count
+        script = definitions + '''
+GUEST=$1
+guest_info "$GUEST"
+qemu_config
+pick_accel() { ACCEL_ARGS=(-accel tcg); ACCEL_NOTE=fixture; }
+app_cd() { echo "$WS/install/apps/fixture.iso"; }
+exchange_gate() { return 0; }
+QEMU_SETUP=$2
+qemu_launch c "$WS/install/fixture.iso"
+'''
+        argv_file = root / 'argv.json'
+        argv_file.unlink(missing_ok=True)
+        script_file = root / 'launch.sh'
+        script_file.write_text(script)
+        result = subprocess.run(['bash', str(script_file), guest, '1' if setup else '0'],
+                                env=dict(env, **(more or {})), capture_output=True, text=True, timeout=10)
+        assert (result.returncode == 0) == good, result.stdout + result.stderr
+        count += 1
+        if good:
+            return json.loads(argv_file.read_text())
+        assert not argv_file.exists()
+    before = tree()
+    command('winnt40')
+    command('win2000', more={'DEV_RETRO_LAUNCHER': '1'})
+    assert tree() == before  # Includes directory sizes/mtimes; status creates nothing.
+    command('winnt40', 'on', good=False)
+    command('winnt40', extra=('remote',), good=False)
+    for guest in ('winnt40', 'win2000'):
+        path = config(guest)
+        original = path.read_bytes()
+        original_stat = path.stat()
+        command(guest, 'off')
+        assert path.read_bytes() == original and path.stat().st_mtime_ns == original_stat.st_mtime_ns
+        command(guest, 'on')
+        enabled = path.read_bytes()
+        assert enabled.startswith(original) and b'LAN_ENABLED=1' in enabled
+        assert path.stat().st_mode & 0o777 == 0o640
+        identity = (path.stat().st_ino, path.stat().st_mtime_ns)
+        command(guest, 'on')
+        assert identity == (path.stat().st_ino, path.stat().st_mtime_ns)
+        args = launch(guest)
+        assert '-nic' in args and args[args.index('-nic')+1] == 'user,model=pcnet'
+        assert 'socket,model=pcnet' in args[-1]
+        setup = launch(guest, setup=True)
+        assert not any('exchange.img' in a for a in setup)
+        assert any('fixture.iso' in a and 'index=3' in a for a in setup)
+        command(guest, 'off')
+        assert not any('socket,model=pcnet' in a for a in launch(guest))
+        stopped = path.read_bytes()
+        command(guest, 'off')
+        assert path.read_bytes() == stopped
+    # Exact legacy/adopted argument sequence: second NIC stays after USB/audio
+    # and non-device owner arguments for both guests, never beside the user NIC.
+    for guest, port, peer, mac in (('winnt40',10001,10002,'52:54:00:50:00:10'),
+                                   ('win2000',10002,10001,'52:54:00:50:00:20')):
+        legacy = '-nic socket,model=pcnet,mac=%s,udp=127.0.0.1:%s,localaddr=127.0.0.1:%s' % (mac, peer, port)
+        path = config(guest, '-smp 2 ' + legacy)
+        old = launch(guest)
+        snapshot = path.read_bytes()
+        command(guest, 'on', good=False)
+        assert path.read_bytes() == snapshot
+        path = config(guest, '-smp 2 ')
+        command(guest, 'on')
+        assert launch(guest) == old
+        command(guest, 'off')
+    path = config('winnt40', ending='\r\n')
+    before = path.read_bytes()
+    command('winnt40', 'on')
+    assert path.read_bytes().startswith(before) and b'\n' not in path.read_bytes().replace(b'\r\n',b'')
+    command('winnt40', 'off')
+    # Unsafe shell is never evaluated by status/edit; unrelated bytes stay intact.
+    for bad in ("LAN_ENABLED=0\nLAN_ENABLED=1\n", "LAN_REMOTE_HOST=example\n",
+                "LAN_ENABLED=2\n", "LAN_LOCAL_PORT=22\n", "LAN_PEER_PORT=10001\n",
+                "LAN_MAC=ff:ff:ff:ff:ff:ff\n", "LAN_MAC=00:00:00:00:00:00\n",
+                "LAN_ENABLED=$(touch MUST_NOT_EXIST)\n", "LAN_ENABLED=`touch MUST_NOT_EXIST`\n",
+                "if true; then LAN_ENABLED=1; fi\n", "LAN_ENABLED=0 | cat\n",
+                "LAN_LOCAL_PORT='10001,host=evil'\n", "LAN_PCI_ADDR=20\n",
+                "LAN_PCI_BUS=pci.0\n"):
+        path = config('winnt40', settings=bad)
+        before = tree()
+        command('winnt40', 'status', good=False)
+        command('winnt40', 'on', good=False)
+        assert tree() == before and not (root / 'MUST_NOT_EXIST').exists()
+    path = config('winnt40')
+    target = home / 'saved-config'
+    path.rename(target)
+    path.symlink_to(target)
+    command('winnt40', 'status', good=False)
+    command('winnt40', 'on', good=False)
+    path.unlink()
+    path = config('winnt40')
+    (path.parent / '.pid').write_text(str(os.getpid()))
+    command('winnt40', 'on', good=False)
+    command('winnt40', 'off', good=False)
+    command('winnt40')
+    (path.parent / '.pid').unlink()
+    command('winnt40', 'on', good=False, more={'FIX_OCCUPIED': '1'})
+    config('win2000', settings='LAN_MAC=52:54:00:50:00:10\n')
+    command('winnt40', 'on', good=False)
+    config('win2000', settings='LAN_LOCAL_PORT=10003\n')
+    command('winnt40', 'on', good=False)
+    config('win2000')
+    # Owner ports/MAC choices survive enable/disable and must be reciprocal.
+    custom='LAN_LOCAL_PORT=11001\nLAN_PEER_PORT=11002\nLAN_MAC=52:54:00:ab:00:10\n'
+    path=config('winnt40', settings=custom)
+    config('win2000', settings='LAN_LOCAL_PORT=11002\nLAN_PEER_PORT=11001\n')
+    command('winnt40','on'); command('winnt40','off')
+    assert custom.encode() in path.read_bytes()
+    config('win2000')
+    for extra in ('-device virtio-balloon-pci', '-device virtio-rng-pci',
+                  '-device pcnet,addr=0x0b', '-netdev socket,id=owner', '-usb'):
+        path=config('winnt40', extra)
+        original=path.read_bytes()
+        command('winnt40','on',good=False)
+        assert original == path.read_bytes()
+    # Pinned fallback: custom PCI devices before/after the old NIC retain their
+    # recorded slots. Unpinned extra devices are refused rather than reallocated.
+    for guest, port, peer, mac in (('winnt40',10001,10002,'52:54:00:50:00:10'),
+                                   ('win2000',10002,10001,'52:54:00:50:00:20')):
+        first='-device virtio-balloon-pci,addr=0x0a'
+        last='-device virtio-rng-pci,addr=0x0c'
+        network='-netdev socket,id=retro-lan,udp=127.0.0.1:%s,localaddr=127.0.0.1:%s -device pcnet,netdev=retro-lan,mac=%s,addr=0x0b,bus=pci.0' % (peer,port,mac)
+        config(guest, first+' '+network+' '+last)
+        old=launch(guest)
+        config(guest, first+' '+last, 'LAN_PCI_ADDR=0x0b\nLAN_PCI_BUS=pci.0\n')
+        command(guest,'on')
+        adopted=launch(guest)
+        def devices(args):
+            return sorted(args[i+1] for i,x in enumerate(args) if x=='-device')
+        assert devices(old)==devices(adopted)
+        def without_managed(args):
+            result=[]; index=0
+            while index < len(args):
+                if (args[index] == '-netdev' and args[index+1].startswith('socket,id=retro-lan,') or
+                    args[index] == '-device' and args[index+1].startswith('pcnet,netdev=retro-lan,')):
+                    index += 2
+                else:
+                    result.append(args[index]); index += 1
+            return result
+        assert without_managed(old) == without_managed(adopted)
+        assert [old[i+1] for i,x in enumerate(old) if x=='-netdev'] == [adopted[i+1] for i,x in enumerate(adopted) if x=='-netdev']
+        assert [x for x in devices(old) if not x.startswith('pcnet,')] == [x for x in devices(adopted) if not x.startswith('pcnet,')]
+        command(guest,'off')
+    path=config('winnt40','-device virtio-rng-pci,addr=0x0b','LAN_PCI_ADDR=0x0b\n')
+    command('winnt40','on',good=False)
+    path=config('winnt40', settings='LAN_ENABLED=1\nLAN_MAC=bad\n')
+    launch('winnt40',good=False)
+    path=config('winnt40', settings='LAN_ENABLED=1\n')
+    launch('winnt40',good=False,more={'FIX_OCCUPIED':'1'})
+    config('winnt40', '-nic none', 'LAN_ENABLED=1\n')
+    launch('winnt40', good=False)
+    config('winnt40', settings='LAN_ENABLED=1\nLAN_REMOTE_HOST=evil\n')
+    launch('winnt40', good=False)
+    assert not (home / '.local/state/dev-retro').exists()
+    print('Local LAN contracts: %s isolated checks passed; no guest/network engine run' % count)
+RETRO_LAN_FIXTURES_V101_PY
+    check "Local guest LAN/adoption contracts (isolated fake engines)" 'RETRO_HELPER="$HOME/.local/lib/dev-retro/dev-retro" python3 "$WORK/retro-lan-v101.py"' 120
+
+    check "v101 NT CPU, audio policy and renderer preferences (isolated)" 'RETRO_HELPER="$HOME/.local/lib/dev-retro/dev-retro" python3 "$WORK/retro-v101-check.py"' 120
     # v100 (Nov 5–6 2026): read-only preferences warn; a disk does not prove Windows installation.
     for G in winnt40 win2000; do
         info "QEMU selection $G" "$(~/.local/lib/dev-retro/dev-retro "$G" accel)"
@@ -5979,18 +6691,192 @@ RETRO_QEMU_CHECK_PY
     for G in win31 win95 winnt40 win2000 delphi1; do
         info  "retro guest $G" "$(~/.local/lib/dev-retro/dev-retro "$G" status 2> /dev/null | head -n 1 | sed 's/^[^ ]* *//; s/ *$//; s/   */, /g')"
     done
-    slow  "QEMU starts a blank disk headless (accelerator, QMP answers)" 'cd "$WORK" || exit 1; qemu-img create -q -f qcow2 blank.qcow2 64M || exit 1
-        if [ -c /dev/kvm ] && [ -r /dev/kvm ] && [ -w /dev/kvm ]; then acc=kvm; else acc=tcg; fi
-        qemu-system-i386 -accel $acc -machine pc -cpu pentium3 -m 32 -display none -drive file=blank.qcow2,format=qcow2,if=ide -nic none -qmp unix:qmp.sock,server=on,wait=off > qemu.log 2>&1 & q=$!
-        for i in $(seq 1 30); do [ -S qmp.sock ] && break; sleep 0.5; done
-        st=$(python3 -c "
-import json, socket
-s = socket.socket(socket.AF_UNIX); s.settimeout(10); s.connect(\"qmp.sock\"); f = s.makefile(\"rw\"); f.readline()
-for c in ({\"execute\": \"qmp_capabilities\"}, {\"execute\": \"query-status\"}):
-    f.write(json.dumps(c) + \"\n\"); f.flush(); r = json.loads(f.readline())
-print(r[\"return\"][\"status\"])
-f.write(json.dumps({\"execute\": \"quit\"}) + \"\n\"); f.flush()" 2>&1); wait $q; echo "accelerator $acc, guest status: $st"; cat qemu.log; [ "$st" = running ]' 120
-    hint  "qemu.log above says why; with KVM, 'Permission denied' on /dev/kvm means the kvm group is not active yet (shut Linux down and reopen it)"
+    # v101 (Nov 8 2026): save evidence before waiting; own and reap only this smoke-test child.
+    cat > "$WORK/retro-qemu-probe.py" << 'RETRO_QEMU_PROBE_PY'
+"""v101 (Nov 8 2026): persistent diagnostics and bounded teardown of one owned smoke-test QEMU."""
+import argparse
+from datetime import datetime, timezone
+import json
+import os
+from pathlib import Path
+import signal
+import socket
+import stat
+import subprocess
+import time
+
+
+class Probe:
+    def __init__(self, work, diag, seconds=80):
+        self.work = Path(work).resolve()
+        self.diag = Path(diag).resolve()
+        self.diag.mkdir(parents=True, exist_ok=False)
+        self.work.mkdir(parents=True, exist_ok=True)
+        self.events = (self.diag / 'events.jsonl').open('w', buffering=1)
+        self.stderr = (self.diag / 'stderr.log').open('w', buffering=1)
+        self.started = time.monotonic()
+        self.deadline = self.started + seconds
+        self.phase = 'prepare'
+        self.proc = None
+        self.sock = None
+        self.buffer = b''
+        self.serial = 0
+        self.clean = False
+
+    def record(self, event, **fields):
+        self.events.write(json.dumps(dict(event=event, elapsed=round(time.monotonic()-self.started, 3), phase=self.phase, **fields)) + '\n')
+        self.events.flush()
+
+    def receive(self, deadline):
+        while b'\n' not in self.buffer:
+            remaining = min(deadline, self.deadline) - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError(self.phase)
+            self.sock.settimeout(remaining)
+            data = self.sock.recv(65536)
+            if not data:
+                raise RuntimeError('QMP closed before response')
+            self.buffer += data
+            if len(self.buffer) > 1048576:
+                raise RuntimeError('QMP response too large')
+        line, self.buffer = self.buffer.split(b'\n', 1)
+        reply = json.loads(line)
+        if not isinstance(reply, dict):
+            raise RuntimeError('QMP response is not an object')
+        self.record('qmp-reply', reply=reply)
+        return reply
+
+    def ask(self, command):
+        self.serial += 1
+        request = dict(execute=command, id=self.serial)
+        self.record('qmp-command', request=request)
+        self.sock.sendall((json.dumps(request)+'\n').encode())
+        while True:
+            reply = self.receive(self.deadline)
+            if 'event' in reply or reply.get('id') != self.serial:
+                continue
+            if 'error' in reply:
+                raise RuntimeError('QMP error: ' + json.dumps(reply['error']))
+            if 'return' not in reply:
+                raise RuntimeError('QMP response has no return')
+            return reply['return']
+
+    def stop(self):
+        self.phase = 'cleanup'
+        # Signals during cleanup cannot interrupt the bounded TERM/KILL escalation.
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
+        if self.proc and self.proc.poll() is None:
+            if self.sock:
+                try:
+                    self.sock.settimeout(0.2)
+                    self.sock.sendall(b'{"execute":"quit","id":"cleanup"}\n')
+                except OSError as exc:
+                    self.record('quit-failed', detail=str(exc))
+            try:
+                self.proc.wait(timeout=0.4)
+                self.clean = self.proc.returncode == 0
+            except subprocess.TimeoutExpired:
+                self.record('terminate', process_state='running')
+                try:
+                    os.killpg(self.proc.pid, signal.SIGTERM)
+                except ProcessLookupError:
+                    pass
+                try:
+                    self.proc.wait(timeout=0.8)
+                except subprocess.TimeoutExpired:
+                    self.record('kill', process_state='running')
+                    try:
+                        os.killpg(self.proc.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                    self.proc.wait(timeout=0.8)
+        elif self.proc:
+            self.record('already-exited', returncode=self.proc.returncode)
+        if self.sock:
+            self.sock.close()
+        (self.work / 'qmp.sock').unlink(missing_ok=True)
+        self.record('cleanup-complete', clean=self.clean, returncode=self.proc.returncode if self.proc else None)
+
+    def run(self):
+        error = None
+        status = None
+        try:
+            usable = stat.S_ISCHR(os.stat('/dev/kvm').st_mode) and os.access('/dev/kvm', os.R_OK | os.W_OK)
+        except OSError:
+            usable = False
+        acc = 'kvm' if usable else 'tcg'
+        reason = 'usable /dev/kvm' if acc == 'kvm' else '/dev/kvm unavailable to this user'
+        def interrupted(signum, frame):
+            raise InterruptedError('signal ' + str(signum))
+        signal.signal(signal.SIGTERM, interrupted)
+        signal.signal(signal.SIGINT, interrupted)
+        try:
+            os.chdir(self.work)
+            self.record('start', accelerator=acc, reason=reason, utc=datetime.now(timezone.utc).isoformat())
+            version = subprocess.run(['qemu-system-i386', '--version'], capture_output=True, text=True, timeout=5, check=True)
+            self.record('version', output=version.stdout.strip())
+            subprocess.run(['qemu-img', 'create', '-q', '-f', 'qcow2', 'blank.qcow2', '64M'], stdout=self.stderr, stderr=self.stderr, timeout=10, check=True)
+            args = ['qemu-system-i386', '-accel', acc, '-machine', 'pc', '-cpu', 'pentium3', '-m', '32',
+                    '-display', 'none', '-drive', 'file=blank.qcow2,format=qcow2,if=ide', '-nic', 'none',
+                    '-qmp', 'unix:qmp.sock,server=on,wait=off']
+            self.phase = 'spawn'
+            self.record('argv', argv=args)
+            self.proc = subprocess.Popen(args, stdout=self.stderr, stderr=self.stderr, start_new_session=True)
+            self.phase = 'connect'
+            self.sock = socket.socket(socket.AF_UNIX)
+            while True:
+                if self.proc.poll() is not None:
+                    raise RuntimeError('QEMU exited before QMP: ' + str(self.proc.returncode))
+                if time.monotonic() >= self.deadline:
+                    raise TimeoutError('QMP socket startup')
+                try:
+                    self.sock.settimeout(0.2)
+                    self.sock.connect('qmp.sock')
+                    break
+                except (FileNotFoundError, ConnectionRefusedError):
+                    time.sleep(0.05)
+            self.phase = 'greeting'
+            greeting = self.receive(self.deadline)
+            if 'QMP' not in greeting:
+                raise RuntimeError('missing QMP greeting')
+            self.phase = 'capabilities'
+            self.ask('qmp_capabilities')
+            self.phase = 'query-status'
+            status = self.ask('query-status').get('status')
+            if status != 'running':
+                raise RuntimeError('guest status is ' + str(status))
+        except Exception as exc:
+            error = type(exc).__name__ + ': ' + str(exc)
+            self.record('failure', detail=error, process_state=self.proc.poll() if self.proc else 'not-started')
+        finally:
+            failed_phase = self.phase
+            try:
+                self.stop()
+            except Exception as exc:
+                error = error or ('cleanup: ' + str(exc))
+                self.record('cleanup-failure', detail=str(exc))
+            result = dict(accelerator=acc, status=status, clean=self.clean, phase=failed_phase, error=error)
+            (self.diag / 'result.json').write_text(json.dumps(result, indent=2)+'\n')
+            self.events.close()
+            self.stderr.close()
+        print(f'accelerator {acc} ({reason}); status={status}; cleanup={self.clean}; phase={failed_phase}')
+        print('Persistent diagnostics: ' + str(self.diag))
+        if error:
+            print(error)
+        return 0 if error is None and self.clean else 1
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--work', required=True)
+    parser.add_argument('--diag', required=True)
+    parser.add_argument('--seconds', type=float, default=80)
+    args = parser.parse_args()
+    raise SystemExit(Probe(args.work, args.diag, args.seconds).run())
+RETRO_QEMU_PROBE_PY
+    slow "QEMU starts a blank disk headless (accelerator, QMP answers)" 'python3 "$WORK/retro-qemu-probe.py" --work "$WORK/qemu-smoke" --diag "$ASSETS/logs/retro-qemu-${DEV_RUN_STAMP:-$(date +%Y%m%d-%H%M%S)}"' 120
+    hint "Persistent retro-qemu diagnostics identify the failed phase; a KVM failure is never replaced by a passing TCG retry."
     slow  "the exchange disk takes a file in and gives it back (1 GB, mtools, through the helper)" 'rh="$WORK/retro-home"; mkdir -p "$rh/winnt40/install" && cd "$WORK" || exit 1; echo "exchange $$" > XFER.TXT
         H=~/.local/lib/dev-retro/dev-retro
         HOME="$rh" RETRO_EXCHANGE_MB=1024 "$H" winnt40 put XFER.TXT < /dev/null || exit 1
@@ -6681,15 +7567,17 @@ if ! has nodisk; then
         dapt   com "Wine (64 + 32-bit), mingw-w64, libwine-dev" 'wine*' 'libwine*' 'gcc-mingw-w64*' 'g++-mingw-w64*' mingw-w64-common mingw-w64-tools 'libz-mingw-w64*' cabextract
         dpaths com "COM Wine prefix + winetricks" "$HOME/.local/share/wine/com" "$HOME/.local/bin/winetricks"
     fi
+    has install-retro    && dpaths retro "QEMU smoke-test diagnostics" "$ASSETS"/logs/retro-qemu-*
     has install-retro    && dpaths retro "Retro font acquisition logs" "$ASSETS"/logs/retro-fonts-*.log
+    has install-retro    && dpaths retro "Owner guest LAN/network evidence" "$ASSETS/logs/guest-lan" "$ASSETS/logs/guest-network"
     has install-retro    && dpaths retro "Retro helper and config" "$HOME/.local/lib/dev-retro" "$HOME/.config/dev-retro"
     has install-retro    && dpaths retro "Open Watcom v2 + ~/win31" /opt/watcom "$HOME/win31"
     has install-retro    && dapt   retro "DOSBox-X + ISO authoring (apt)" dosbox-x genisoimage libarchive-tools
     # v92: QEMU and the new guests' workspaces (their disk images grow as Windows is installed)
     has install-retro    && dapt   retro "QEMU, mtools, dosfstools (apt)" qemu-system-x86 qemu-system-gui qemu-system-common qemu-system-data qemu-utils qemu-block-extra mtools dosfstools
     has install-retro    && dpaths retro "~/win95 (DOSBox-X: hdd.img, exchange disk, media)" "$HOME/win95"
-    has install-retro    && dpaths retro "~/winnt40 (QEMU: disk, exchange disk, media)" "$HOME/winnt40"
-    has install-retro    && dpaths retro "~/win2000 (QEMU: disk, exchange disk, media)" "$HOME/win2000"
+    has install-retro    && dpaths retro "~/winnt40 (QEMU: disk, exchange disk, media, LAN config)" "$HOME/winnt40"
+    has install-retro    && dpaths retro "~/win2000 (QEMU: disk, exchange disk, media, LAN config)" "$HOME/win2000"
     has install-retro    && dpaths retro "delphi1 Wine prefix" "$HOME/.local/share/wine/delphi1"
     # v93: Delphi 3, 4, 5, 6, 7 (each prefix, and the media with the unpacked CDs) and win95's snapshots
     if has install-retro; then
@@ -6781,7 +7669,7 @@ if ! has nodisk; then
     fi
     has install-lakehouse && dpaths lakehouse "DuckDB CLI, dbt Fusion, ~/.lakehouse-env (incl. deltalake), ~/lakehouse" "$HOME/.lakehouse-env" "$HOME/.local/bin/duckdb" "$HOME/.local/bin/dbt" "$HOME/.duckdb" "$HOME/lakehouse"
     has install-agentic  && dpaths agentic "Temporal CLI, ~/.agentic-env, ~/agentic" "$CELLAR/temporal" "$HOME/.agentic-env" "$HOME/agentic"
-    has install-agentic  && dpaths agentic "fastmcp (uv tool fastmcp-slim + fastmcp), Inspector probe and diagnostics" "$HOME/.local/share/uv/tools/fastmcp-slim" "$ASSETS/tools/mcp-inspector" "$ASSETS"/logs/inspector-cache-*
+    has install-agentic  && dpaths agentic "fastmcp (uv tool fastmcp-slim + fastmcp), Inspector global-call probe and diagnostics (npm metadata is disposable)" "$HOME/.local/share/uv/tools/fastmcp-slim" "$ASSETS/tools/mcp-inspector" "$ASSETS"/logs/inspector-cache-*
     has install-cloudflared && dapt cloud "cloudflared"      cloudflared
     has install-aws      && dpaths cloud "AWS CLI (Homebrew)"  "$CELLAR/awscli" "$HOME/.aws"
     has install-azure    && dpaths cloud "Azure CLI (Homebrew) + ~/.azure (Bicep)" "$CELLAR/azure-cli" "$HOME/.azure"
@@ -6830,7 +7718,7 @@ if ! has nodisk; then
     dpaths total "Docker data: images, containers, volumes" /var/lib/docker
     dpaths total "~/.cache (uv, pip, puppeteer, dev-test...)" "$HOME/.cache"
     dpaths total "npm and pnpm stores"                      "$HOME/.npm" "$HOME/.local/share/pnpm"
-    dpaths total "~/dev-demo"                               "$HOME/dev-demo"
+    dpaths total "~/dev-demo (includes advanced-demo scaffold and owner work)"                               "$HOME/dev-demo"
     dpaths total "home directory, everything in it"         "$HOME"
     read -r _dsize _dused _davail < <(df -B1 --output=size,used,avail / | tail -n 1)
     _disk_report total "Linux disk used (of $(numfmt --to=iec --suffix=B "${_dsize:-0}"), $(numfmt --to=iec --suffix=B "${_davail:-0}") free)" "${_dused:-0}" "df /"
@@ -6846,7 +7734,7 @@ info "shell-agent ownership ledger" "$SHELL_AGENT_LEDGER"
 # =================================================================
 echo
 echo "================================================================="
-echo "Test Version 100 complete: ${GRN}PASS $PASS${RST}   ${RED}FAIL $FAIL${RST}   ${YEL}WARN $WARN${RST}   SKIP $SKIP"
+echo "Test Version 101 complete: ${GRN}PASS $PASS${RST}   ${RED}FAIL $FAIL${RST}   ${YEL}WARN $WARN${RST}   SKIP $SKIP"
 if [ ${#FAILED[@]} -gt 0 ]; then
     echo
     echo "Failed (must fix to get started):"

@@ -19,6 +19,7 @@ release/
 .release-kit
 
 # Editors and OS
+__pycache__/
 .vscode/
 .idea/
 *.swp

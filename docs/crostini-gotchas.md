@@ -86,6 +86,21 @@ to see it in context; the comment above each fix usually tells the story.
 
 ## Network
 
+- **v101 guest HTTP evidence:** use the fixed-marker procedure in
+  [guest-network-tests.md](guest-network-tests.md). Wine reaches host loopback;
+  QEMU user networking exposes the host at 10.0.2.2. Verify the installed DOSBox-X
+  slirp alias separately. Peer HTTP uses the first/user NIC and a listener bound
+  explicitly to the peer Tailscale address. Guest DNS need not inherit MagicDNS;
+  a name failure after IPv4 success is a separate result. Legacy HTTPS failures
+  do not invalidate a successful controlled plain-HTTP marker.
+
+- **v101 NT/2000 local second adapter:** the supported `lan` command uses loopback
+  UDP between the two QEMU processes. It does not need ChromeOS forwarding or
+  Tailscale. Preserve the second adapter's MAC and recorded PCI identity during
+  [manual adoption](guest-lan.md); a moved adapter can lose static IP/WINS or be
+  detected as new hardware. Keep its gateway blank so the original user NIC keeps
+  internet routing. Remote encapsulation/MTU work belongs to companion F6.
+
 - **NuGet / PowerShell Gallery hang on IPv6** (v100; Nov 2 2026). The owner confirmed IPv4 succeeds where api.nuget.org over IPv6 hangs. Bundle acquisition and implicit restore/build commands use `DOTNET_SYSTEM_NET_DISABLEIPV6=1` only in their child process; this includes generated demo runners and Godot .NET builds. No shell profile or system IPv6 policy is changed. Dev-test makes a bounded .NET service-index request and warns on network/DNS failure; it does not infer that every network error is IPv6.
 
 
@@ -297,6 +312,15 @@ to see it in context; the comment above each fix usually tells the story.
   deferred until installed desktop + shutdown + exchange enable, preventing a preformatted disk
   taking C: during Setup. See the init checklist and STEPS-winnt.md for existing installs/recovery.
 
+- **Windows 2000 KVM irqchip workaround is unavailable under ChromeOS** (v101; owner report
+  Nov 9 2026). Item 3A used its one-session budget with six variants. The TCG baseline boots;
+  KVM still stalls at "Starting up…" with `VIDEO=std`, with `CPU=pentium2`, and with
+  `kernel-irqchip=split`. QEMU refuses `MACHINE=pc,kernel-irqchip=off` with
+  "KVM does not support userspace APIC": irqchip-off is unavailable under the tested ChromeOS
+  KVM environment, not a working workaround. No KVM fix was found. Windows 2000 defaults remain
+  TCG and `SOUND=none`. Audio was not retested because KVM did not boot; these results do not
+  establish an audio fix.
+
 - **Windows 95 NE2000 and COM2** (v100; Nov 5 2026).
   `win95 net on` uses slirp without raw-network permissions; IRQ3 requires COM2 disabled. Only an
   absent serial2 is filled; custom conflicts/blocks require manual review. Use Tailscale IPv4
@@ -308,3 +332,48 @@ to see it in context; the comment above each fix usually tells the story.
   fullscreen combination, while existing choices remain. Change output/scaler only in config with
   the guest off; a live Video-menu change spoiled one Windows 95 Setup. The blind Ctrl+Esc, U,
   Enter shutdown observation is Windows 95-specific, not a DOS/win31/NT procedure. No maximize default.
+
+
+### v101 QEMU smoke-test evidence
+
+The headless blank-disk test keeps stderr, timestamped QMP events and a result record under
+`assets/logs/retro-qemu-<run-stamp>/`, even when its outer timeout fails. It reports the selected
+accelerator and failure phase, then bounds quit/TERM/KILL cleanup for its own child. It never
+opens an installed guest disk or retries a KVM failure into a PASS. `quick` skips this real probe.
+Read those diagnostics before attributing a stall to KVM; the v100 timeout's cause is unproven.
+
+
+### v101 retro profiles and NT CPU
+
+New NT 4.0 configs use CPU=pentium after the observed Pentium III hal.dll STOP. Existing simple
+configs upgrade only the untouched v100 CPU template (or an absent CPU) once, recording
+`# v101: NT CPU reviewed`. Edited/duplicate/complex settings stay; running guests defer and
+symlink configs stay untouched. Keep both v100 and v101 review markers: later restored/deleted
+settings are owner choices. Windows 2000's CPU and TCG/no-sound defaults stay unchanged.
+
+For NT's drifting PS/2 pointer, use View > Grab On Hover/click capture, Ctrl+Alt+G to release and a
+slower speed in Control Panel > Mouse > Motion. Install NT's Cirrus driver for better drawing;
+skip the display Test button. No USB tablet or VMware mouse driver is added. NT KVM/TCG speed
+remains an owner-run check. The bounded Windows 2000 KVM investigation is recorded above;
+audio was not retested.
+
+For a windowed win95 profile, keep `[sdl] output=surface` for maximized redraw. For the owner's
+full-screen stretching profile, edit the stopped guest's config to `[sdl] output=opengl` with
+`fullresolution=desktop` and `[render] aspect=false`, then use Ctrl+Shift+F with the default mapper.
+Stretching can distort aspect ratio and OpenGL may flicker in a maximized window. win31 retains
+OpenGL; verify its full-screen profile separately. DOS text stays ttf. Valid recognized renderer
+choices are informational; missing/duplicate/unrecognized values and unsafe mounts still WARN.
+Never edit the renderer from the live Video menu during Setup.
+
+The owner's Delphi 3 OLEnterprise Object Agent hung/crashed win95 with the dynamic core.
+Owner checked Nov 9 2026: `win95 --core normal` boots with the agent starting. With the guest
+shut down, set `core=normal` in the `[cpu]` section of `~/win95/boot.conf`; the owner confirmed
+this persists across plain `win95` boots. Setup already uses normal.
+
+The confirmed startup entry is in `HKLM\Software\Microsoft\Windows\CurrentVersion\RunServices`:
+value `Object Factory` = `C:\Program Files\Borland\OLEnterprise\bin\objfact.exe`.
+It runs during boot, before logon. The owner keeps it enabled for a possible later OLEnterprise
+transport. If disabling it is later desired, use Registry Editor to export the `RunServices`
+key first, then delete only the `Object Factory` value. Keep the key, other values and the
+OLEnterprise installation. This normal-core finding applies to that installation; other RPC
+software has not been verified.

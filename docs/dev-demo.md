@@ -43,6 +43,7 @@ The download itself is about 1 GB, and Godot's demo projects are half of it. Siz
 | drupal/drupal-astro and drupal/umami-headless (generated Astro sources and launchers; Astro's packages and the shared Drupal site arrive on first use, v96) | under 1 MB each |
 | iac/cm-bakeoff (generated Ansible playbook, Puppet module, Chef cookbook, InSpec profile and Dockerfiles; the images build on first use, v91) | under 1 MB |
 | cloud/cloudflare (a Worker, its D1 migration and a launcher, v89) | under 1 MB |
+| retro/delphi/advanced-demo (v101 foundation docs, NOT RUN results template and minimal launcher; owner work excluded) | under 0.1 MB generated text |
 | All other demos | under 3 MB each |
 | **Total** | **about 1 GB** |
 
@@ -109,6 +110,13 @@ The Symfony demo (`symfony/links`, `install-symfony`, v88) is the same links app
 The service demos (v89) use setup's shared services and start them through `devsvc`, which checks memory first. `services/search-bakeoff` (any search engine installed) indexes Apache Solr's example films (1,100 films with a small 10-dimension vector, CC BY 2.5) into each of Solr, OpenSearch, Elasticsearch, Meilisearch and Typesense it finds, asks each the same four questions (all words of 'harry potter', the five biggest genres, the typo 'godzila', the films nearest to Batman Begins) and prints them side by side. `run-search-bakeoff.sh` has `all` (one engine at a time, then the report), one item per engine, `report` and `drop`; it stops again an engine it started. `services/redis` is a stepped tour of Redis 8 (strings to streams, pub/sub, JSON, time series, Bloom, vector search; `nonstop`, `cli`, `insight`), and `services/mongodb` imports the films and walks through queries, updates, aggregation, a text index, `explain()` and an export, then drops its database.
 
 `agents/fastmcp` (install-agentic) is a FastMCP server over the same films with three tools and a resource: `call` lists and calls them over stdio, `http` mounts the server at `/mcp/` in a FastAPI app on :8765 next to REST routes, `inspector` opens it in the MCP Inspector, and `claude` / `remove` add it to Claude Code as `films` or take it out. `cloud/cloudflare` (install-cloudflare) is a Worker with a D1 notes table: `dev` runs it with `wrangler dev` on :8787 and a local database, no account; `deploy` asks first and needs `CLOUDFLARE_API_TOKEN` or `wrangler login`; `tunnel` (with install-cloudflared) puts the local Worker on a public trycloudflare.com address after a warning.
+
+v101 verifies the installed global Inspector CLI with its matching Node. The demo's
+`fastmcp dev inspector server.py` uses npx and may need online registry metadata. After
+`devclean --run` clears npm's cache, use that Inspector command online once before trying it
+offline. Dev-test reports metadata key presence as INFO; content, package dependencies and
+server Python dependencies are not verified by that INFO. Full offline UI operation is not promised.
+
 
 Two older demos gained items in v89. `web/drupal-umami` adds `redis` and `memcache` (Drupal's cache in the shared service, through a marked block in settings.php that `cache-off` removes), and `solr` and `opensearch` (the Search API modules enabled and the server form's values printed). `models/local-rag` takes `--store` (json, sqlite-vec, qdrant, redis, milvus-lite, atlas-local) and has a `store` item that loads the same chunks into another store without re-embedding; `RAG_STORE` picks the store for the other items. A folder made earlier gets the new launchers with `demo-refresh`.
 
@@ -183,9 +191,14 @@ keep their settings; ambiguous configs receive only the marker. Running guests d
 NT 4.0 keeps auto acceleration, scaled GTK, PS/2 and sb16; if it is slow, try TCG with the guest
 off (NT performance remains an owner check). KVM availability does not imply a guest selected KVM.
 `<guest> accel` reports the selection/reason; `<guest> preferences` reports preserved preferences.
-Raise the Windows screen area in Display Properties if the unscaled picture is too small. To try
-Windows 2000 audio later, set SOUND=AC97 with the guest off and install its CD driver; PulseAudio
-errors may return. Sound was not the cause of the boot stall.
+Raise the Windows screen area in Display Properties if the unscaled picture is too small.
+v101 keeps Windows 2000 sound off by default. For an owner-approved audio trial, stop the guest,
+set SOUND=sb16 and use its SB16/AWE32-compatible WDM driver (I/O 220, IRQ 5, DMA 1, 16-bit DMA 5).
+AUDIO_BACKEND=auto selects available native PipeWire, then PulseAudio, then an explicit silent
+backend; pipewire/pa/none can be requested explicitly. An unavailable explicit backend stops before
+launch. Native PipeWire removed the observed volume errors, but TCG playback still stuttered;
+no clean audio or KVM fix is claimed. A suitable built-in AC97 driver has not been established.
+Sound was not the cause of the boot stall.
 
 Every NT/2000 `setup` (including resumed setup and --from-cd/--raw) withholds the exchange disk and
 clears attachment acknowledgement. Finish Windows installation, reach the desktop, shut down, then
@@ -317,3 +330,75 @@ an optional in-guest `convert C: /fs:ntfs` changes it later (use the actual Wind
 which may differ on old installs). Conversion is never part of dev-test or automatic acceptance.
 Windows 2000 has no built-in Explorer ZIP support: unzip your archive on Linux into the guest
 workspace, then put the resulting folder. No extra ZIP software/media is downloaded by the bundle.
+
+
+### v101 retro profiles and NT CPU
+
+New NT 4.0 configs use CPU=pentium after the observed Pentium III hal.dll STOP. Existing simple
+configs upgrade only the untouched v100 CPU template (or an absent CPU) once, recording
+`# v101: NT CPU reviewed`. Edited/duplicate/complex settings stay; running guests defer and
+symlink configs stay untouched. Keep both v100 and v101 review markers: later restored/deleted
+settings are owner choices. Windows 2000's CPU and TCG/no-sound defaults stay unchanged.
+
+For NT's drifting PS/2 pointer, use View > Grab On Hover/click capture, Ctrl+Alt+G to release and a
+slower speed in Control Panel > Mouse > Motion. Install NT's Cirrus driver for better drawing;
+skip the display Test button. No USB tablet or VMware mouse driver is added. NT KVM/TCG speed
+and Windows 2000 KVM/audio variants remain owner-run checks, one change at a time with backups.
+
+For a windowed win95 profile, keep `[sdl] output=surface` for maximized redraw. For the owner's
+full-screen stretching profile, edit the stopped guest's config to `[sdl] output=opengl` with
+`fullresolution=desktop` and `[render] aspect=false`, then use Ctrl+Shift+F with the default mapper.
+Stretching can distort aspect ratio and OpenGL may flicker in a maximized window. win31 retains
+OpenGL; verify its full-screen profile separately. DOS text stays ttf. Valid recognized renderer
+choices are informational; missing/duplicate/unrecognized values and unsafe mounts still WARN.
+Never edit the renderer from the live Video menu during Setup.
+
+The owner's Delphi 3 OLEnterprise Object Agent hung/crashed win95 with the dynamic core.
+Owner checked Nov 9 2026: `win95 --core normal` boots with the agent starting. With the guest
+shut down, set `core=normal` in the `[cpu]` section of `~/win95/boot.conf`; the owner confirmed
+this persists across plain `win95` boots. Setup already uses normal.
+
+The confirmed startup entry is in `HKLM\Software\Microsoft\Windows\CurrentVersion\RunServices`:
+value `Object Factory` = `C:\Program Files\Borland\OLEnterprise\bin\objfact.exe`.
+It runs during boot, before logon. The owner keeps it enabled for a possible later OLEnterprise
+transport. If disabling it is later desired, use Registry Editor to export the `RunServices`
+key first, then delete only the `Object Factory` value. Keep the key, other values and the
+OLEnterprise installation. This normal-core finding applies to that installation; other RPC
+software has not been verified.
+
+
+### v101 local guest link
+
+`winnt40 lan [status|on|off]` and `win2000 lan [status|on|off]` manage a local-only
+second PCnet pair, default off, through LAN keys in each existing guest config.
+Status creates nothing and never evaluates shell config or probes a peer. Stop both
+guests before editing/adoption. Follow [guest-lan.md](guest-lan.md): record the old
+MAC/model/PCI identity and static IP/WINS, keep backups, and remove only the known
+manual network stanza yourself. The managed NIC stays after USB/audio/EXTRA_ARGS.
+Ambiguous custom device layouts need recorded explicit PCI pins or are refused.
+The owner must confirm no new hardware and unchanged IP/WINS without re-entry,
+bidirectional ping/domain behavior and first-NIC internet. Remote mode is deferred.
+
+
+### v101 advanced-demo foundation
+
+`./dev-demo-chromebook.sh install-retro` also generates
+`~/dev-demo/retro/delphi/advanced-demo` and
+`~/dev-demo/retro/delphi/run-advanced-demo.sh`, independently of Watcom and the
+existing matrix demo. The three actions are steps, read-only status and results
+guidance. Status uses only the v101 local LAN status operations; an older/missing
+helper is reported without invoking it. The minimal launcher reads no demo
+credentials and starts no guest, listener, installer or service.
+
+README/STEPS/VERSIONS and the launcher refresh on every generation. Existing
+work/, results-template.tsv and owner results remain intact on ordinary reruns
+and demo-refresh. Explicit demo-clean lists the directory, launcher and flat index
+entry before confirmation; owner work inside the directory is included. Keep
+completed results separately under assets/logs/guest-network/ so cleanup leaves
+them available. The complete demo total measures the scaffold once; retained
+LAN/network evidence has its own disk row. There is no v101 application ISO.
+
+Follow [guest-network-tests.md](guest-network-tests.md) for the owner-controlled
+marker listener and browser/tools matrix. All 27 initial rows are NOT RUN.
+HTTPGET/Delphi/DCOM/databases and F0–F6 application gates remain deferred. Licensed
+media and NT SP6a are owner prerequisites, not downloads or automatic setup here.
