@@ -143,6 +143,7 @@ The test script: it checks that what setup installed works. Newest version first
   - Verify the exact global Inspector release and declared CLI with matching Node/npm prefix, producer exit 0 and result 5; replace bare offline npx. Metadata cache key presence is INFO only. Shared isolated fake-program fixtures cover cleanup, missing/malformed/mismatched installs and misleading producer output.
   - Shared isolated LAN fixtures cover no-write status, exact handwritten/adopted argv for both guests, pinned device identity, config preservation/refusals, collisions and setup exchange withholding. Existing workspace disk rows include LAN config once; owner guest identity checks remain pending.
   - Isolated scaffold fixtures verify nested/default launchers, old/new indexes, read-only actions, path refusals, owner-data preservation and explicit clean targets. Demo totals include scaffold once; retained LAN/network evidence has one row.
+  - Targeted-run correction (Nov 8 2026, owner approved within v101): export SCRIPT_DIR beside ASSETS so the scaffold check's child shell can find dev-demo. The portable regression now executes the production path setup and check wrapper without an inherited SCRIPT_DIR.
 
 - **v100** (owner accepted Nov 7, 2026, with known issues):
   - .NET checks use IPv4; the connectivity probe reports a warning if unreachable.

@@ -429,6 +429,8 @@ LAST=pass
 # v65: logs live in ./assets/logs next to the scripts, not in the home directory.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2> /dev/null && pwd || true)"
 [ -n "$SCRIPT_DIR" ] || SCRIPT_DIR="$PWD"
+# v101 (Nov 8 2026): child checks need the bundle path for sibling-script fixtures.
+export SCRIPT_DIR
 export ASSETS="$SCRIPT_DIR/assets"
 # v98: read the installer's single pin for ODBC and CLI/Python checks (Oct 30 2026: hold at 1.x).
 export DUCKDB_VERSION

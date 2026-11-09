@@ -796,6 +796,20 @@ real guest hand checks, archive/import confirmation and stage 7 acceptance remai
 pending. No application source, pack, remote link, guest launch, merge or release
 is implied by this record.
 
+**Stage 7 evidence so far (Nov 8):** the individually approved targeted
+init → setup → init commands completed with exit 0; setup recorded 15 successful
+stages and neither init left manual items. The targeted test completed with exit 1:
+157 PASS, 1 FAIL, 1 WARN, 0 SKIP. Global Inspector verification and the bounded
+blank-disk QEMU probe passed, including clean probe shutdown. Local evidence is in
+`assets/logs/dev-test-20261108-203517.output` and its matching `.log`.
+The scaffold FAIL exposed an unexported SCRIPT_DIR at the child-shell boundary.
+The owner approved exporting SCRIPT_DIR beside ASSETS, retaining the production
+DEMO_SOURCE command and testing that wrapper from an environment without SCRIPT_DIR.
+The NT exchange WARN is expected until the owner completes LAN adoption and runs
+`winnt40 exchange enable`; the agent must not perform that change. Static checks,
+push approval and one separately approved test rerun follow the correction.
+This records progress, not final acceptance; the remaining hand checks still apply.
+
 ## Proposed owner acceptance route
 
 Commands below are for the later approved build, **not permission to execute now**.

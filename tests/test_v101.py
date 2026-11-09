@@ -3,6 +3,7 @@ import ast
 import io
 import json
 import os
+import shlex
 from pathlib import Path
 import stat
 import subprocess
@@ -228,10 +229,20 @@ class DemoFoundation(unittest.TestCase):
     def test_nested_scaffold_refresh_index_and_clean(self):
         with tempfile.TemporaryDirectory(prefix='v101-scaffold-', dir=ROOT / 'assets') as tmp:
             root = Path(tmp)
-            env = dict(PATH='/usr/bin:/bin', HOME=str(root), WORK=str(root),
-                       DEMO_SOURCE=str(ROOT / 'dev-demo-chromebook.sh'))
-            result = subprocess.run(['/usr/bin/python3', '-c', embedded('test', 'RETRO_SCAFFOLD_V101_PY')],
-                                    env=env, text=True, capture_output=True, timeout=90)
+            fixture = root / 'retro-scaffold-v101.py'
+            fixture.write_text(embedded('test', 'RETRO_SCAFFOLD_V101_PY'))
+            script = ROOT / 'dev-test-chromebook.sh'
+            source = script.read_text()
+            line = next(line for line in source.splitlines()
+                        if line.lstrip().startswith('check "Advanced-demo scaffold/lifecycle contracts'))
+            command = shlex.split(line)[2]
+            # Start without SCRIPT_DIR, then execute the production path setup and
+            # _run's child-shell boundary. Removing its export must break this check.
+            preamble = 'SCRIPT_DIR=' + source.split('SCRIPT_DIR=', 1)[1].split(
+                'export ASSETS="$SCRIPT_DIR/assets"', 1)[0] + 'export ASSETS="$SCRIPT_DIR/assets"\n'
+            env = dict(PATH='/usr/bin:/bin', HOME=str(root), WORK=str(root))
+            result = subprocess.run(['bash', '-c', preamble + 'bash -c ' + shlex.quote(command), str(script)],
+                                    cwd=root, env=env, text=True, capture_output=True, timeout=90)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
 
