@@ -851,11 +851,18 @@ OpenGL; verify its full-screen profile separately. DOS text stays ttf. Valid rec
 choices are informational; missing/duplicate/unrecognized values and unsafe mounts still WARN.
 Never edit the renderer from the live Video menu during Setup.
 
-The owner's Delphi 3 OLEnterprise Object Agent hung/crashed win95 with the dynamic core. Recover
-with `win95 --core normal`; with the guest off, set `[cpu] core=normal` in boot.conf to keep it.
-Setup already uses normal. If the agent is unused, inspect Startup/vendor options and disable
-only the identified action. Do not guess a Run/RunServices registry key; export a confirmed entry
-before editing. This is a finding for that installation, not a guarantee about all RPC software.
+The owner's Delphi 3 OLEnterprise Object Agent hung/crashed win95 with the dynamic core.
+Owner checked Nov 9 2026: `win95 --core normal` boots with the agent starting. With the guest
+shut down, set `core=normal` in the `[cpu]` section of `~/win95/boot.conf`; the owner confirmed
+this persists across plain `win95` boots. Setup already uses normal.
+
+The confirmed startup entry is in `HKLM\Software\Microsoft\Windows\CurrentVersion\RunServices`:
+value `Object Factory` = `C:\Program Files\Borland\OLEnterprise\bin\objfact.exe`.
+It runs during boot, before logon. The owner keeps it enabled for a possible later OLEnterprise
+transport. If disabling it is later desired, use Registry Editor to export the `RunServices`
+key first, then delete only the `Object Factory` value. Keep the key, other values and the
+OLEnterprise installation. This normal-core finding applies to that installation; other RPC
+software has not been verified.
 
 
 ### v101 local guest link

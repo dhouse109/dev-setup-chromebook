@@ -312,6 +312,15 @@ to see it in context; the comment above each fix usually tells the story.
   deferred until installed desktop + shutdown + exchange enable, preventing a preformatted disk
   taking C: during Setup. See the init checklist and STEPS-winnt.md for existing installs/recovery.
 
+- **Windows 2000 KVM irqchip workaround is unavailable under ChromeOS** (v101; owner report
+  Nov 9 2026). Item 3A used its one-session budget with six variants. The TCG baseline boots;
+  KVM still stalls at "Starting up…" with `VIDEO=std`, with `CPU=pentium2`, and with
+  `kernel-irqchip=split`. QEMU refuses `MACHINE=pc,kernel-irqchip=off` with
+  "KVM does not support userspace APIC": irqchip-off is unavailable under the tested ChromeOS
+  KVM environment, not a working workaround. No KVM fix was found. Windows 2000 defaults remain
+  TCG and `SOUND=none`. Audio was not retested because KVM did not boot; these results do not
+  establish an audio fix.
+
 - **Windows 95 NE2000 and COM2** (v100; Nov 5 2026).
   `win95 net on` uses slirp without raw-network permissions; IRQ3 requires COM2 disabled. Only an
   absent serial2 is filled; custom conflicts/blocks require manual review. Use Tailscale IPv4
@@ -345,7 +354,8 @@ settings are owner choices. Windows 2000's CPU and TCG/no-sound defaults stay un
 For NT's drifting PS/2 pointer, use View > Grab On Hover/click capture, Ctrl+Alt+G to release and a
 slower speed in Control Panel > Mouse > Motion. Install NT's Cirrus driver for better drawing;
 skip the display Test button. No USB tablet or VMware mouse driver is added. NT KVM/TCG speed
-and Windows 2000 KVM/audio variants remain owner-run checks, one change at a time with backups.
+remains an owner-run check. The bounded Windows 2000 KVM investigation is recorded above;
+audio was not retested.
 
 For a windowed win95 profile, keep `[sdl] output=surface` for maximized redraw. For the owner's
 full-screen stretching profile, edit the stopped guest's config to `[sdl] output=opengl` with
@@ -355,8 +365,15 @@ OpenGL; verify its full-screen profile separately. DOS text stays ttf. Valid rec
 choices are informational; missing/duplicate/unrecognized values and unsafe mounts still WARN.
 Never edit the renderer from the live Video menu during Setup.
 
-The owner's Delphi 3 OLEnterprise Object Agent hung/crashed win95 with the dynamic core. Recover
-with `win95 --core normal`; with the guest off, set `[cpu] core=normal` in boot.conf to keep it.
-Setup already uses normal. If the agent is unused, inspect Startup/vendor options and disable
-only the identified action. Do not guess a Run/RunServices registry key; export a confirmed entry
-before editing. This is a finding for that installation, not a guarantee about all RPC software.
+The owner's Delphi 3 OLEnterprise Object Agent hung/crashed win95 with the dynamic core.
+Owner checked Nov 9 2026: `win95 --core normal` boots with the agent starting. With the guest
+shut down, set `core=normal` in the `[cpu]` section of `~/win95/boot.conf`; the owner confirmed
+this persists across plain `win95` boots. Setup already uses normal.
+
+The confirmed startup entry is in `HKLM\Software\Microsoft\Windows\CurrentVersion\RunServices`:
+value `Object Factory` = `C:\Program Files\Borland\OLEnterprise\bin\objfact.exe`.
+It runs during boot, before logon. The owner keeps it enabled for a possible later OLEnterprise
+transport. If disabling it is later desired, use Registry Editor to export the `RunServices`
+key first, then delete only the `Object Factory` value. Keep the key, other values and the
+OLEnterprise installation. This normal-core finding applies to that installation; other RPC
+software has not been verified.

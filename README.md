@@ -29,12 +29,12 @@ All four take the same flags, so `install-web install-node` means the same thing
 
 Since v94, releases are a tag plus a GitHub Release with GitHub-generated source zip/tar archives
 only. The old release kit was last used for v93 and is retired.
-Retro v101 adds once-only NT CPU review, native-first audio selection and documented display/core profiles; guest validation remains pending.
+Retro v101 adds once-only NT CPU review, native-first audio selection and documented display/core profiles; owner LAN adoption and display/core hand checks passed.
 The v101 candidate uses a regular `CLAUDE.md` import so ChromeOS Files can extract it. Archive
-integrity, modes and contents are checked by `tests/check_release_archive.py`; final acceptance
-also requires extracting the actual GitHub source zip in Files.
+integrity, modes and contents are checked by `tests/check_release_archive.py`. The owner confirmed
+Files extraction of both the stage 6 candidate and GitHub-generated branch zip, plus the Claude import.
 
-> **Current version: v101.** Build in progress; not yet confirmed run on a Chromebook. Stages 1–6 are built; owner hand checks and stage 7 acceptance remain pending. Owner acceptance has not occurred. [CHANGELOG.md](CHANGELOG.md) has the full history.
+> **Current version: v101.** Owner accepted Nov 9, 2026 (targeted run): `install-retro install-agentic install-node`, PASS 159, FAIL 0, WARN 0, SKIP 0, normal prompt return. The guest network matrix and full six-flag regression remain NOT RUN; see the [acceptance record](docs/plans/v101-plan.md#owner-acceptance--nov-9-2026-targeted-run) for scope and carried-forward checks. [CHANGELOG.md](CHANGELOG.md) has the full history.
 
 v99 implements the [final plan](docs/plans/v99-plan.md): bounded bulk-install retries, stage/EXIT
 reports and focused Playwright, password, model-hint and package-permission fixes. The owner accepted
@@ -189,7 +189,8 @@ See [local guest LAN and identity-preserving adoption](docs/guest-lan.md) before
 `dev-demo install-retro` supplies the documentation-only `retro/delphi/advanced-demo`
 scaffold with `steps`, `status` and `results`; it needs no Watcom to generate. Delphi
 application code, HTTPGET, DCOM/database integration, remote mode and pack are follow-ups.
-Owner guest checks remain pending.
+Owner LAN adoption and display/core checks passed in the accepted targeted run. The published
+guest network matrix and full six-flag regression remain NOT RUN; see the acceptance record.
 
 ## Requirements
 

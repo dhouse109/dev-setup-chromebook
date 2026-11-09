@@ -2,6 +2,9 @@
 
 Nov 8, 2026 · **FINAL — owner approved after reviews of `936737b` and `70109e9`; merge before build**
 
+**Build status:** owner accepted Nov 9, 2026 (targeted run). The acceptance section below records
+the completed evidence and checks carried forward; the original planning text remains as history.
+
 Baseline: released `v100` (`3de837e`, Nov 8). The scripts on `plan/v101` are still v100.
 This expands the scope notes at `5eb3b35`, following the v100 plan: findings, approach, affected
 code, migration, dev-test coverage, documentation and owner choices. This commit changes plans
@@ -55,7 +58,7 @@ approval alone does not start the build; item 2 records the separately approved 
 | 4A | Keep failures as FAIL, save diagnostics before waits and bound cleanup. | Keep any diagnostic TCG comparison within budget and retain the original failure. |
 | 5A | Use NT Pentium with independent once-only migration and PS/2 docs. | Record NT KVM/TCG behavior before an acceleration-default change. |
 | 6A | Document display profiles and report valid renderer choices as information. | Verify visual behavior; no display switcher in v101. |
-| 7A | Document existing normal-core options and persistent config editing. | Confirm the actual Object Agent startup control; no new switcher. |
+| 7A | Document existing normal-core options and persistent config editing. | Owner confirmed normal-core boots, persistence and the Object Factory RunServices entry; see item 7. No new switcher. |
 | 8A | Publish the manual matrix now and defer Delphi HTTPGET code. | Select controlled HTTP targets and peer/name forms before real checks. |
 | 9A | Support the local pair with approved `LAN_*` keys in the existing per-guest config and preserve the adopted adapter identity. Defer remote mode. | Compare adopted argv/device placement, then confirm unchanged IP/WINS and no new hardware in both guests. |
 | 9B | Supply the nested documentation scaffold without `pack`. | Defer packaging until application sources exist. |
@@ -294,6 +297,13 @@ Retain win2000 TCG, `SOUND=none` and unscaled-tablet defaults unless repeatable 
 normal use and audio checks support a new choice. Return to the owner with evidence and the exact
 migration/marker policy before changing defaults. Never reset v100's review marker.
 
+**Owner result (Nov 9):** 3A used one session and six variants. TCG boots; KVM stalls at
+"Starting up…" with VIDEO=std and with CPU=pentium2. QEMU refuses
+MACHINE=pc,kernel-irqchip=off with "KVM does not support userspace APIC";
+kernel-irqchip=split did not work either. No KVM fix was found. Windows 2000 retains TCG and
+SOUND=none; audio was not retested. Later two-guest demo stages must plan for TCG and measure
+responsiveness rather than assume KVM will become available.
+
 ### Audio policy
 
 **Approved 3B:** use `AUDIO_BACKEND=auto|pipewire|pa|none`, with helper fallback auto when absent.
@@ -459,16 +469,21 @@ fullscreen=true default or implicit display switcher.
 
 ### Approach
 
-Nov 7 owner finding: Delphi 3 OLEnterprise's Object Agent started at win95 login; dynamic core hung
+Nov 7 owner finding: Delphi 3 OLEnterprise's Object Agent startup hung the dynamic core
 and DOSBox-X segfaulted. Normal-core `win95 setup` booted. This establishes a workaround for that
 installation, not all RPC/network software.
 
-**Recommend 7A:** existing `win95 --core normal` recovers; with guest off, set `[cpu] core=normal`
-in `~/win95/boot.conf` for persistence. Keep normal setup and general dynamic boot defaults. Explain
-disabling Object Agent automatic startup if unused: inspect Startup/vendor configuration first,
-remove only the identified startup action. Do not invent a registry key or delete the installation.
-If Run/RunServices is used, document the actual owner-confirmed entry and export it before editing.
-Do not recommend routine `setup` launches just to select normal core.
+**Approved 7A, owner checked Nov 9:** `win95 --core normal` boots with the agent starting.
+With the guest off, `core=normal` in the `[cpu]` section of `~/win95/boot.conf` persists across
+plain `win95` boots. Keep normal setup and general dynamic boot defaults; do not recommend
+routine `setup` launches just to select normal core.
+
+The owner confirmed `HKLM\Software\Microsoft\Windows\CurrentVersion\RunServices`, value
+`Object Factory` = `C:\Program Files\Borland\OLEnterprise\bin\objfact.exe`. It runs during boot,
+before logon. The owner keeps it enabled for a possible later OLEnterprise transport. Document
+optional disabling by exporting the RunServices key first, then deleting only the Object Factory
+value. Preserve the key, other values and the installation. No registry change is performed by
+the bundle or coding agent.
 
 ### Files, dev-test, docs and decision
 
@@ -476,8 +491,8 @@ Do not recommend routine `setup` launches just to select normal core.
   **Demo:** `demo_retro` STEPS-delphi and advanced scaffold cross-link. **Test:** focused fake-engine
   argv checks for `--core normal` overriding config, normal setup and persistent edit preservation.
   **Init:** version metadata only.
-- **Dev-test:** no add-on requirement or real crash/guest reproduction. Owner verifies normal-core
-  login and identifies startup control; missing licensed OLEnterprise is not FAIL. Existing disk
+- **Dev-test:** no add-on requirement or real crash/guest reproduction. Owner confirmed normal-core
+  boot, persistence and startup control; missing licensed OLEnterprise is not FAIL. Existing disk
   rows cover content; no new downloads/config migration.
 - **Docs:** common docs, Crostini Retro crash/workaround, `docs/dev-demo.md` and generated STEPS;
   broader RPC software is a troubleshooting suggestion, not an established finding.
@@ -752,7 +767,8 @@ rebinding as a workaround. Leave domain credentials and changes to the owner's W
 
 Network-only acceptance starts at the current NT 128 MB and Windows 2000 256 MB allocations.
 The later SQL lab may use NT 128–256 MB and Windows 2000 512 MB, with one database workload at a
-time. The helper currently uses `-smp 1`; TCG multi-thread mode does not assign two guest vCPUs.
+time. Plan later two-guest demo stages for TCG after item 3A found no Windows 2000 KVM fix.
+The helper currently uses `-smp 1`; TCG multi-thread mode does not assign two guest vCPUs.
 Measure responsiveness before requiring simultaneous guests. Do not run models or Docker
 databases for this transport check. Remote transport, including the MTU investigation, is deferred
 to companion F6 and is neither a v101 feature nor an optional v101 acceptance route.
@@ -789,30 +805,44 @@ application-code deferral are settled.
 7. **Acceptance record:** record the approved scope, evidence and owner Chromebook results.
    Every stage commit has Codex co-author trailer; no merge/release implied by a plan/build commit.
 
-**Build record:** stages 1–6 are implemented; required static/isolated checks run
-per stage. The Inspector contract was narrowed by owner approval as recorded in
-item 2. LAN identity fixtures and the nested scaffold/manual protocol are built;
-real guest hand checks, archive/import confirmation and stage 7 acceptance remain
-pending. No application source, pack, remote link, guest launch, merge or release
-is implied by this record.
+**Build record:** stages 1–7 are implemented, including this scoped acceptance record.
+The Inspector contract was narrowed by owner approval as recorded in item 2. Delphi application
+sources, HTTPGET, database integration, remote linking and packaging remain staged follow-ups.
 
-**Stage 7 evidence so far (Nov 8):** the individually approved targeted
-init → setup → init commands completed with exit 0; setup recorded 15 successful
-stages and neither init left manual items. The targeted test completed with exit 1:
-157 PASS, 1 FAIL, 1 WARN, 0 SKIP. Global Inspector verification and the bounded
-blank-disk QEMU probe passed, including clean probe shutdown. Local evidence is in
-`assets/logs/dev-test-20261108-203517.output` and its matching `.log`.
-The scaffold FAIL exposed an unexported SCRIPT_DIR at the child-shell boundary.
-The owner approved exporting SCRIPT_DIR beside ASSETS, retaining the production
-DEMO_SOURCE command and testing that wrapper from an environment without SCRIPT_DIR.
-The NT exchange WARN is expected until the owner completes LAN adoption and runs
-`winnt40 exchange enable`; the agent must not perform that change. Static checks,
-push approval and one separately approved test rerun follow the correction.
-This records progress, not final acceptance; the remaining hand checks still apply.
+## Owner acceptance — Nov 9, 2026 (targeted run)
+
+The owner accepts v101 for the targeted `install-retro install-agentic install-node` run on
+joxer: **PASS 159, FAIL 0, WARN 0, SKIP 0**, with normal prompt return. This is targeted
+acceptance; it does not claim the guest network matrix or the full six-flag regression passed.
+Evidence below is owner-reported, with no raw local captures reproduced.
+
+| Item | Accepted evidence and limits |
+|---|---|
+| 1: archives/import | ChromeOS Files extracted both the stage 6 candidate zip and the GitHub-generated release/v101 branch zip. Claude Code `/memory` shows AGENTS.md imported. |
+| 2: Inspector | Closed under the approved narrower global-Inspector contract. The owner confirmed devclean removed npm registry metadata and caused the historical offline npx incident. Persistent offline npx/FastMCP operation is not promised. |
+| 3A: Windows 2000 | One session, six variants. TCG baseline boots. KVM stalls at “Starting up…” with VIDEO=std and with CPU=pentium2. QEMU refuses MACHINE=pc,kernel-irqchip=off with “KVM does not support userspace APIC”; kernel-irqchip=split did not work either. No KVM fix was found. Defaults remain TCG and SOUND=none; audio was not retested. Later two-guest demo stages must plan for TCG. |
+| 6: full screen | Ctrl+Shift+F works in win95 with the OpenGL profile and in win31. |
+| 7: OLEnterprise | `win95 --core normal` boots with the agent starting; setting core=normal persists across plain win95 boots. Object Factory in RunServices starts objfact.exe during boot before logon. Docs/STEPS identify the exact entry and export-key/delete-only-value procedure. The owner keeps it enabled for possible later OLEnterprise transport. |
+| 9A: LAN adoption | Passed on both guests. `info pci` is identical before/after. Launched argv is identical apart from NT audio changing pa → pipewire with ISA sb16. Neither guest detected new hardware. Second-adapter IP/mask/no-gateway/WINS stayed unchanged without re-entry. Bidirectional ping, HADAMIN domain logon and first-NIC internet passed. The owner enabled NT exchange afterwards. |
+| 9B: scaffold | Owner ran dev-demo install-retro. The advanced-demo launcher offered only steps/status/results: steps showed foundation instructions, status reported both guests' LAN settings without launching anything, and results only explained copying the template. All passed; no pack/ISO option. |
+
+**NOT RUN, carried forward:** item 8's published guest network matrix and the full six-flag
+regression (`install-all install-db-server install-lan-share install-models
+install-ollama-containers install-retro`). Windows 2000 audio was not retested. Deferred Delphi
+HTTPGET/DCOM/database/application work is not made complete by this acceptance.
+
+The initial targeted test found a scaffold child-shell path failure and an NT exchange WARN.
+The owner-approved SCRIPT_DIR export and production-wrapper regression corrected the former;
+the owner enabled exchange after LAN adoption. The later owner-run result above supersedes
+those initial counts. No new real run is implied by writing this record.
+
+This records owner acceptance and authorizes making PR #17 ready for review. It does not authorize
+merging, tagging or publishing a release.
 
 ## Proposed owner acceptance route
 
-Commands below are for the later approved build, **not permission to execute now**.
+The original route is retained below for context. Completed checks are recorded above;
+remaining real commands still need individual approval.
 
 1. Use the settled plan decisions: LAN keys in existing configs, GitHub-only release archives,
    confirmed joxer and adapter-identity preservation. Recheck the disk preflight before the
@@ -846,8 +876,9 @@ Commands below are for the later approved build, **not permission to execute now
    stages complete, normal prompt return, required archive/hand checks recorded. Any known
    non-credential exception or unconfirmed advertised capability needs explicit owner acceptance/
    narrowed claims before release. Until real validation, a built version is **built, not yet
-   confirmed run on a Chromebook**; this version is currently only **planned**. Merge/tag/release
-   follow acceptance and owner authorization. Scaffold readiness is not Delphi app acceptance.
+   confirmed run on a Chromebook**. The Nov 9 owner result above confirms the targeted run;
+   carried-forward checks retain their explicit limits. Merge/tag/release still require owner
+   authorization. Scaffold readiness is not Delphi app acceptance.
 
 ## References and evidence limits
 
@@ -859,7 +890,8 @@ Primary references checked: Claude import and Git archive docs (1),
 reference for implementation (4). Live docs may describe newer versions: installed help and real
 owner tests remain authoritative for supported behavior.
 
-Planning inspection was read-only: source/fixtures/docs, tracked mode, CLI version/capability help.
+At planning time, inspection was read-only: source/fixtures/docs, tracked mode, CLI version/capability help.
 No Inspector probe, guest boot, media inspection, playback, Claude import session or ChromeOS
-extraction occurred. Owner findings stay labelled as such. The companion's historical Delphi/
+extraction occurred during planning; later build/owner evidence is recorded above. Owner findings
+stay labelled as such. The companion's historical Delphi/
 transport/database details still require matching help/media verification in the follow-up.
