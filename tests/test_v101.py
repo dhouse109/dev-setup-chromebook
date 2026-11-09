@@ -16,6 +16,8 @@ import zipfile
 import check_release_archive as archive_check
 
 ROOT = Path(__file__).resolve().parents[1]
+# v101: fresh CI checkouts need the shared parent for isolated fixture directories.
+(ROOT / 'assets').mkdir(exist_ok=True)
 
 
 def embedded(name, marker):
