@@ -31,6 +31,7 @@ The installer: it sets up each stack the flags name. Newest version first.
 
 - **v101** (build in progress; not yet confirmed run on a Chromebook):
   - Source archives use a regular shared-rules import and CI checks. NT defaults to Pentium with an independent once-only review; quote-aware comment handling lets untouched v100 templates migrate while real shell constructs stay protected; audio auto prefers available native PipeWire, with explicit backend overrides. Valid owner renderers are informational.
+  - Inspector diagnostics no longer claim a persistent offline cache. Devclean retains npm clearing and explains the online-use requirement in report and successful cleanup. Owner confirmed cleanup caused the historical ENOTCACHED by removing registry metadata.
 
 - **v100** (owner accepted Nov 7, 2026, with known issues):
   - NuGet downloads and builds use IPv4 without changing system networking.
@@ -137,6 +138,7 @@ The test script: it checks that what setup installed works. Newest version first
 
 - **v101** (build in progress; not yet confirmed run on a Chromebook):
   - Save QEMU smoke-test diagnostics before waits, correlate QMP replies and bound owned-child cleanup. Errors remain FAIL. Isolated checks cover exact v100 NT templates in LF/CRLF, once-only CPU preservation, real shell refusal, audio policy and renderer diagnostics. Renderer hints describe both windowed and full-screen profiles.
+  - Verify the exact global Inspector release and declared CLI with matching Node/npm prefix, producer exit 0 and result 5; replace bare offline npx. Metadata cache key presence is INFO only. Shared isolated fake-program fixtures cover cleanup, missing/malformed/mismatched installs and misleading producer output.
 
 - **v100** (owner accepted Nov 7, 2026, with known issues):
   - .NET checks use IPv4; the connectivity probe reports a warning if unreachable.
@@ -213,6 +215,7 @@ The init script: logins, keys and config from secrets.env. Newest version first.
 
 - **v101** (build in progress; not yet confirmed run on a Chromebook):
   - Report the new retro CPU/audio capabilities without claiming guest acceptance.
+  - Inspector checklist records the approved global CLI contract and confirmed cleanup cause; no new keys or login steps.
 
 - **v100** (owner accepted Nov 7, 2026, with known issues):
   - Retro messages report selected acceleration instead of promising KVM use.
@@ -272,6 +275,7 @@ The optional demo script: hands-on demos in ~/dev-demo, outside the test loop. N
 
 - **v101** (build in progress; not yet confirmed run on a Chromebook):
   - Refresh qualified NT CPU/pointer, SB16/PipeWire, display-profile and OLEnterprise normal-core instructions.
+  - FastMCP Inspector instructions explain online use after npm cleanup and the boundary of v101 global-CLI verification.
 
 - **v100** (owner accepted Nov 7, 2026, with known issues):
   - .NET and PowerShell demo downloads and runners use IPv4; existing projects are preserved.

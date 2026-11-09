@@ -4562,9 +4562,9 @@ EOF
     # v54: unloads any Ollama model first (RAM), logs free memory, and on failure prints
     # the client's step trail and the server log tail instead of timing out silently.
     slow  "Temporal: dev server + worker + Pydantic workflow round-trip" 'for p in $(ss -ltnpH "sport = :17233" 2> /dev/null | grep -oE "pid=[0-9]+" | cut -d= -f2 | sort -u); do kill "$p" 2> /dev/null; done; if command -v ollama > /dev/null; then for m in $(ollama ps 2> /dev/null | tail -n +2 | awk "{print \$1}"); do ollama stop "$m" > /dev/null 2>&1; done; fi; free -h | head -2; temporal server start-dev --headless --port 17233 --log-level warn > temporal-server.log 2>&1 & pid=$!; trap "kill $pid 2> /dev/null" EXIT; for _ in $(seq 1 30); do temporal operator cluster health --address localhost:17233 > /dev/null 2>&1 && break; kill -0 $pid 2> /dev/null || break; sleep 1; done; ~/.agentic-env/bin/python temporal_smoke.py > temporal-client.log 2>&1; rc=$?; cat temporal-client.log; if [ $rc -ne 0 ] || ! grep -q "temporal ok" temporal-client.log; then echo "--- server log tail:"; tail -20 temporal-server.log; exit 1; fi' 180
-    # v89: MCP tooling. A two-line FastMCP server; FastMCP's own client calls its tool, then the MCP
-    # Inspector's CLI mode does, once as 'mcp-inspector' and once through npx with no network (the copy
-    # setup left in npm's cache, which 'fastmcp dev inspector' uses too).
+    # v101 (Nov 8 2026): owner confirmed devclean removed npm registry metadata.
+    # Verify the exact global package with its matching Node; offline npx is not
+    # an installed-component contract. Cache key presence is INFO only.
     cat > "$WORK/mcp_server.py" << 'EOF'
 from fastmcp import FastMCP
 
@@ -4580,11 +4580,226 @@ EOF
     hint  "rerun setup with install-agentic: v89 installs it with 'uv tool install fastmcp-slim --with fastmcp'"
     check "fastmcp: list and call a tool on a local server"    'fastmcp list mcp_server.py 2>&1 | grep -q "add(" && r=$(fastmcp call mcp_server.py add a=2 b=3 --json 2>&1); echo "$r" | tr -d " \n" | grep -o "\"result\":5" || { echo "$r" | tail -n 5; exit 1; }' 180
     if has install-node; then
-        check "MCP Inspector (mcp-inspector, global npm)"      'command -v mcp-inspector && npm ls -g --depth=0 @modelcontextprotocol/inspector | grep -o "inspector@[0-9.]*"'
-        hint  "rerun setup with install-agentic (it needs install-node for the Inspector)"
-        check "Inspector CLI calls the tool through fastmcp run" 'r=$(mcp-inspector --cli fastmcp run mcp_server.py --method tools/call --tool-name add --tool-arg a=2 --tool-arg b=3 2>&1); echo "$r" | tr -d " \n" | grep -o "\"result\":5" || { echo "$r" | tail -n 5; exit 1; }' 180
-        warn  "npx Inspector calls the tool offline (the copy fastmcp dev uses)" 'r=$(npx --offline @modelcontextprotocol/inspector --cli fastmcp run mcp_server.py --method tools/call --tool-name add --tool-arg a=2 --tool-arg b=3 2>&1); rc=$?; printf "%s\nnpx offline exit=%s\n" "$r" "$rc"; [ "$rc" = 0 ] && printf "%s" "$r" | tr -d " \n" | grep -q "\"result\":5"' 180
-        hint  "a newer Inspector release than the cached one makes npx want the network: rerun setup with install-agentic"
+        cat > "$WORK/inspector-check.py" << 'INSPECTOR_CHECK_V101_PY'
+"""v101: verify one installed global Inspector; metadata cache is informational."""
+import json
+import os
+from pathlib import Path
+import re
+import shutil
+import subprocess
+import sys
+from urllib.parse import unquote, urlsplit
+
+
+def run(argv, seconds=20):
+    return subprocess.run(argv, text=True, stdout=subprocess.PIPE,
+                          stderr=subprocess.STDOUT, timeout=seconds)
+
+
+def metadata():
+    # Key presence is a prerequisite, not proof of intact content or Python dependencies.
+    try:
+        result = run(['npm', 'cache', 'ls', '@modelcontextprotocol/inspector'])
+        if result.returncode:
+            print('unknown (npm cache ls exit %s); one online use may be needed' % result.returncode)
+            return
+        present = any(unquote(urlsplit(key.split('make-fetch-happen:request-cache:', 1)[-1]).path)
+                      .rstrip('/').endswith('/@modelcontextprotocol/inspector')
+                      for key in result.stdout.splitlines())
+        if present:
+            print('present (key only): registry metadata for offline npx/FastMCP is available now; dependencies/content not verified')
+        else:
+            print('absent: npx/FastMCP Inspector needs one online use before offline resolution')
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        print('unknown (metadata query unavailable); one online use may be needed')
+
+
+def verify(server):
+    node = shutil.which('node')
+    npm = shutil.which('npm')
+    cli = shutil.which('mcp-inspector')
+    if not node or not npm or not cli:
+        raise ValueError('global Inspector, Node or npm command missing')
+    result = run([npm, 'prefix', '-g'])
+    if result.returncode or not Path(result.stdout.strip()).is_absolute():
+        raise ValueError('cannot read global npm prefix')
+    prefix = Path(result.stdout.strip()).resolve()
+    runtime = run([node, '-p', 'process.execPath'])
+    if runtime.returncode or not Path(runtime.stdout.strip()).is_absolute():
+        raise ValueError('cannot identify active Node executable')
+    expected_node = prefix / 'bin/node'
+    expected_npm = prefix / 'bin/npm'
+    if (not expected_node.is_file() or not expected_npm.is_file()
+            or Path(node).resolve() != expected_node.resolve()
+            or Path(runtime.stdout.strip()).resolve() != expected_node.resolve()
+            or Path(npm).resolve() != expected_npm.resolve()):
+        raise ValueError('Node/npm/global-prefix mismatch; rerun install-agentic install-node together')
+    package = prefix / 'lib/node_modules/@modelcontextprotocol/inspector'
+    data = json.loads((package / 'package.json').read_text())
+    version = data.get('version', '')
+    if (data.get('name') != '@modelcontextprotocol/inspector'
+            or not isinstance(version, str)
+            or not re.fullmatch(r'\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?', version)):
+        raise ValueError('malformed global Inspector release metadata')
+    entry = data.get('bin', {})
+    entry = entry.get('mcp-inspector') if isinstance(entry, dict) else entry
+    if (not isinstance(entry, str) or not entry or Path(entry).is_absolute()
+            or '..' in Path(entry).parts):
+        raise ValueError('malformed global Inspector CLI declaration')
+    declared = (package / entry).resolve()
+    if (not declared.is_relative_to(package.resolve()) or not declared.is_file()
+            or Path(cli).resolve() != declared):
+        raise ValueError('global Inspector package/bin mismatch')
+    print('Inspector global release %s; matching Node/npm prefix; declared CLI verified' % version, flush=True)
+    # Nov 8 2026 owner confirmation: devclean removed registry metadata before the
+    # historical ENOTCACHED. Direct installed execution requires no npm resolution.
+    result = run([str(expected_node.resolve()), str(declared), '--cli', 'fastmcp', 'run', server,
+                  '--method', 'tools/call', '--tool-name', 'add', '--tool-arg', 'a=2', '--tool-arg', 'b=3'], 120)
+    print(result.stdout, end='' if result.stdout.endswith('\n') else '\n')
+    print('Inspector producer exit=%s' % result.returncode)
+    return 0 if result.returncode == 0 and re.search(r'"result"\s*:\s*5\s*[,}]', result.stdout) else 1
+
+
+if __name__ == '__main__':
+    try:
+        if sys.argv[1:] == ['metadata']:
+            metadata()
+            raise SystemExit(0)
+        if len(sys.argv) != 3 or sys.argv[1] != 'call':
+            raise ValueError('usage: inspector-check.py metadata | call SERVER')
+        raise SystemExit(verify(sys.argv[2]))
+    except (OSError, ValueError, subprocess.TimeoutExpired) as error:
+        print('Inspector check failed: %s' % error)
+        raise SystemExit(1)
+INSPECTOR_CHECK_V101_PY
+        check "Global Inspector exact release/Node and tool call" 'python3 "$WORK/inspector-check.py" call mcp_server.py' 180
+        hint "rerun setup with install-agentic install-node; the active Node/npm, global prefix and declared Inspector CLI must match"
+        info "Inspector registry metadata in npm cache" "$(python3 "$WORK/inspector-check.py" metadata)"
+        cat > "$WORK/inspector-fixtures.py" << 'INSPECTOR_FIXTURES_V101_PY'
+"""Isolated fake-program contracts; never resolve an npm package or use the real cache."""
+import json
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import tempfile
+
+CHECK = Path(os.environ['INSPECTOR_CHECK'])
+CLEAN = Path(os.environ['DEVCLEAN_HELPER'])
+
+
+with tempfile.TemporaryDirectory(prefix='inspector-fixture-', dir=os.environ['WORK']) as tmp:
+    home = Path(tmp)
+    prefix = home / 'node'
+    bindir = prefix / 'bin'
+    bindir.mkdir(parents=True)
+    package = prefix / 'lib/node_modules/@modelcontextprotocol/inspector'
+    package.mkdir(parents=True)
+    cache = home / '.npm/_cacache'
+    cache.mkdir(parents=True)
+    metadata = {'name': '@modelcontextprotocol/inspector', 'version': '9.8.7',
+                'bin': {'mcp-inspector': 'cli.py'}}
+    def package_json(data=metadata):
+        (package / 'package.json').write_text(json.dumps(data))
+    package_json()
+    def fake(path, body):
+        path.write_text('#!/usr/bin/python3\n' + body + '\n')
+        path.chmod(0o755)
+    fake(bindir / 'node', '''import os,subprocess,sys
+from pathlib import Path
+if sys.argv[1:]==['-p','process.execPath']:
+ print(os.environ.get('FIX_RUNTIME',str(Path(__file__).resolve())))
+else:
+ raise SystemExit(subprocess.run(['/usr/bin/python3',*sys.argv[1:]]).returncode)
+''')
+    fake(package / 'cli.py', '''import json,os,sys
+from pathlib import Path
+Path(os.environ['HOME'],'called').write_text(json.dumps(sys.argv[1:]))
+print(os.environ.get('FIX_OUTPUT','{"result":5}'))
+raise SystemExit(int(os.environ.get('FIX_EXIT','0')))
+''')
+    (bindir / 'mcp-inspector').symlink_to(package / 'cli.py')
+    fake(bindir / 'npm', '''import os,shutil,sys
+from pathlib import Path
+h=Path(os.environ['HOME']); c=h/'.npm/_cacache'
+a=sys.argv[1:]
+if a==['prefix','-g']: print(os.environ.get('FIX_PREFIX',str(h/'node')))
+elif a==['cache','ls','@modelcontextprotocol/inspector']:
+ if os.environ.get('FIX_META_ERROR'): raise SystemExit(17)
+ if (c/'packument').exists(): print('make-fetch-happen:request-cache:https://registry.fixture.invalid/@modelcontextprotocol%2finspector')
+ if (c/'tarball').exists(): print('make-fetch-happen:request-cache:https://registry.fixture.invalid/@modelcontextprotocol/inspector/-/inspector-9.8.7.tgz')
+elif a==['cache','clean','--force']:
+ if c.exists(): shutil.rmtree(c)
+else: raise SystemExit('unexpected npm invocation')
+''')
+    fake(bindir / 'npx', "raise SystemExit('npx must not be called by global verification')")
+    fake(bindir / 'sync', 'pass')
+    env = dict(HOME=str(home), PATH=str(bindir) + ':/usr/bin:/bin', LC_ALL='C.UTF-8',
+               DEVCLEAN_ONLY='npm', WORK=str(home))
+    count = 0
+    def call(success=True, extra=None):
+        global count
+        result = subprocess.run(['/usr/bin/python3', str(CHECK), 'call', 'mcp_server.py'],
+                                env=dict(env, **(extra or {})), cwd=home,
+                                capture_output=True, text=True, timeout=10)
+        assert (result.returncode == 0) == success, result.stdout + result.stderr
+        if success:
+            assert 'global release 9.8.7' in result.stdout and 'producer exit=0' in result.stdout
+            args = json.loads((home / 'called').read_text())
+            assert args == ['--cli', 'fastmcp', 'run', 'mcp_server.py', '--method', 'tools/call',
+                            '--tool-name', 'add', '--tool-arg', 'a=2', '--tool-arg', 'b=3']
+        count += 1
+        return result
+    def meta(expected, extra=None):
+        global count
+        result = subprocess.run(['/usr/bin/python3', str(CHECK), 'metadata'], env=dict(env, **(extra or {})),
+                                capture_output=True, text=True, timeout=10)
+        assert result.returncode == 0 and expected in result.stdout, result.stdout + result.stderr
+        assert 'registry.fixture.invalid' not in result.stdout
+        count += 1
+    call()
+    meta('absent')
+    (cache / 'tarball').touch()
+    meta('absent')  # A tarball alone is not registry metadata.
+    (cache / 'packument').touch()
+    meta('present (key only)')
+    before = sorted(p.relative_to(home).as_posix() for p in cache.rglob('*'))
+    report = subprocess.run(['bash', str(CLEAN)], env=env, capture_output=True, text=True, timeout=15)
+    assert report.returncode == 0 and 'need one online use to work offline again' in report.stdout, report.stdout + report.stderr
+    assert before == sorted(p.relative_to(home).as_posix() for p in cache.rglob('*'))
+    count += 1
+    clean = subprocess.run(['bash', str(CLEAN), '--run'], env=env, capture_output=True, text=True, timeout=15)
+    assert clean.returncode == 0 and 'need one online use to work offline again' in clean.stdout, clean.stdout + clean.stderr
+    assert not cache.exists() and (package / 'package.json').exists()
+    count += 1
+    meta('absent')
+    call()  # Cleanup must not break installed global execution.
+    call(False, {'FIX_EXIT': '23'})  # Misleading result 5 with a failed producer.
+    call(False, {'FIX_OUTPUT': '{"result":4}'})
+    call(False, {'FIX_PREFIX': str(home / 'other-node')})
+    call(False, {'FIX_RUNTIME': '/fixture/other-node'})
+    (package / 'package.json').unlink()
+    call(False)
+    (package / 'package.json').write_text('{')
+    call(False)
+    package_json(dict(metadata, version='not-a-release'))
+    call(False)
+    package_json(dict(metadata, bin={'mcp-inspector': '../escape.py'}))
+    call(False)
+    package_json()
+    (bindir / 'mcp-inspector').unlink()
+    call(False)
+    fake(bindir / 'mcp-inspector', 'pass')
+    call(False)  # An unrelated CLI on PATH cannot stand in for this package.
+    (bindir / 'mcp-inspector').unlink()
+    (bindir / 'mcp-inspector').symlink_to(package / 'cli.py')
+    meta('unknown', {'FIX_META_ERROR': '1'})
+    assert not (home / '.npm/_npx').exists()
+    print('Inspector/global/cache contracts: %s isolated checks passed' % count)
+INSPECTOR_FIXTURES_V101_PY
+        check "Inspector global/cache contracts (isolated fake programs)" 'INSPECTOR_CHECK="$WORK/inspector-check.py" DEVCLEAN_HELPER="$HOME/.local/bin/devclean" python3 "$WORK/inspector-fixtures.py"' 90
+
     else
         info  "MCP Inspector" "not installed: it is a Node app (rerun setup with install-agentic install-node)"
     fi
@@ -7081,7 +7296,7 @@ if ! has nodisk; then
     fi
     has install-lakehouse && dpaths lakehouse "DuckDB CLI, dbt Fusion, ~/.lakehouse-env (incl. deltalake), ~/lakehouse" "$HOME/.lakehouse-env" "$HOME/.local/bin/duckdb" "$HOME/.local/bin/dbt" "$HOME/.duckdb" "$HOME/lakehouse"
     has install-agentic  && dpaths agentic "Temporal CLI, ~/.agentic-env, ~/agentic" "$CELLAR/temporal" "$HOME/.agentic-env" "$HOME/agentic"
-    has install-agentic  && dpaths agentic "fastmcp (uv tool fastmcp-slim + fastmcp), Inspector probe and diagnostics" "$HOME/.local/share/uv/tools/fastmcp-slim" "$ASSETS/tools/mcp-inspector" "$ASSETS"/logs/inspector-cache-*
+    has install-agentic  && dpaths agentic "fastmcp (uv tool fastmcp-slim + fastmcp), Inspector global-call probe and diagnostics (npm metadata is disposable)" "$HOME/.local/share/uv/tools/fastmcp-slim" "$ASSETS/tools/mcp-inspector" "$ASSETS"/logs/inspector-cache-*
     has install-cloudflared && dapt cloud "cloudflared"      cloudflared
     has install-aws      && dpaths cloud "AWS CLI (Homebrew)"  "$CELLAR/awscli" "$HOME/.aws"
     has install-azure    && dpaths cloud "Azure CLI (Homebrew) + ~/.azure (Bicep)" "$CELLAR/azure-cli" "$HOME/.azure"

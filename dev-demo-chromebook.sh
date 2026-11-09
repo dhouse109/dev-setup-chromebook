@@ -6848,7 +6848,7 @@ demo_fastmcp() {
 Tools: search_films, films_by_director, top_genres. Resource: films://about.
     fastmcp run server.py                       stdio, as MCP clients start it
     fastmcp list server.py / fastmcp call server.py search_films query="harry potter"
-    fastmcp dev inspector server.py             in the MCP Inspector
+    fastmcp dev inspector server.py             in the MCP Inspector (online use needed after npm cleanup)
 app.py serves the same server over HTTP inside a FastAPI app.
 """
 import html
@@ -6951,7 +6951,8 @@ while demo_menu "FastMCP films server" \
                     demo_note "From another terminal: fastmcp list http://127.0.0.1:8765/mcp/"
                     demo_open_when_ready 8765 "http://127.0.0.1:8765/docs"
                     uv run --no-project "${WITH[@]}" uvicorn app:app --host 127.0.0.1 --port 8765 ;;
-        inspector*) demo_note "The Inspector opens in the browser; its 'Connect' starts the server over stdio. Ctrl-C here stops both."
+        inspector*) demo_note "After npm cleanup (devclean --run), use Inspector online once before trying offline; v101 verifies the installed global CLI, not offline npx/UI or Python dependencies."
+                    demo_note "The Inspector opens in the browser; its 'Connect' starts the server over stdio. Ctrl-C here stops both."
                     fastmcp dev inspector server.py ;;
         claude*)    demo_need claude install-node
                     claude mcp remove --scope user films > /dev/null 2>&1

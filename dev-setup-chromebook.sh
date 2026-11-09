@@ -1406,6 +1406,7 @@ size_of() {
 details() {   # the lines under a category in the report: each old extension version, and the one installed
     local n inst x out b
     case "$1" in
+        npm) echo "      After npm cache cleanup, npx tools such as the MCP Inspector need one online use to work offline again." ;;
         ddev-images)
             out=$(gone_ddev_images) || return 0
             while IFS=$'\t' read -r _ b n; do
@@ -1590,7 +1591,10 @@ for c in "${CATS[@]}"; do
     f1=$(free_bytes)
     case $rc in
         0) echo "done, freed $(human $(( f1 > f0 ? f1 - f0 : 0 ))) (measured $(human "$b"))"
-           grep '^removed ' <<< "$out" | sed 's/^/    /' ;;
+           grep '^removed ' <<< "$out" | sed 's/^/    /'
+           if [ "$c" = npm ]; then
+               echo "    npm cache cleaned: npx tools such as the MCP Inspector need one online use to work offline again."
+           fi ;;
         3) echo "left: $(busy "$c") (close it, then devclean --run again)" ;;
         *) echo "failed (devclean goes on):"; printf '%s\n' "$out" | tail -n 3 | sed 's/^/    /' ;;
     esac
@@ -8177,9 +8181,12 @@ EOF_ENV
     else
         echo "NOTICE: 'uv tool install fastmcp-slim --with fastmcp' failed (is PyPI reachable?); rerun setup with install-agentic."
     fi
-    # The MCP Inspector (Node): installed globally as 'mcp-inspector' and left in npm's cache, so 'npx
-    # @modelcontextprotocol/inspector' and 'fastmcp dev inspector' start without downloading it first. It
-    # needs Node: with install-node (install-all has it), otherwise a NOTICE.
+    # The MCP Inspector (Node) is installed globally as 'mcp-inspector'. npx and
+    # fastmcp dev inspector also resolve disposable registry metadata; after npm
+    # cleanup they need online use before offline resolution. Requires install-node.
+    # v101 (Nov 8 2026): owner confirmed devclean --run preceded ENOTCACHED.
+    # npm can reuse the global CLI while still needing registry metadata first;
+    # successful probes do not establish an independent/persistent npx install.
     if command -v npm > /dev/null 2>&1; then
         if net_retry "bulk packages" npm install -g --allow-scripts=esbuild @modelcontextprotocol/inspector@latest; then
             # v99 (Nov 1 2026: warm-up claimed success after ENOTCACHED): execute the real
@@ -8205,9 +8212,9 @@ PY
                 [ "$rc" = 0 ] && tr -d ' \n' < "$INSPECTOR_LOG.$2" | grep -q '"result":5'
             }
             if inspector_cache_call --yes online && inspector_cache_call --offline offline; then
-                echo "MCP Inspector: installed globally; npx cache verified by an offline tools/call (result 5)."
+                echo "MCP Inspector: installed globally; current online/offline npx diagnostics returned 5. Registry metadata is disposable; this is not a persistent offline-cache guarantee."
             else
-                echo "NOTICE: MCP Inspector installed globally; npx cache warm-up/offline call FAILED (see $INSPECTOR_LOG); rerun install-agentic online."
+                echo "NOTICE: MCP Inspector installed globally; npx diagnostic FAILED (see $INSPECTOR_LOG). After npm cleanup, use npx Inspector online once before trying offline again. Dev-test verifies the global CLI directly."
             fi
         else
             stage_failed "bulk packages" "$?"; break

@@ -34,7 +34,7 @@ The v101 candidate uses a regular `CLAUDE.md` import so ChromeOS Files can extra
 integrity, modes and contents are checked by `tests/check_release_archive.py`; final acceptance
 also requires extracting the actual GitHub source zip in Files.
 
-> **Current version: v101.** Build in progress; not yet confirmed run on a Chromebook. Stages 1–3 are built; the Inspector investigation and remaining foundation stages are pending. Owner acceptance has not occurred. [CHANGELOG.md](CHANGELOG.md) has the full history.
+> **Current version: v101.** Build in progress; not yet confirmed run on a Chromebook. Stages 1–4 are built; guest LAN and advanced-demo foundation stages are pending. Owner acceptance has not occurred. [CHANGELOG.md](CHANGELOG.md) has the full history.
 
 v99 implements the [final plan](docs/plans/v99-plan.md): bounded bulk-install retries, stage/EXIT
 reports and focused Playwright, password, model-hint and package-permission fixes. The owner accepted
@@ -179,8 +179,11 @@ heavy engines run one at a time, because Linux gets about 6.4 GB of an 8 GB Chro
 | `install-ansible-core` | Ansible without the community collections |
 
 Retro guest hand checks and the qualified Delphi 1/3 install, wheel, recovery and file-transfer findings
-are in [docs/dev-demo.md](docs/dev-demo.md) and the generated STEPS files. Inspector remains under
-its separate investigation gate in [the v100 plan](docs/plans/v100-plan.md); no v100 acceptance is claimed.
+are in [docs/dev-demo.md](docs/dev-demo.md) and the generated STEPS files. v101 verifies the exact installed global MCP Inspector with its matching Node and a real tool call.
+The owner confirmed that `devclean --run` removed npm registry metadata before the historical
+ENOTCACHED failure. Cache key presence is INFO only: after npm cleanup, npx tools such as
+Inspector need one online use before offline resolution. Full offline npx/FastMCP UI operation
+and Python dependencies are not a v101 guarantee; use the installed global CLI for the verified path.
 
 ## Requirements
 

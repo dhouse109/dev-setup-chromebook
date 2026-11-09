@@ -19,7 +19,13 @@ Reqnroll scratch tests select the SDK's major/minor framework and require that r
 `/usr/sbin/mkfs.fat`, independent of user PATH. Symfony logs the complete security result and checker
 status. Inspector setup runs a real npx tool call and verifies the same call offline; failure is a
 NOTICE with full diagnostics in `assets/logs/inspector-cache-*`, not a claim that the cache is warm.
-No new flags, secret variables or login steps are required.
+v101 supersedes the old cache claim: dev-test verifies the exact installed global Inspector release,
+its matching Node/npm prefix, producer exit 0 and result 5. Registry packument key presence from
+`npm cache ls` is INFO only (present/absent/unknown); it does not verify cached bodies or server
+Python dependencies. The owner confirmed `devclean --run` preceded the historical ENOTCACHED.
+Devclean keeps clearing npm's disposable metadata; its report and successful cleanup explain that
+npx tools need one online use afterward to work offline again. No strict-offline npx/FastMCP UI
+promise is made in v101. No new flags, secret variables or login steps are required.
 
 Shell-startup probes supervise and stop only their descendant ssh-agents. Their PID/start-time ledger
 is `assets/logs/shell-agents-<timestamp>.tsv`; dev-test checks it before its summary and again on EXIT.

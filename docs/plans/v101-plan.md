@@ -165,6 +165,25 @@ Prefer 1A.
 
 ### Evidence and investigation before implementation
 
+**Build decision, owner approved Nov 8 2026:** this session is closed with a narrower v101
+contract. The owner confirmed running `devclean --run` before the historical failing dev-test,
+so the incident is confirmed: npm cleanup removed the registry metadata needed before offline
+npx could reuse the global Inspector. Installed npm 11.20.0 source and isolated fake-cache
+fixtures establish this path. The exact extracted dev-test replay currently returns producer 0,
+check 0 and result 5; `_npx` stays absent, and packument/tarball keys are present now. Current
+Node/npm/prefix contexts match and only one nvm Node is installed; no later install-all switch
+was found. Raw diagnostics remain local.
+
+The following original investigation/conditional-cache design is retained as planning history.
+The owner superseded it: dev-test will verify the installed global Inspector's exact release,
+matching Node/npm prefix and declared CLI with producer exit 0 plus result 5. Replace the bare
+offline npx assertion. Add INFO-only metadata-key presence (not cached-body or dependency
+verification). Preserve devclean's npm clearing and explain in report/--run that npx tools such
+as Inspector need one online use afterward to work offline again. Correct setup/README/checklist/
+demo claims; full offline npx/FastMCP UI behavior is not a v101 guarantee. Ship isolated fake-program
+fixtures for cold cache, cleanup, exact release/bin/Node matching and misleading producer output.
+No managed Inspector cache or new launcher is required by this approved correction.
+
 Carry forward v99's accepted ENOTCACHED issue retained in v100 item 1. Setup's real online and
 immediate offline tools/call returned 5; later dev-test offline npx failed while the global CLI
 worked. Matching headline Node/npm versions did not establish matching executable/config/cache/

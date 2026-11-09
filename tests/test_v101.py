@@ -197,5 +197,20 @@ class RetroDefaults(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
 
+class Inspector(unittest.TestCase):
+    def test_global_release_node_status_metadata_and_cleanup_contracts(self):
+        with tempfile.TemporaryDirectory(prefix='v101-inspector-', dir=ROOT / 'assets') as tmp:
+            root = Path(tmp)
+            helper = root / 'inspector-check.py'
+            helper.write_text(embedded('test', 'INSPECTOR_CHECK_V101_PY'))
+            clean = root / 'devclean'
+            clean.write_text(embedded('setup', 'DEVCLEAN_EOF'))
+            env = dict(PATH='/usr/bin:/bin', HOME=str(root), WORK=str(root),
+                       INSPECTOR_CHECK=str(helper), DEVCLEAN_HELPER=str(clean))
+            result = subprocess.run(['/usr/bin/python3', '-c', embedded('test', 'INSPECTOR_FIXTURES_V101_PY')],
+                                    env=env, text=True, capture_output=True, timeout=90)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()
